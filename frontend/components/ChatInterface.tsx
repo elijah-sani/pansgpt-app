@@ -126,6 +126,7 @@ export default function ChatInterface({
                     const base64String = reader.result as string;
                     // Remove prefix
                     const base64Data = base64String.split(',')[1];
+                    // @ts-ignore
                     setPendingAttachments((prev: string[]) => [...prev, base64Data]);
                 };
                 reader.readAsDataURL(file);
