@@ -1,0 +1,73 @@
+import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
+
+const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+// Avoid using API_KEY unless specifically requested or for non-auth endpoints if needed, but the user snippet removed it effectively.
+// However, in previous steps I added 'x-api-key'. I should keep it if the backend requires it.
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY || '';
+
+interface FetchOptions extends RequestInit {
+    headers?: Record<string, string>;
+}
+
+export const api = {
+    fetch: async (endpoint: string, options: FetchOptions = {}) => {
+        // 1. Get current session token
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token;
+
+        // Debugging line
+        console.log(`[API] Fetching ${endpoint} | Has Token: ${!!token}`);
+
+        // 2. Prepare Headers
+        const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+            'x-api-key': API_KEY, // Keep for comprehensive auth
+            ...options.headers,
+        };
+
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+
+        // Ensure Content-Type is JSON if headers was defined but content-type missing? No, logic above handles default.
+        if (options.body && typeof options.body === 'string' && !headers['Content-Type']) {
+            headers['Content-Type'] = 'application/json';
+        }
+
+        // 3. Make Request
+        const url = `${API_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+
+        const response = await fetch(url, {
+            ...options,
+            headers,
+        });
+
+        // 4. Global Error Handling (Optional)
+        if (response.status === 401) {
+            console.warn("API request unauthorized - session might be expired or token missing.");
+        }
+
+        return response;
+    },
+
+    get: (endpoint: string, options: FetchOptions = {}) => {
+        return api.fetch(endpoint, { ...options, method: 'GET' });
+    },
+
+    post: (endpoint: string, body: any, options: FetchOptions = {}) => {
+        return api.fetch(endpoint, {
+            ...options,
+            method: 'POST',
+            body: JSON.stringify(body),
+        });
+    },
+
+    delete: (endpoint: string, options: FetchOptions = {}) => {
+        return api.fetch(endpoint, { ...options, method: 'DELETE' });
+    }
+};

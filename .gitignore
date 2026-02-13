@@ -1,0 +1,14 @@
+# Environments
+.env
+.env.local
+
+# Node / Next.js
+node_modules/
+.next/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
