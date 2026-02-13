@@ -39,7 +39,7 @@ interface ChatInterfaceProps {
     setInputMessage: (msg: string) => void;
     onSendMessage: () => void;
     pendingAttachments: string[];
-    setPendingAttachments: (atts: string[]) => void;
+    setPendingAttachments: React.Dispatch<React.SetStateAction<string[]>>;
     isMobile?: boolean; // To adjust layout if needed
     onCloseSidebar?: () => void; // For mobile/desktop close behavior
     onNewChat?: () => void; // Optional handler
@@ -126,7 +126,7 @@ export default function ChatInterface({
                     const base64String = reader.result as string;
                     // Remove prefix
                     const base64Data = base64String.split(',')[1];
-                    setPendingAttachments(prev => [...prev, base64Data]);
+                    setPendingAttachments((prev: string[]) => [...prev, base64Data]);
                 };
                 reader.readAsDataURL(file);
             });
