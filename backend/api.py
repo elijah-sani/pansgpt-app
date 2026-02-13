@@ -68,7 +68,10 @@ else:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins, 
+    allow_origins=[
+        "http://localhost:3000", # Keep this for when you code on your laptop
+        "https://pansgpt-app.vercel.app" # Your new live Next.js frontend
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
