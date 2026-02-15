@@ -323,10 +323,17 @@ export default function ChatInterface({
                     )}
 
                     {/* The Capsule */}
-                    <div className="flex items-center gap-2 p-2 bg-background border border-input rounded-full shadow-xl hover:shadow-2xl hover:border-primary/20 transition-all duration-300 ring-offset-background focus-within:ring-2 focus-within:ring-primary/20">
+                    <form
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                            onSendMessage();
+                        }}
+                        className="flex items-center gap-2 p-2 bg-background border border-input rounded-full shadow-xl hover:shadow-2xl hover:border-primary/20 transition-all duration-300 ring-offset-background focus-within:ring-2 focus-within:ring-primary/20"
+                    >
 
                         {/* Plus Button (Upload) */}
                         <button
+                            type="button"
                             onClick={() => fileInputRef.current?.click()}
                             className="p-3 text-muted-foreground hover:text-foreground hover:bg-muted rounded-full transition-colors shrink-0"
                             title="Add Attachment"
@@ -349,12 +356,7 @@ export default function ChatInterface({
                             value={inputMessage}
                             onChange={(e) => setInputMessage(e.target.value)}
                             onPaste={handlePaste}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter' && !e.shiftKey) {
-                                    e.preventDefault();
-                                    onSendMessage();
-                                }
-                            }}
+                            // onKeyDown removed - form submit handles Enter key now
                             placeholder={pendingAttachments.length > 0 ? "Ask about these images..." : "Ask a question..."}
                             className="flex-1 bg-transparent border-none outline-none text-[15px] placeholder:text-muted-foreground px-2 h-10"
                         />
@@ -363,6 +365,7 @@ export default function ChatInterface({
                         <div className="flex items-center gap-1 pr-1">
                             {!inputMessage.trim() && pendingAttachments.length === 0 ? (
                                 <button
+                                    type="button"
                                     className="p-2.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-full transition-colors"
                                     title="Voice Input (Coming Soon)"
                                 >
@@ -370,7 +373,7 @@ export default function ChatInterface({
                                 </button>
                             ) : (
                                 <button
-                                    onClick={onSendMessage}
+                                    type="submit"
                                     disabled={isLoading}
                                     className="p-2.5 bg-[#466b3c] text-white rounded-full hover:bg-[#3a5630] disabled:opacity-50 transition-all shadow-md flex items-center justify-center aspect-square"
                                 >
@@ -378,7 +381,7 @@ export default function ChatInterface({
                                 </button>
                             )}
                         </div>
-                    </div>
+                    </form>
 
                     <div className="text-center mt-3 text-xs text-muted-foreground">
                         AI can make mistakes. Verify important information.
