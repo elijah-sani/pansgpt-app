@@ -358,7 +358,7 @@ export default function ChatInterface({
                             onPaste={handlePaste}
                             // onKeyDown removed - form submit handles Enter key now
                             placeholder={pendingAttachments.length > 0 ? "Ask about these images..." : "Ask a question..."}
-                            className="flex-1 bg-transparent border-none outline-none text-[15px] placeholder:text-muted-foreground px-2 h-10"
+                            className="flex-1 bg-transparent border-none outline-none text-base placeholder:text-muted-foreground px-2 h-10"
                         />
 
                         {/* Right Tools - Dynamic Mic/Send */}

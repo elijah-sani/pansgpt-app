@@ -434,8 +434,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
             if (imageBase64) {
                 setSnipPopup({
-                    x: snipRect.x + snipRect.w,
-                    y: snipRect.y + snipRect.h,
+                    x: snipRect.x + (snipRect.w / 2),
+                    y: snipRect.y + (snipRect.h / 2),
                     imageBase64
                 });
             }
@@ -508,8 +508,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
             if (imageBase64) {
                 setSnipPopup({
-                    x: snipRect.x + snipRect.w,
-                    y: snipRect.y + snipRect.h,
+                    x: snipRect.x + (snipRect.w / 2),
+                    y: snipRect.y + (snipRect.h / 2),
                     imageBase64
                 });
             }
@@ -979,9 +979,13 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                                 <div
                                                     className="absolute z-20"
                                                     style={{
-                                                        left: snipPopup.x + 8,
-                                                        top: snipPopup.y + 12,
+                                                        left: snipPopup.x,
+                                                        top: snipPopup.y,
+                                                        transform: 'translate(-50%, -50%)'
                                                     }}
+                                                    onMouseDown={(e) => e.stopPropagation()}
+                                                    onTouchStart={(e) => e.stopPropagation()}
+                                                    onTouchEnd={(e) => e.stopPropagation()}
                                                 >
                                                     <SnippetMenu
                                                         imageBlob={snipPopup.imageBase64}
@@ -1030,7 +1034,16 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                             <div className="w-px h-4 bg-zinc-700 mx-1" />
 
                                             <button
-                                                onClick={() => setShowMoreMenu(!showMoreMenu)}
+                                                onClick={(e) => {
+                                                    e.preventDefault();
+                                                    e.stopPropagation();
+                                                    setShowMoreMenu(!showMoreMenu);
+                                                }}
+                                                onTouchEnd={(e) => {
+                                                    e.preventDefault();
+                                                    e.stopPropagation();
+                                                    setShowMoreMenu(!showMoreMenu);
+                                                }}
                                                 className={`flex items-center gap-1 px-2 py-1.5 rounded-md text-sm text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors ${showMoreMenu ? 'bg-zinc-800 text-white' : ''}`}
                                             >
                                                 <span className="font-medium">More</span>
@@ -1039,7 +1052,12 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
                                             {/* Secondary Dropdown (Vertical) */}
                                             {showMoreMenu && (
-                                                <div className="absolute top-full mt-2 left-0 w-48 flex flex-col p-1 bg-zinc-900 border border-zinc-700/50 rounded-lg shadow-2xl z-50 animate-in fade-in slide-in-from-top-2 backdrop-blur-md">
+                                                <div
+                                                    className="absolute top-full mt-2 left-0 w-48 flex flex-col p-1 bg-zinc-900 border border-zinc-700/50 rounded-lg shadow-2xl z-50 animate-in fade-in slide-in-from-top-2 backdrop-blur-md"
+                                                    onMouseDown={(e) => e.stopPropagation()}
+                                                    onTouchStart={(e) => e.stopPropagation()}
+                                                    onTouchEnd={(e) => e.stopPropagation()}
+                                                >
                                                     <button
                                                         onClick={() => handleAIRequest('define')}
                                                         className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm text-zinc-300 hover:text-white hover:bg-zinc-800 transition-colors group"

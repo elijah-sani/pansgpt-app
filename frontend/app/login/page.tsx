@@ -191,7 +191,7 @@ export default function AuthPage() {
                                     required
                                     value={loginEmail}
                                     onChange={(e) => setLoginEmail(e.target.value)}
-                                    className="block w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all font-medium"
+                                    className="block w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl text-base text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all font-medium"
                                     placeholder="you@example.com"
                                 />
                             </div>
@@ -208,7 +208,7 @@ export default function AuthPage() {
                                     required
                                     value={loginPassword}
                                     onChange={(e) => setLoginPassword(e.target.value)}
-                                    className="block w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all font-medium"
+                                    className="block w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl text-base text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all font-medium"
                                     placeholder="••••••••"
                                 />
                             </div>
@@ -250,7 +250,7 @@ export default function AuthPage() {
                                             value={formData.firstName}
                                             onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
                                             onKeyDown={(e) => e.key === 'Enter' && formData.firstName && nextStep()}
-                                            className="block w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all font-medium"
+                                            className="block w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl text-base text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all font-medium"
                                             placeholder="e.g. Victor"
                                         />
                                     </div>
@@ -261,7 +261,7 @@ export default function AuthPage() {
                                             value={formData.otherNames}
                                             onChange={(e) => setFormData({ ...formData, otherNames: e.target.value })}
                                             onKeyDown={(e) => e.key === 'Enter' && formData.firstName && nextStep()}
-                                            className="block w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all font-medium"
+                                            className="block w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl text-base text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all font-medium"
                                             placeholder="e.g. Oluwaseun"
                                         />
                                     </div>
@@ -284,7 +284,7 @@ export default function AuthPage() {
                                             autoFocus
                                             value={formData.university}
                                             onChange={(e) => setFormData({ ...formData, university: e.target.value })}
-                                            className="block w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all font-medium appearance-none"
+                                            className="block w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl text-base text-slate-900 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all font-medium appearance-none"
                                         >
                                             <option value="">Select University</option>
                                             {NIGERIAN_UNIVERSITIES.map(uni => (
@@ -314,7 +314,7 @@ export default function AuthPage() {
                                             autoFocus
                                             value={formData.level}
                                             onChange={(e) => setFormData({ ...formData, level: e.target.value })}
-                                            className="block w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all font-medium appearance-none"
+                                            className="block w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl text-base text-slate-900 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all font-medium appearance-none"
                                         >
                                             <option value="">Select Level</option>
                                             {LEVELS.map(lvl => (
@@ -346,7 +346,7 @@ export default function AuthPage() {
                                                 autoFocus
                                                 value={formData.email}
                                                 onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                                                className="block w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all font-medium"
+                                                className="block w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl text-base text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all font-medium"
                                                 placeholder="student@uni.edu.ng"
                                             />
                                         </div>
@@ -356,7 +356,7 @@ export default function AuthPage() {
                                                 type="password"
                                                 value={formData.password}
                                                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                                                className="block w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all font-medium"
+                                                className="block w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl text-base text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all font-medium"
                                                 placeholder="••••••••"
                                             />
                                         </div>
