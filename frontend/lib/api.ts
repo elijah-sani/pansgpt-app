@@ -29,8 +29,10 @@ export const api = {
             headers['Authorization'] = `Bearer ${token}`;
         }
 
-        // Ensure Content-Type is JSON if headers was defined but content-type missing? No, logic above handles default.
-        if (options.body && typeof options.body === 'string' && !headers['Content-Type']) {
+        // special handling for FormData
+        if (options.body instanceof FormData) {
+            delete headers['Content-Type']; // Let browser set multipart boundary
+        } else if (options.body && typeof options.body === 'string' && !headers['Content-Type']) {
             headers['Content-Type'] = 'application/json';
         }
 
@@ -47,6 +49,15 @@ export const api = {
             console.warn("API request unauthorized - session might be expired or token missing.");
         }
 
+        if (!response.ok) {
+            try {
+                const errorData = await response.clone().json();
+                console.error("API Error Details:", errorData);
+            } catch (e) {
+                console.error("API Error (Non-JSON):", response.statusText);
+            }
+        }
+
         return response;
     },
 
@@ -55,10 +66,11 @@ export const api = {
     },
 
     post: (endpoint: string, body: any, options: FetchOptions = {}) => {
+        const isFormData = body instanceof FormData;
         return api.fetch(endpoint, {
             ...options,
             method: 'POST',
-            body: JSON.stringify(body),
+            body: isFormData ? body : JSON.stringify(body),
         });
     },
 

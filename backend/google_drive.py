@@ -4,7 +4,7 @@ import time
 import socket
 import ssl
 from typing import Iterator, Optional, Dict, Any
-from google.oauth2.service_account import Credentials
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 from googleapiclient.errors import HttpError
@@ -16,32 +16,39 @@ class GoogleDriveService:
     Handles authentication via a Service Account (service_account.json).
     """
     
-    SCOPES = [
-        'https://www.googleapis.com/auth/drive.readonly',
-        'https://www.googleapis.com/auth/drive.file'
-    ]
-    SERVICE_ACCOUNT_FILE = 'service_account.json'
+    SCOPES = ['https://www.googleapis.com/auth/drive']
+    TOKEN_FILE = 'token.json'
 
     def __init__(self, allow_upload: bool = False):
         """
-        Initialize Google Drive service with Service Account credentials.
-        
-        Args:
-            allow_upload: Included for compatibility; scopes are fixed.
+        Initialize Google Drive service with OAuth 2.0 User Credentials.
         """
-        print(f"Loading Service Account credentials from {self.SERVICE_ACCOUNT_FILE}...")
+        self.credentials = None
         
-        if not os.path.exists(self.SERVICE_ACCOUNT_FILE):
-            raise FileNotFoundError(
-                f"❌ ERROR: {self.SERVICE_ACCOUNT_FILE} is missing. "
-                f"Cannot authenticate with Google Drive."
-            )
+        # 1. Load User Credentials
+        if os.path.exists(self.TOKEN_FILE):
+            try:
+                self.credentials = Credentials.from_authorized_user_file(self.TOKEN_FILE, self.SCOPES)
+            except Exception as e:
+                print(f"⚠️ Error loading token.json: {e}")
         
-        # Load Service Account credentials
-        self.credentials = Credentials.from_service_account_file(
-            self.SERVICE_ACCOUNT_FILE, scopes=self.SCOPES
-        )
-        print("✅ Successfully authenticated with Google Drive Service Account.")
+        # 2. Refresh if needed
+        if not self.credentials or not self.credentials.valid:
+            if self.credentials and self.credentials.expired and self.credentials.refresh_token:
+                try:
+                    print("🔄 Refreshing access token...")
+                    from google.auth.transport.requests import Request
+                    self.credentials.refresh(Request())
+                    # Save the refreshed token
+                    with open(self.TOKEN_FILE, 'w') as token:
+                        token.write(self.credentials.to_json())
+                    print("✅ Token refreshed and saved.")
+                except Exception as e:
+                    raise Exception(f"CRITICAL: Failed to refresh token: {e}. Please re-run setup_auth.py")
+            else:
+                raise Exception("CRITICAL: token.json is missing or invalid. Please run setup_auth.py locally.")
+        
+        print("✅ Successfully authenticated with Google Drive (User OAuth).")
         
         # Build the Drive API service
         self.service = build('drive', 'v3', credentials=self.credentials, cache_discovery=False)
@@ -128,9 +135,14 @@ class GoogleDriveService:
         # Note: Scopes are now fixed in token.json, so dynamic check is less critical 
         # but we can assume 'drive.file' was requested during auth.
         
+        # Use provided folder_id or fallback to env var
+        target_folder = folder_id or os.getenv('GOOGLE_DRIVE_FOLDER_ID')
+        
         file_metadata = {'name': file_name}
-        if folder_id:
-            file_metadata['parents'] = [folder_id]
+        if target_folder:
+            file_metadata['parents'] = [target_folder]
+        else:
+            print("⚠️  WARNING: No Google Drive Folder ID found! Uploading to Service Account Root.")
         
         media = MediaIoBaseUpload(
             io.BytesIO(content),

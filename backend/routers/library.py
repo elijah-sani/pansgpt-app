@@ -450,31 +450,37 @@ async def admin_delete_document(doc_id: str):
             
         drive_file_id = response.data[0]['drive_file_id']
 
-        # 2. Delete from Drive
+        # 2. Delete from Drive (STRICT MODE)
         try:
             drive_service.delete_file(drive_file_id)
         except Exception as e:
-            if "404" in str(e):
-                logger.warning("File already missing from Drive, proceeding to DB delete.")
-            else:
-                raise HTTPException(status_code=500, detail=f"Drive Delete failed: {e}")
+            # CRITICAL FAILURE POINT
+            # If Drive fails, we MUST ABORT to prevent "orphan" file state.
+            logger.error(f"CRITICAL DRIVE ERROR: {e}")
+            raise HTTPException(status_code=500, detail=f"Google Drive Deletion Failed: {e}")
 
-        # 3. Delete embeddings from Supabase
+        # 3. Delete embeddings from Supabase (Best Effort)
         try:
             supabase_client.table("document_embeddings").delete().eq("document_id", doc_id).execute()
             logger.info(f"🗑️ Deleted embeddings for document {doc_id}")
         except Exception as e:
             logger.warning(f"Failed to delete embeddings: {e}")
 
-        # 4. Delete from Supabase
-        supabase_client.table("pans_library").delete().eq("id", doc_id).execute()
+        # 4. Delete from Supabase (Only if Drive succeeded)
+        try:
+            supabase_client.table("pans_library").delete().eq("id", doc_id).execute()
+        except Exception as e:
+            logger.error(f"❌ Database Delete Failed: {e}")
+            # If we reach here, Drive file is gone but DB record remains. 
+            # This is less critical than the reverse, but still an error.
+            raise HTTPException(status_code=500, detail=f"Database delete failed: {e}")
 
-        return {"message": "Document deleted successfully from Drive and Database"}
+        return {"message": "Document deleted successfully"}
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Delete Error: {e}")
+        logger.error(f"Delete Operation Failed: {e}")
         raise HTTPException(status_code=500, detail=f"Delete operation failed: {e}")
 
 @router.patch("/documents/{doc_id}", dependencies=[Depends(lambda: verify_api_key)])

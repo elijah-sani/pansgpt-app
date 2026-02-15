@@ -13,3 +13,12 @@ __pycache__/
 venv/
 env/
 archived_streamlit/
+token.json
+
+# Google Cloud Secrets
+credentials.json
+service_account.json
+
+# Local Logs
+lint_log.txt
+*.log
