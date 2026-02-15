@@ -165,7 +165,7 @@ export default function ChatInterface({
     };
 
     return (
-        <div className="flex flex-col h-full bg-background font-sans text-foreground border-l border-border relative">
+        <div className="flex flex-col h-full w-full bg-background font-sans text-foreground relative">
 
             {/* 1. HEADER: Fixed Top Bar */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-10">
@@ -203,92 +203,94 @@ export default function ChatInterface({
             </div>
 
             {/* 2. MESSAGE AREA: Scrollable */}
-            <div className="flex-1 overflow-y-auto px-4 py-6 space-y-8 scroll-smooth">
-                {messages.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground opacity-50 p-8">
-                        <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mb-4">
-                            <SquarePen className="w-8 h-8" />
+            <div className="flex-1 overflow-y-auto py-6 scroll-smooth">
+                <div className="px-4 space-y-8 h-full flex flex-col">
+                    {messages.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center flex-1 text-center text-muted-foreground opacity-50 p-8">
+                            <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mb-4">
+                                <SquarePen className="w-8 h-8" />
+                            </div>
+                            <p className="text-lg font-medium">Start a new conversation</p>
                         </div>
-                        <p className="text-lg font-medium">Start a new conversation</p>
-                    </div>
-                ) : (
-                    messages.filter(m => m.role !== 'system').map((msg, i) => (
-                        <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} max-w-3xl mx-auto w-full group`}>
+                    ) : (
+                        messages.filter(m => m.role !== 'system').map((msg, i) => (
+                            <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} max-w-3xl mx-auto w-full group`}>
 
-                            {/* User Message Area */}
-                            {msg.role === 'user' ? (
-                                <>
-                                    {/* 1. Image Grid (Multi-Image Support) */}
-                                    {(() => {
-                                        // 1. Get images from image_data (backend)
-                                        const backendImages = getImages(msg.image_data);
+                                {/* User Message Area */}
+                                {msg.role === 'user' ? (
+                                    <>
+                                        {/* 1. Image Grid (Multi-Image Support) */}
+                                        {(() => {
+                                            // 1. Get images from image_data (backend)
+                                            const backendImages = getImages(msg.image_data);
 
-                                        // 2. Combine with legacy/state images
-                                        const allImages = [...(msg.images || []), ...backendImages];
+                                            // 2. Combine with legacy/state images
+                                            const allImages = [...(msg.images || []), ...backendImages];
 
-                                        // 3. Add legacy imageBase64 if not already present
-                                        if (msg.imageBase64 && !allImages.includes(msg.imageBase64)) {
-                                            allImages.push(msg.imageBase64);
+                                            // 3. Add legacy imageBase64 if not already present
+                                            if (msg.imageBase64 && !allImages.includes(msg.imageBase64)) {
+                                                allImages.push(msg.imageBase64);
+                                            }
+
+                                            // 4. Deduplicate
+                                            const uniqueImages = Array.from(new Set(allImages));
+
+                                            if (uniqueImages.length > 0) {
+                                                return (
+                                                    <div className="flex flex-wrap gap-2 mb-2 justify-end">
+                                                        {uniqueImages.map((img, idx) => (
+                                                            <div
+                                                                key={idx}
+                                                                onClick={() => setSelectedImage(img)}
+                                                                className="relative group cursor-zoom-in"
+                                                            >
+                                                                <img
+                                                                    src={`data:image/jpeg;base64,${img}`}
+                                                                    alt={`Attachment ${idx + 1}`}
+                                                                    className="w-20 h-20 object-cover rounded-md border border-border shadow-sm hover:opacity-90 transition-opacity bg-black/5"
+                                                                />
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                );
+                                            }
+                                            return null;
+                                        })()}
+
+                                        {/* 2. Text Bubble */}
+                                        {msg.content && (
+                                            <div className="max-w-[85%] bg-[#253920] text-white px-5 py-3 rounded-2xl rounded-tr-sm shadow-sm border border-[#253920] text-[15px] leading-relaxed">
+                                                {msg.content}
+                                            </div>
+                                        )}
+                                    </>
+                                ) : (
+                                    /* AI Message (Markdown, No Background) */
+                                    <MessageBubble
+                                        message={msg}
+                                        onRegenerate={
+                                            // Only pass regenerate handler if it's the last message and it's from assistant
+                                            (i === messages.length - 1 && onRegenerate) ? onRegenerate : undefined
                                         }
+                                    />
+                                )}
+                            </div>
+                        ))
+                    )}
 
-                                        // 4. Deduplicate
-                                        const uniqueImages = Array.from(new Set(allImages));
-
-                                        if (uniqueImages.length > 0) {
-                                            return (
-                                                <div className="flex flex-wrap gap-2 mb-2 justify-end">
-                                                    {uniqueImages.map((img, idx) => (
-                                                        <div
-                                                            key={idx}
-                                                            onClick={() => setSelectedImage(img)}
-                                                            className="relative group cursor-zoom-in"
-                                                        >
-                                                            <img
-                                                                src={`data:image/jpeg;base64,${img}`}
-                                                                alt={`Attachment ${idx + 1}`}
-                                                                className="w-20 h-20 object-cover rounded-md border border-border shadow-sm hover:opacity-90 transition-opacity bg-black/5"
-                                                            />
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            );
-                                        }
-                                        return null;
-                                    })()}
-
-                                    {/* 2. Text Bubble */}
-                                    {msg.content && (
-                                        <div className="max-w-[85%] bg-[#253920] text-white px-5 py-3 rounded-2xl rounded-tr-sm shadow-sm border border-[#253920] text-[15px] leading-relaxed">
-                                            {msg.content}
-                                        </div>
-                                    )}
-                                </>
-                            ) : (
-                                /* AI Message (Markdown, No Background) */
-                                <MessageBubble
-                                    message={msg}
-                                    onRegenerate={
-                                        // Only pass regenerate handler if it's the last message and it's from assistant
-                                        (i === messages.length - 1 && onRegenerate) ? onRegenerate : undefined
-                                    }
-                                />
-                            )}
+                    {/* Loading Indicator (Typing Bubble) */}
+                    {isLoading && (
+                        <div className="max-w-3xl mx-auto w-full pl-2">
+                            <div className="flex items-center gap-1 p-2 bg-transparent">
+                                <div className="w-2 h-2 bg-primary rounded-full animate-bounce [animation-delay:-0.3s]" />
+                                <div className="w-2 h-2 bg-primary rounded-full animate-bounce [animation-delay:-0.15s]" />
+                                <div className="w-2 h-2 bg-primary rounded-full animate-bounce" />
+                            </div>
                         </div>
-                    ))
-                )}
+                    )}
 
-                {/* Loading Indicator (Typing Bubble) */}
-                {isLoading && (
-                    <div className="max-w-3xl mx-auto w-full pl-2">
-                        <div className="flex items-center gap-1 p-2 bg-transparent">
-                            <div className="w-2 h-2 bg-primary rounded-full animate-bounce [animation-delay:-0.3s]" />
-                            <div className="w-2 h-2 bg-primary rounded-full animate-bounce [animation-delay:-0.15s]" />
-                            <div className="w-2 h-2 bg-primary rounded-full animate-bounce" />
-                        </div>
-                    </div>
-                )}
-
-                <div ref={chatEndRef} className="h-4" />
+                    <div ref={chatEndRef} className="h-4" />
+                </div>
             </div>
 
             {/* 3. INPUT AREA: Floating Capsule */}
@@ -387,14 +389,14 @@ export default function ChatInterface({
             {/* --- HISTORY DRAWER --- */}
             {isHistoryOpen && (
                 <>
-                    {/* Backdrop */}
+                    {/* Backdrop (Absolute to ChatInterface) */}
                     <div
-                        className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40 transition-opacity"
+                        className="absolute inset-0 bg-black/20 backdrop-blur-sm z-40 transition-opacity"
                         onClick={() => setIsHistoryOpen(false)}
                     />
 
-                    {/* Drawer Panel */}
-                    <div className="fixed inset-y-0 left-0 w-80 bg-background shadow-2xl z-50 transform transition-transform duration-300 flex flex-col border-r border-border animate-in slide-in-from-left">
+                    {/* Drawer Panel (Absolute to ChatInterface) */}
+                    <div className="absolute inset-y-0 left-0 w-80 bg-background shadow-2xl z-50 transform transition-transform duration-300 flex flex-col border-r border-border animate-in slide-in-from-left">
                         <div className="flex items-center justify-between p-4 border-b border-border">
                             <h2 className="font-semibold text-lg">Recent Chats</h2>
                             <button

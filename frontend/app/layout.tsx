@@ -35,7 +35,6 @@ export default function RootLayout({
             </MaintenanceGuard>
           </ErrorBoundary>
         </ThemeProvider>
-        {children}
       </body>
     </html>
   );

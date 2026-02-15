@@ -4,7 +4,6 @@ import time
 import socket
 import ssl
 from typing import Iterator, Optional, Dict, Any
-import httplib2
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
@@ -14,34 +13,38 @@ from google.auth.transport.requests import AuthorizedSession
 class GoogleDriveService:
     """
     Service class for Google Drive operations.
-    Handles authentication via User Credentials (token.json), file operations.
+    Handles authentication via a Service Account (service_account.json).
     """
     
-    # Scopes matching setup_auth.py
-    SCOPES = ['https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/drive.readonly']
+    SCOPES = [
+        'https://www.googleapis.com/auth/drive.readonly',
+        'https://www.googleapis.com/auth/drive.file'
+    ]
+    SERVICE_ACCOUNT_FILE = 'service_account.json'
 
     def __init__(self, allow_upload: bool = False):
         """
-        Initialize Google Drive service with Service Account Credentials.
-        """
-        service_account_file = 'service_account.json'
+        Initialize Google Drive service with Service Account credentials.
         
-        print(f"Loading Service Account credentials from {service_account_file}...")
-        if not os.path.exists(service_account_file):
-            raise FileNotFoundError(f"❌ ERROR: {service_account_file} is missing. Cannot authenticate with Google Drive.")
-
-        # Authenticate using Service Account
+        Args:
+            allow_upload: Included for compatibility; scopes are fixed.
+        """
+        print(f"Loading Service Account credentials from {self.SERVICE_ACCOUNT_FILE}...")
+        
+        if not os.path.exists(self.SERVICE_ACCOUNT_FILE):
+            raise FileNotFoundError(
+                f"❌ ERROR: {self.SERVICE_ACCOUNT_FILE} is missing. "
+                f"Cannot authenticate with Google Drive."
+            )
+        
+        # Load Service Account credentials
         self.credentials = Credentials.from_service_account_file(
-            service_account_file, scopes=self.SCOPES)
+            self.SERVICE_ACCOUNT_FILE, scopes=self.SCOPES
+        )
         print("✅ Successfully authenticated with Google Drive Service Account.")
         
         # Build the Drive API service
-        try:
-            print("Building the Google Drive service...")
-            self.service = build('drive', 'v3', credentials=self.credentials, cache_discovery=False)
-        except Exception as e:
-            print(f"❌ Failed to initialize Drive Service: {e}")
-            self.service = None
+        self.service = build('drive', 'v3', credentials=self.credentials, cache_discovery=False)
     
     def _execute_with_retry(self, request_func):
         """Helper to retry API calls on network failure."""

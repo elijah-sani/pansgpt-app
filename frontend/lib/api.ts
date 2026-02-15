@@ -1,9 +1,4 @@
-import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
-
-const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+import { supabase } from './supabase';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 // Avoid using API_KEY unless specifically requested or for non-auth endpoints if needed, but the user snippet removed it effectively.

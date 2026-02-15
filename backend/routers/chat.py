@@ -3,9 +3,8 @@ Chat Router: AI Conversation Endpoint with RAG Support
 Handles AI-powered chat interactions using Groq with vector search.
 """
 from fastapi import APIRouter, HTTPException, Depends
-import asyncio
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Optional
 import logging
 import os
 import google.generativeai as genai
@@ -518,10 +517,7 @@ def get_chat_history(context_id: str = None, current_user: User = Depends(get_cu
         res = query.execute()
         return res.data
     except Exception as e:
-        print(f"❌ Error fetching history for context {context_id}:")
-        print(traceback.format_exc())
-        # Return an empty array instead of crashing the frontend
-        return []
+        logger.error(f"History Fetch Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/history/{session_id}", dependencies=[Depends(lambda: verify_api_key)])

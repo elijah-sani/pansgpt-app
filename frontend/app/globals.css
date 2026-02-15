@@ -93,6 +93,16 @@ body {
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
+/* LOCK GLOBAL SCROLL */
+html,
+body {
+  overflow: hidden !important;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  overscroll-behavior: none;
+}
+
 /* Glassmorphism Utilities - Updated for Stitch palette */
 .glass {
   @apply bg-white/70 dark:bg-[#0f160d]/70 backdrop-blur-md border border-white/20 dark:border-[#2A3628]/30 shadow-lg;
