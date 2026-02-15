@@ -93,14 +93,14 @@ body {
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
-/* LOCK GLOBAL SCROLL */
+/* LOCK GLOBAL SCROLL - RESTORED for Mobile */
 html,
 body {
-  overflow: hidden !important;
-  height: 100vh;
+  /* overflow: hidden !important; -- REMOVED */
+  /* height: 100vh; -- REMOVED */
   margin: 0;
   padding: 0;
-  overscroll-behavior: none;
+  /* overscroll-behavior: none; -- REMOVED */
 }
 
 /* Glassmorphism Utilities - Updated for Stitch palette */

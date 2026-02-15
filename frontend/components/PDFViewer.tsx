@@ -667,7 +667,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
     return (
         <div
-            className="flex flex-col h-screen bg-background relative overflow-hidden font-sans"
+            className="flex flex-col h-[100dvh] bg-background relative overflow-hidden font-sans"
             onContextMenu={(e) => e.preventDefault()}
             onTouchStart={() => setSelectionMenu(null)}
         >

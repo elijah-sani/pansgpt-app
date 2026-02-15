@@ -2,12 +2,13 @@
 
 import { useParams, useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
+import { Loader2 } from 'lucide-react';
 
 const PDFViewer = dynamic(() => import('@/components/PDFViewer'), {
     ssr: false,
     loading: () => (
-        <div className="flex h-screen items-center justify-center bg-background">
-            <div className="h-10 w-10 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
+        <div className="flex h-[100dvh] items-center justify-center bg-background">
+            <Loader2 className="h-10 w-10 animate-spin text-primary" />
         </div>
     )
 });
@@ -20,11 +21,15 @@ export default function ReaderPage() {
 
     if (!fileId) {
         return (
-            <div className="flex h-screen items-center justify-center bg-background">
+            <div className="flex h-[100dvh] items-center justify-center bg-background">
                 <p className="text-destructive">No file ID provided</p>
             </div>
         );
     }
 
-    return <PDFViewer fileId={fileId} fileSize={fileSize} />;
+    return (
+        <main className="h-[100dvh] w-full overflow-hidden bg-background">
+            <PDFViewer fileId={fileId} fileSize={fileSize} />
+        </main>
+    );
 }
