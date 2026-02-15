@@ -442,6 +442,80 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         }
     };
 
+    // --- TOUCH HANDLERS FOR SNIPPING (New) ---
+
+    // Since we need to use the same logic as the mouse handlers, we'll duplicate the logic but adapted for TouchEvent
+    // Ideally we'd abstract this, but duplication is safer for now to avoid breaking existing mouse logic.
+
+    const handleSnipTouchStart = (e: React.TouchEvent) => {
+        if (e.cancelable) e.preventDefault(); // Prevent scrolling
+        if (!snipOverlayRef.current) return;
+
+        const touch = e.touches[0];
+        const rect = snipOverlayRef.current.getBoundingClientRect();
+        const x = touch.clientX - rect.left;
+        const y = touch.clientY - rect.top;
+
+        setIsDrawing(true);
+        setSnipStart({ x, y });
+        snipScreenStart.current = { x: touch.clientX, y: touch.clientY };
+        setSnipRect({ x, y, w: 0, h: 0 });
+        setSnipPopup(null);
+    };
+
+    const handleSnipTouchMove = (e: React.TouchEvent) => {
+        if (e.cancelable) e.preventDefault();
+        if (!isDrawing || !snipStart || !snipOverlayRef.current) return;
+
+        const touch = e.touches[0];
+        const rect = snipOverlayRef.current.getBoundingClientRect();
+        const currentX = touch.clientX - rect.left;
+        const currentY = touch.clientY - rect.top;
+
+        const x = Math.min(currentX, snipStart.x);
+        const y = Math.min(currentY, snipStart.y);
+        const w = Math.abs(currentX - snipStart.x);
+        const h = Math.abs(currentY - snipStart.y);
+
+        setSnipRect({ x, y, w, h });
+    };
+
+    const handleSnipTouchEnd = async (e: React.TouchEvent) => {
+        if (e.cancelable) e.preventDefault();
+        setIsDrawing(false);
+
+        if (!snipRect || snipRect.w < 10 || snipRect.h < 10) {
+            setSnipRect(null);
+            return;
+        }
+
+        if (pdfWrapperRef.current && snipRect && snipScreenStart.current) {
+            const touch = e.changedTouches[0];
+
+            const startScreenX = snipScreenStart.current.x;
+            const startScreenY = snipScreenStart.current.y;
+            const endScreenX = touch.clientX;
+            const endScreenY = touch.clientY;
+
+            const screenRect = {
+                left: Math.min(startScreenX, endScreenX),
+                top: Math.min(startScreenY, endScreenY),
+                width: Math.abs(endScreenX - startScreenX),
+                height: Math.abs(endScreenY - startScreenY)
+            };
+
+            const imageBase64 = cropImageFromCanvas(pdfWrapperRef.current, screenRect);
+
+            if (imageBase64) {
+                setSnipPopup({
+                    x: snipRect.x + snipRect.w,
+                    y: snipRect.y + snipRect.h,
+                    imageBase64
+                });
+            }
+        }
+    };
+
     const sendMessage = async (text: string, attachments: string[] = [], systemInstruction?: string) => {
         // Build user message
         const newUserMsg: Message = {
@@ -875,6 +949,10 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                             onMouseDown={handleSnipMouseDown}
                                             onMouseMove={handleSnipMouseMove}
                                             onMouseUp={handleSnipMouseUp}
+                                            // Touch Events
+                                            onTouchStart={handleSnipTouchStart}
+                                            onTouchMove={handleSnipTouchMove}
+                                            onTouchEnd={handleSnipTouchEnd}
                                         >
                                             {/* Selection Rectangle */}
                                             {snipRect && (
@@ -927,6 +1005,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                                 position: 'fixed'
                                             }}
                                             onMouseDown={(e) => e.stopPropagation()}
+                                            onTouchStart={(e) => e.stopPropagation()}
+                                            onTouchEnd={(e) => e.stopPropagation()}
                                         >
                                             {/* Primary Actions (Horizontal) */}
                                             <button
