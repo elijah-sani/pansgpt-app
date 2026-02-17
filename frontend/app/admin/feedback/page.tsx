@@ -32,6 +32,23 @@ interface FeedbackItem {
     } | null;
 }
 
+interface RawFeedbackItem {
+    id: number;
+    rating: 'up' | 'down' | 'report';
+    category: string;
+    comments: string;
+    created_at: string;
+    session_id: string;
+    message_id: string;
+    user_id: string;
+    profiles?: Array<{
+        first_name: string | null;
+        university: string | null;
+        level: string | null;
+        email?: string;
+    }> | null;
+}
+
 export default function AdminFeedbackPage() {
     const [feedback, setFeedback] = useState<FeedbackItem[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -66,7 +83,11 @@ export default function AdminFeedbackPage() {
                 if (error) {
                     console.error("Error fetching feedback:", error);
                 } else {
-                    setFeedback((data || []) as FeedbackItem[]);
+                    const normalized = ((data || []) as RawFeedbackItem[]).map((item) => ({
+                        ...item,
+                        profiles: item.profiles?.[0] ?? null,
+                    }));
+                    setFeedback(normalized);
                 }
             } catch (err) {
                 console.error("Failed to fetch:", err);

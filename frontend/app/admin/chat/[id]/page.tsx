@@ -26,6 +26,16 @@ interface ChatSession {
     } | null;
 }
 
+interface RawSessionData {
+    title: string;
+    created_at: string;
+    profiles?: Array<{
+        first_name: string | null;
+        university: string | null;
+        level: string | null;
+    }> | null;
+}
+
 // Helper to safely parse image_data (JSON or raw string)
 const getImages = (imgData: string | undefined): string[] => {
     if (!imgData) return [];
@@ -75,7 +85,16 @@ export default function AdminChatViewerPage({
                     .single();
 
                 if (sessionError) throw sessionError;
-                setSession((sessionData as ChatSession) ?? null);
+                if (sessionData) {
+                    const raw = sessionData as RawSessionData;
+                    setSession({
+                        title: raw.title,
+                        created_at: raw.created_at,
+                        profiles: raw.profiles?.[0] ?? null,
+                    });
+                } else {
+                    setSession(null);
+                }
 
                 // 2. Fetch Messages
                 const { data: messagesData, error: messagesError } = await supabase
