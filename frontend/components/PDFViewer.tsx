@@ -1,9 +1,8 @@
 'use client';
-import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Document, Page, pdfjs } from 'react-pdf';
-import { X, Sparkles, BookOpen, Lightbulb, Brain, Loader2, Send, FileText, MessageSquare, ZoomIn, ZoomOut, Scissors, Image as ImageIcon, Copy, ListChecks, MoreHorizontal, ChevronDown } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
+import { X, Sparkles, BookOpen, Lightbulb, Brain, Loader2, FileText, MessageSquare, ZoomIn, ZoomOut, Scissors, Copy, ListChecks, MoreHorizontal, ChevronDown } from 'lucide-react';
 import { useSimulatedProgress } from '../hooks/useSimulatedProgress';
 import { LoadingState } from './LoadingState';
 import { cropImageFromCanvas } from '../lib/pdf-utils';
@@ -17,7 +16,7 @@ import { api } from '../lib/api';
 // Critical Fix: Use CDN for worker to prevent Next.js bundling issues
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 // Silence noisy worker warnings (like TT font parsing) by forcing verbosity to ERRORS (0)
-(pdfjs.GlobalWorkerOptions as any).verbosity = 0;
+(pdfjs.GlobalWorkerOptions as unknown as { verbosity: number }).verbosity = 0;
 
 interface PDFViewerProps {
     fileId: string;
@@ -25,19 +24,11 @@ interface PDFViewerProps {
 }
 
 interface Message {
-    role: 'system' | 'user' | 'assistant';
+    role: 'system' | 'user' | 'assistant' | 'ai';
     content: string;
     id?: string;
     session_id?: string;
     imageBase64?: string; // For vision messages: thumbnail of snipped area
-}
-
-interface SnipSelection {
-    startX: number;
-    startY: number;
-    endX: number;
-    endY: number;
-    pageElement: HTMLElement; // The page container where the snip was drawn
 }
 
 export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
@@ -51,11 +42,10 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
     const [numPages, setNumPages] = useState(0);
     const [error, setError] = useState<string | null>(null);
-    const [progress, setProgress] = useState<number | null>(null);
 
     // Responsive State
     const [activeTab, setActiveTab] = useState<'document' | 'chat'>('document');
-    const [containerWidth, setContainerWidth] = useState<number>(600); // Default
+    const [containerWidth] = useState<number>(600);
     const [zoomLevel, setZoomLevel] = useState<number>(100);
     const [baseScale, setBaseScale] = useState<number>(1.0);
     const pdfWrapperRef = useRef<HTMLDivElement>(null);
@@ -120,16 +110,21 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     const [chatHistory, setChatHistory] = useState<Message[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [inputMessage, setInputMessage] = useState("");
+    const [isError, setIsError] = useState(false);
+    const abortControllerRef = useRef<AbortController | null>(null);
 
     const [pendingAttachments, setPendingAttachments] = useState<string[]>([]); // Array of base64 images
-    const chatEndRef = useRef<HTMLDivElement>(null);
     const selectionTimer = useRef<NodeJS.Timeout | null>(null);
 
     // --- SESSION MANAGEMENT ---
     const { sessions, isLoadingHistory, fetchHistory, loadSession, createSession, clearHistory, deleteSession, deletingId } = useChatHistory();
     const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 
-    // Load history on mount
+    // Reset error state when switching chat sessions
+    useEffect(() => {
+        setIsError(false);
+    }, [currentSessionId]);
+
     // Load history on mount (scoped to file)
     useEffect(() => {
         if (fileId) fetchHistory(fileId);
@@ -516,17 +511,27 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         }
     };
 
-    const sendMessage = async (text: string, attachments: string[] = [], systemInstruction?: string) => {
+    const sendMessage = async (text: string, attachments: string[] = [], systemInstruction?: string, isRetry: boolean = false) => {
         // Build user message
         const newUserMsg: Message = {
             role: 'user',
             content: text,
             ...(attachments.length > 0 && { imageBase64: attachments[0] }),
         };
-        const updatedHistory = [...chatHistory, newUserMsg];
 
-        setChatHistory(updatedHistory);
+        // Only append a new user bubble if this is NOT a retry
+        // On retry, the bubble is already on screen — reuse it
+        const updatedHistory = isRetry ? [...chatHistory] : [...chatHistory, newUserMsg];
+        if (!isRetry) {
+            setChatHistory(updatedHistory);
+        }
+
         setIsLoading(true);
+        setIsError(false);
+
+        // Create AbortController for this request
+        const controller = new AbortController();
+        abortControllerRef.current = controller;
 
         try {
             // Ensure Session ID exists
@@ -547,7 +552,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 setCurrentSessionId(activeSessionId);
             }
 
-            // USE API.POST HERE
+            // USE API.POST HERE — pass signal for abort support
             const response = await api.post('/chat', {
                 text: text,
                 mode: "chat",
@@ -557,20 +562,187 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 ...(attachments.length > 0 && { image_base64: attachments[0] }), // Backward compat
                 ...(systemInstruction && { system_instruction: systemInstruction }),
                 session_id: activeSessionId, // Persist message to session
-            });
+                is_retry: isRetry, // If true, backend skips saving user message (already in DB)
+            }, { signal: controller.signal });
 
+            // Strict safety check: throw on failed response
             const data = await response.json();
-            const assistantMessage = data.choices[0].message;
-            setChatHistory(prev => [...prev, assistantMessage]);
+            if (!response.ok) {
+                throw new Error(data?.detail || `API error: ${response.status}`);
+            }
+
+            // Validate expected response structure before destructuring
+            if (!data?.choices?.[0]?.message) {
+                throw new Error("Invalid API response format");
+            }
+
+            // Re-fetch ALL messages from DB so React state has real Supabase integer IDs
+            // This prevents the 'fake ID' 404 bug when editing
+            if (activeSessionId) {
+                const dbMessages = await loadSession(activeSessionId);
+                console.log('[State Sync] loadSession returned', dbMessages?.length, 'messages. Sample IDs:', dbMessages?.slice(0, 3).map((m) => m.id));
+                if (dbMessages && dbMessages.length > 0) {
+                    setChatHistory(dbMessages as Message[]);
+                } else {
+                    // Fallback: use the API response directly
+                    const assistantMessage = data.choices[0].message;
+                    setChatHistory(prev => [...prev, assistantMessage]);
+                }
+            } else {
+                const assistantMessage = data.choices[0].message;
+                setChatHistory(prev => [...prev, assistantMessage]);
+            }
 
             // Refresh sidebar if this was the first message (new session created)
             if (!currentSessionId && activeSessionId) {
                 await fetchHistory(fileId);
             }
 
+        } catch (err: unknown) {
+            if (err instanceof Error && err.name === 'AbortError') {
+                // Intentional user action — silent catch, no console.error, no isError
+                // Append as 'assistant' role so it renders like a normal AI response (left side, action buttons)
+                // This message is LOCAL STATE ONLY — never persisted to Supabase
+                setChatHistory(prev => [...prev, { role: 'assistant', content: '_You stopped this response._' }]);
+            } else {
+                console.error("Chat Error:", err);
+                // Network/server error
+                setIsError(true);
+
+                // Sync state with DB — if the user message was saved before the LLM crashed,
+                // this replaces the temporary frontend ID with the real DB integer ID.
+                // Smart Retry will then correctly use /chat/edit instead of duplicating.
+                if (currentSessionId) {
+                    try {
+                        const dbMessages = await loadSession(currentSessionId);
+                        if (dbMessages && dbMessages.length > 0) {
+                            setChatHistory(dbMessages as Message[]);
+                            console.log('[Error Sync] Refreshed state with', dbMessages.length, 'DB messages');
+                        }
+                    } catch (syncErr) {
+                        console.warn('[Error Sync] Failed to refresh history:', syncErr);
+                    }
+                }
+            }
+        } finally {
+            setIsLoading(false);
+            abortControllerRef.current = null;
+        }
+    };
+
+    const stopGeneration = () => {
+        abortControllerRef.current?.abort();
+    };
+
+    const handleRetry = async () => {
+        // Find the last user message by scanning backwards
+        let lastUserMsg: Message | null = null;
+
+        for (let i = chatHistory.length - 1; i >= 0; i--) {
+            if (chatHistory[i].role === 'user') {
+                lastUserMsg = chatHistory[i];
+                break;
+            }
+        }
+
+        if (!lastUserMsg || !lastUserMsg.content) return;
+
+        // Reset error state
+        setIsError(false);
+
+        // Smart Retry Logic --------------------------------------------------
+        const rawId = lastUserMsg.id;
+        const numericId = Number(rawId);
+        // Valid if: not NaN, > 0, and not a massive timestamp like Date.now() (which are > 1 trillion)
+        const isRealDbId = rawId !== undefined && !isNaN(numericId) && numericId > 0 && numericId < 1000000000;
+
+        console.log('[Retry] Triggered - ID:', rawId, 'Numeric:', numericId, 'IsRealDB:', isRealDbId);
+
+        const images = lastUserMsg.imageBase64 ? [lastUserMsg.imageBase64] : [];
+
+        if (isRealDbId) {
+            // Path A: SERVER ERROR (DB saved it, LLM crashed)
+            console.log('[Retry] Path A: Attempting /chat/edit with ID:', rawId);
+
+            // Optimistic UI: immediately show only the user's message, remove stale AI responses
+            const editIndex = chatHistory.findIndex(m => String(m.id) === String(rawId));
+            if (editIndex !== -1) {
+                setChatHistory(chatHistory.slice(0, editIndex + 1));
+            }
+
+            try {
+                setIsLoading(true);
+                // Call handleEditMessage directly since we have a confirmed DB ID
+                const response = await api.post('/chat/edit', {
+                    session_id: currentSessionId,
+                    message_id: String(rawId),
+                    new_text: lastUserMsg.content,
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Edit failed: ${response.status}`);
+                }
+
+                // Success! Refresh state
+                const msgs = await loadSession(currentSessionId!);
+                setChatHistory(msgs as Message[]);
+                setIsLoading(false);
+
+            } catch (editErr) {
+                console.warn('[Retry] Path A failed, falling back to resend:', editErr);
+                // Fallback: If edit fails (e.g. 404), remove the message and Resend
+                setChatHistory(prev => prev.slice(0, -1));
+                sendMessage(lastUserMsg.content, images, undefined, true);
+            }
+        } else {
+            // Path B: NETWORK ERROR (Message never reached DB or has Temp ID)
+            console.log('[Retry] Path B: Network error / temporary ID — Resending fresh');
+            // Leave the existing bubble on screen — sendMessage with isRetry=true won't add another
+            sendMessage(lastUserMsg.content, images, undefined, true);
+        }
+    };
+
+    const handleEditMessage = async (messageId: string, newText: string) => {
+        if (!currentSessionId) return;
+
+        // Safety log: what ID is being sent to the backend?
+        console.log('[Edit] Editing Message ID:', messageId, 'Type:', typeof messageId);
+
+        // --- OPTIMISTIC UI UPDATE (instant feedback) ---
+        // Find the index of the message being edited
+        const editIndex = chatHistory.findIndex(m => String(m.id) === String(messageId));
+        if (editIndex !== -1) {
+            // Slice off everything after this message, update its content
+            const optimisticMessages = chatHistory.slice(0, editIndex + 1);
+            optimisticMessages[editIndex] = {
+                ...optimisticMessages[editIndex],
+                content: newText,
+            };
+            setChatHistory(optimisticMessages);
+        }
+
+        setIsLoading(true);
+        setIsError(false);
+
+        try {
+            const response = await api.post('/chat/edit', {
+                session_id: currentSessionId,
+                message_id: messageId,
+                new_text: newText,
+            });
+
+            if (!response.ok) {
+                throw new Error(`Edit failed: ${response.status}`);
+            }
+
+            // --- CLEAN STATE REFRESH: overwrite with fresh DB timeline ---
+            const msgs = await loadSession(currentSessionId);
+            console.log('[Edit] State refresh:', msgs?.length, 'messages from DB');
+            setChatHistory(msgs as Message[]);
+
         } catch (err) {
-            console.error("Chat Error:", err);
-            setChatHistory(prev => [...prev, { role: 'assistant', content: "Sorry, connection error." }]);
+            console.error("Edit Error:", err);
+            setIsError(true);
         } finally {
             setIsLoading(false);
         }
@@ -683,6 +855,12 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
             onCloseSidebar={() => setIsSidebarOpen(false)}
             onNewChat={handleNewChat}
 
+            // Premium UX Props
+            isError={isError}
+            onRetry={handleRetry}
+            onStopGeneration={stopGeneration}
+            onEditMessage={handleEditMessage}
+
             // Session Props
             sessions={sessions}
             isLoadingHistory={isLoadingHistory}
@@ -703,7 +881,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                     if (prev.length === 0) return prev;
                     const last = prev[prev.length - 1];
                     // Check for both 'assistant' (groq) and 'ai' (supabase) roles
-                    if (last.role === 'assistant' || (last.role as any) === 'ai') {
+                    if (last.role === 'assistant' || last.role === 'ai') {
                         return prev.slice(0, -1);
                     }
                     return prev;

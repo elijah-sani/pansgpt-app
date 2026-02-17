@@ -21,11 +21,11 @@ supabase_client = None
 try:
     if SUPABASE_URL and SUPABASE_KEY:
         supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        print("✅ Supabase Client Initialized")
+        print("[INFO] Supabase Client Initialized")
     else:
-        print("⚠️ Skipped Init")
+        print("[WARNING] Skipped Init")
 except Exception as e:
-    print(f"❌ Failed to init: {e}")
+    print(f"[ERROR] Failed to init: {e}")
 
 PHARMACY_SYSTEM_PROMPT = "Default Prompt"
 
@@ -53,9 +53,9 @@ def simulate_chat_logic():
                     temperature = float(config["temperature"])
                     print(f"Updated Temp: {temperature} (Type: {type(temperature)})")
                     
-                logger.info(f"⚙️ Using Dynamic Settings: Temp={temperature}, PromptLen={len(system_prompt)}")
+                logger.info(f"[INFO] Using Dynamic Settings: Temp={temperature}, PromptLen={len(system_prompt)}")
         except Exception as e:
-            logger.warning(f"⚠️ Failed to fetch system settings, using defaults: {e}")
+            logger.warning(f"[WARNING] Failed to fetch system settings, using defaults: {e}")
             import traceback
             traceback.print_exc()
 
@@ -63,3 +63,5 @@ def simulate_chat_logic():
 
 if __name__ == "__main__":
     simulate_chat_logic()
+
+

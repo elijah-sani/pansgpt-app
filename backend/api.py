@@ -8,7 +8,7 @@ import os
 import time
 from dotenv import load_dotenv
 from google_drive import GoogleDriveService, get_drive_service
-from groq import Groq
+
 import logging
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -42,19 +42,23 @@ app.include_router(system.router)
 # Security Configuration
 API_KEYS = os.getenv("API_KEYS", "").split(",")
 GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-
-if not API_KEYS or API_KEYS == [""]:
-    logger.warning("WARNING: No API_KEYS set in .env! API is insecure.")
-
-if not GROQ_API_KEY:
-    logger.warning("WARNING: GROQ_API_KEY not set in .env! AI features will fail.")
-
-# Initialize Groq Client
+# Initialize Google AI Studio Client (OpenAI Compatible)
 try:
-    groq_client = Groq(api_key=GROQ_API_KEY)
+    from openai import AsyncOpenAI
+    
+    # Use GOOGLE_API_KEY (same as RAG) for simplicity
+    GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+    if not GOOGLE_API_KEY:
+        logger.warning("[WARNING] GOOGLE_API_KEY not set! AI features will fail.")
+        groq_client = None
+    else:
+        groq_client = AsyncOpenAI(
+            api_key=GOOGLE_API_KEY,
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+        )
+        logger.info("[INFO] Google AI Studio Client Initialized")
 except Exception as e:
-    logger.error(f"Failed to initialize Groq client: {e}")
+    logger.error(f"Failed to initialize AI client: {e}")
     groq_client = None
 
 # CORS: Allow your frontend to talk to this backend
@@ -95,9 +99,9 @@ async def verify_api_key(x_api_key: str = Header(...)):
 # --- Service Initialization ---
 try:
     drive_service = get_drive_service(allow_upload=True)
-    logger.info("✅ Google Drive Service Initialized")
+    logger.info("[INFO] Google Drive Service Initialized")
 except Exception as e:
-    logger.error(f"❌ Failed to initialize Drive Service: {e}")
+    logger.error(f"[ERROR] Failed to initialize Drive Service: {e}")
     drive_service = None
 
 # --- Supabase Initialization (Moved up to be available for routes) ---
@@ -107,24 +111,31 @@ SUPABASE_URL = os.getenv("NEXT_PUBLIC_SUPABASE_URL") or os.getenv("SUPABASE_URL"
 SUPABASE_KEY = os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
 supabase_client = None
+supabase_service_client = None
 try:
-    from supabase import create_client, Client
+    from supabase import create_client, Client, ClientOptions
     if SUPABASE_URL and SUPABASE_KEY:
-        supabase_client: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        logger.info("✅ Supabase Client Initialized Successfully")
+        supabase_options = ClientOptions(postgrest_client_timeout=60)
+        supabase_client: Client = create_client(SUPABASE_URL, SUPABASE_KEY, options=supabase_options)
+        logger.info("[INFO] Supabase Client Initialized Successfully")
+
+        # Optional service-role client with same timeout policy when available.
+        service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        if service_role_key:
+            supabase_service_client = create_client(SUPABASE_URL, service_role_key, options=supabase_options)
     else:
-        logger.warning("⚠️ Supabase Initialization Skipped due to missing variables.")
+        logger.warning("[WARNING] Supabase Initialization Skipped due to missing variables.")
 except ImportError:
-    logger.error("⚠️ 'supabase' package not installed.")
+    logger.error("[ERROR] 'supabase' package not installed.")
 except Exception as e:
-    logger.error(f"❌ Failed to initialize Supabase: {e}")
+    logger.error(f"[ERROR] Failed to initialize Supabase: {e}")
 logger.info("---------------------------------------")
 
 # --- Initialize Routers with Dependencies ---
 library.set_dependencies(drive_service, supabase_client, verify_api_key, GOOGLE_DRIVE_FOLDER_ID)
 chat.set_dependencies(groq_client, supabase_client, verify_api_key)
 system.set_dependencies(supabase_client)
-settings.set_dependencies(supabase_client)
+settings.set_dependencies(supabase_client, verify_api_key)
 
 # Include routers
 app.include_router(library.router)
@@ -216,7 +227,7 @@ async def stream_document(file_id: str, size: Optional[str] = None):
                 file_size = metadata.get('size')
                 file_name = metadata.get('name', file_name)
         except Exception as e:
-            logger.warning(f"⚠️ Warning: Metadata fetch failed: {e}")
+            logger.warning(f"[WARNING] Warning: Metadata fetch failed: {e}")
 
     try:
         sync_generator = drive_service.get_file_stream(file_id)
@@ -241,3 +252,5 @@ async def stream_document(file_id: str, size: Optional[str] = None):
 
 # Library endpoints (upload, delete, update) moved to routers/library.py
 # Admin user management is handled via database user_roles table
+
+

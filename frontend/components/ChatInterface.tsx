@@ -2,9 +2,6 @@ import React, { useRef, useEffect, useState } from 'react';
 import {
     Clock,
     SquarePen,
-    ThumbsUp,
-    ThumbsDown,
-    Copy,
     RotateCw,
     Plus,
     Mic,
@@ -13,13 +10,13 @@ import {
     MessageSquare,
     Trash2,
     AlertCircle,
-    Loader2
+    Loader2,
+    Square,
+    Pencil
 } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 
 interface Message {
-    role: 'system' | 'user' | 'assistant';
+    role: 'system' | 'user' | 'assistant' | 'ai';
     content: string;
     id?: string;
     session_id?: string;
@@ -44,6 +41,12 @@ interface ChatInterfaceProps {
     onCloseSidebar?: () => void; // For mobile/desktop close behavior
     onNewChat?: () => void; // Optional handler
 
+    // Premium UX Props
+    isError?: boolean;
+    onRetry?: () => void;
+    onStopGeneration?: () => void;
+    onEditMessage?: (messageId: string, newText: string) => void;
+
     // History Props
     sessions: ChatSession[];
     isLoadingHistory: boolean;
@@ -66,7 +69,7 @@ const getImages = (imgData: string | undefined): string[] => {
             if (Array.isArray(parsed)) return parsed;
         }
         return [imgData]; // Fallback: It was just a single string
-    } catch (e) {
+    } catch {
         return [imgData]; // Fallback on error
     }
 };
@@ -82,13 +85,15 @@ export default function ChatInterface({
     isMobile = false,
     onCloseSidebar,
     onNewChat,
+    isError,
+    onRetry,
+    onStopGeneration,
+    onEditMessage,
     sessions,
     isLoadingHistory,
     onLoadSession,
-    onClearHistory,
     onDeleteSession,
     deletingId,
-    contextId,
     onRegenerate
 }: ChatInterfaceProps) {
     const chatEndRef = useRef<HTMLDivElement>(null);
@@ -101,6 +106,10 @@ export default function ChatInterface({
 
     // Report Problem Modal State
     const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+
+    // Inline Editing State
+    const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+    const [editDraft, setEditDraft] = useState("");
 
     // State for Interactivity
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
@@ -126,7 +135,6 @@ export default function ChatInterface({
                     const base64String = reader.result as string;
                     // Remove prefix
                     const base64Data = base64String.split(',')[1];
-                    // @ts-ignore
                     setPendingAttachments((prev: string[]) => [...prev, base64Data]);
                 };
                 reader.readAsDataURL(file);
@@ -214,7 +222,7 @@ export default function ChatInterface({
                         </div>
                     ) : (
                         messages.filter(m => m.role !== 'system').map((msg, i) => (
-                            <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} max-w-3xl mx-auto w-full group`}>
+                            <div key={i} className={`flex flex-col ${msg.role === 'system' ? 'items-center' : msg.role === 'user' ? 'items-end' : 'items-start'} max-w-3xl mx-auto w-full group`}>
 
                                 {/* User Message Area */}
                                 {msg.role === 'user' ? (
@@ -257,13 +265,73 @@ export default function ChatInterface({
                                             return null;
                                         })()}
 
-                                        {/* 2. Text Bubble */}
+                                        {/* 2. Text Bubble or Inline Edit */}
                                         {msg.content && (
-                                            <div className="max-w-[85%] bg-[#253920] text-white px-5 py-3 rounded-2xl rounded-tr-sm shadow-sm border border-[#253920] text-[15px] leading-relaxed">
-                                                {msg.content}
-                                            </div>
+                                            editingMessageId === String(i) ? (
+                                                /* Inline Edit Mode */
+                                                <div className="max-w-[85%] w-full flex flex-col gap-2">
+                                                    <textarea
+                                                        value={editDraft}
+                                                        onChange={(e) => setEditDraft(e.target.value)}
+                                                        className="w-full bg-muted border border-border rounded-xl px-4 py-3 text-[15px] leading-relaxed text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none min-h-[80px]"
+                                                        autoFocus
+                                                    />
+                                                    <div className="flex gap-2 justify-end">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setEditingMessageId(null);
+                                                                setEditDraft("");
+                                                            }}
+                                                            className="px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted rounded-lg transition-colors"
+                                                        >
+                                                            Cancel
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                if (onEditMessage && editDraft.trim()) {
+                                                                    onEditMessage(msg.id ? String(msg.id) : String(i), editDraft.trim());
+                                                                    setEditingMessageId(null);
+                                                                    setEditDraft("");
+                                                                }
+                                                            }}
+                                                            disabled={!editDraft.trim()}
+                                                            className="px-3 py-1.5 text-sm bg-[#466b3c] text-white rounded-lg hover:bg-[#3a5630] disabled:opacity-50 transition-colors"
+                                                        >
+                                                            Save & Send
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                /* Normal Display Mode */
+                                                <>
+                                                    <div className="max-w-[85%] bg-[#253920] text-white px-5 py-3 rounded-2xl rounded-tr-sm shadow-sm border border-[#253920] text-[15px] leading-relaxed">
+                                                        {msg.content}
+                                                    </div>
+                                                    {/* Edit Button (below bubble) */}
+                                                    {onEditMessage && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setEditingMessageId(String(i));
+                                                                setEditDraft(msg.content);
+                                                            }}
+                                                            className="mt-1 p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors opacity-0 group-hover:opacity-100"
+                                                            title="Edit message"
+                                                        >
+                                                            <Pencil className="w-3.5 h-3.5" />
+                                                        </button>
+                                                    )}
+                                                </>
+                                            )
                                         )}
                                     </>
+                                ) : msg.role === 'system' ? (
+                                    /* System Message (e.g. "Generation stopped by user") */
+                                    <div className="text-sm text-muted-foreground italic px-4 py-2">
+                                        {msg.content}
+                                    </div>
                                 ) : (
                                     /* AI Message (Markdown, No Background) */
                                     <MessageBubble
@@ -285,6 +353,26 @@ export default function ChatInterface({
                                 <div className="w-2 h-2 bg-primary rounded-full animate-bounce [animation-delay:-0.3s]" />
                                 <div className="w-2 h-2 bg-primary rounded-full animate-bounce [animation-delay:-0.15s]" />
                                 <div className="w-2 h-2 bg-primary rounded-full animate-bounce" />
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Error & Retry Block */}
+                    {isError && !isLoading && (
+                        <div className="max-w-3xl mx-auto w-full px-2">
+                            <div className="flex items-center gap-3 p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-sm">
+                                <AlertCircle className="w-5 h-5 text-destructive shrink-0" />
+                                <span className="text-destructive font-medium flex-1">Network Error: Please try again.</span>
+                                {onRetry && (
+                                    <button
+                                        type="button"
+                                        onClick={onRetry}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-destructive text-destructive-foreground rounded-lg text-sm font-medium hover:bg-destructive/90 transition-colors shrink-0"
+                                    >
+                                        <RotateCw className="w-3.5 h-3.5" />
+                                        Retry
+                                    </button>
+                                )}
                             </div>
                         </div>
                     )}
@@ -361,9 +449,19 @@ export default function ChatInterface({
                             className="flex-1 bg-transparent border-none outline-none text-base placeholder:text-muted-foreground px-2 h-10"
                         />
 
-                        {/* Right Tools - Dynamic Mic/Send */}
+                        {/* Right Tools - Dynamic Mic/Send/Stop */}
                         <div className="flex items-center gap-1 pr-1">
-                            {!inputMessage.trim() && pendingAttachments.length === 0 ? (
+                            {isLoading ? (
+                                /* Stop Button (morphed from Send) */
+                                <button
+                                    type="button"
+                                    onClick={onStopGeneration}
+                                    className="p-2.5 bg-destructive text-destructive-foreground rounded-full hover:bg-destructive/90 transition-all shadow-md flex items-center justify-center aspect-square animate-in zoom-in duration-200"
+                                    title="Stop generation"
+                                >
+                                    <Square className="w-4 h-4 fill-current" />
+                                </button>
+                            ) : !inputMessage.trim() && pendingAttachments.length === 0 ? (
                                 <button
                                     type="button"
                                     className="p-2.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-full transition-colors"
@@ -374,8 +472,7 @@ export default function ChatInterface({
                             ) : (
                                 <button
                                     type="submit"
-                                    disabled={isLoading}
-                                    className="p-2.5 bg-[#466b3c] text-white rounded-full hover:bg-[#3a5630] disabled:opacity-50 transition-all shadow-md flex items-center justify-center aspect-square"
+                                    className="p-2.5 bg-[#466b3c] text-white rounded-full hover:bg-[#3a5630] transition-all shadow-md flex items-center justify-center aspect-square"
                                 >
                                     <Send className="w-4 h-4" />
                                 </button>

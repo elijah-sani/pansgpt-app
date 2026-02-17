@@ -4,11 +4,10 @@ import React, { useState, useEffect } from 'react';
 import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
 import {
     Users, FileText, Brain, Zap,
-    ArrowRight, Activity, Clock,
-    LayoutGrid, Settings, BookOpen,
+    Activity,
     ShieldCheck, AlertTriangle
 } from 'lucide-react';
-import Link from 'next/link';
+import type { LucideIcon } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { SystemStatusBadge } from '../../components/SystemStatusBadge';
 
@@ -20,6 +19,27 @@ interface ActivityItem {
     subtitle: string; // "By Admin" or "admin@example.com"
     timestamp: Date;
     avatar?: string;
+}
+
+interface DashboardStats {
+    userCount: number;
+    docCount: number;
+    storageUsed: string;
+    storagePercentage: number;
+    aiStatus: string;
+    apiCalls: string;
+}
+
+interface StatCardProps {
+    icon: LucideIcon;
+    label: string;
+    value: string | number;
+    trend?: string;
+    sub?: string;
+    color: string;
+    bg: string;
+    iconType?: LucideIcon;
+    progress?: number;
 }
 
 export default function MissionControlPage() {
@@ -268,7 +288,7 @@ export default function MissionControlPage() {
 
 // --- Sub-Components ---
 
-function StatCard({ icon: Icon, label, value, trend, sub, color, bg, iconType, progress }: any) {
+function StatCard({ icon: Icon, label, value, trend, sub, color, bg, iconType, progress }: StatCardProps) {
     const DisplayIcon = iconType || Icon;
     return (
         <div className="bg-card border border-border rounded-xl p-5 hover:border-primary/30 transition-colors shadow-sm relative overflow-hidden group">
@@ -297,7 +317,7 @@ function StatCard({ icon: Icon, label, value, trend, sub, color, bg, iconType, p
     );
 }
 
-function SystemAnalytics({ stats }: { stats?: any }) {
+function SystemAnalytics({ stats }: { stats?: DashboardStats }) {
     // Mock Data for 7 Days (Visual only, as we don't track history yet)
     const dataPoints = [20, 45, 30, 60, 55, 80, 70];
     const max = Math.max(...dataPoints);

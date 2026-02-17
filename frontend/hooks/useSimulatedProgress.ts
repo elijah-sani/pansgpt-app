@@ -9,6 +9,7 @@ import { useState, useEffect, useRef } from 'react';
 export function useSimulatedProgress(realProgress: number | null) {
     const [displayProgress, setDisplayProgress] = useState(0);
     const simulationInterval = useRef<NodeJS.Timeout | null>(null);
+    const updateFrame = useRef<number | null>(null);
 
     // 1. Simulation Logic
     useEffect(() => {
@@ -30,6 +31,8 @@ export function useSimulatedProgress(realProgress: number | null) {
         return () => {
             if (simulationInterval.current) clearInterval(simulationInterval.current);
         };
+        // Intentional one-time bootstrap for simulated progress.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // 2. Merging Real Data
@@ -38,13 +41,23 @@ export function useSimulatedProgress(realProgress: number | null) {
             // Stop simulation once real data arrives
             if (simulationInterval.current) clearInterval(simulationInterval.current);
 
-            // Always pick the larger value to prevent backward jumps
-            setDisplayProgress(prev => {
-                // If real progress completes, jump to 100
-                if (realProgress >= 100) return 100;
-                return Math.max(prev, realProgress);
+            if (updateFrame.current) {
+                cancelAnimationFrame(updateFrame.current);
+            }
+
+            // Defer state update to avoid synchronous setState directly in effect.
+            updateFrame.current = requestAnimationFrame(() => {
+                setDisplayProgress(prev => {
+                    if (realProgress >= 100) return 100;
+                    return Math.max(prev, realProgress);
+                });
             });
         }
+        return () => {
+            if (updateFrame.current) {
+                cancelAnimationFrame(updateFrame.current);
+            }
+        };
     }, [realProgress]);
 
     return displayProgress;

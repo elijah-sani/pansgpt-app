@@ -18,7 +18,7 @@ def authenticate():
             creds.refresh(Request())
         else:
             if not os.path.exists('credentials.json'):
-                print("❌ Error: credentials.json not found! Download it from Google Cloud Console.")
+                print("[ERROR] credentials.json not found! Download it from Google Cloud Console.")
                 return
                 
             flow = InstalledAppFlow.from_client_secrets_file(
@@ -28,7 +28,7 @@ def authenticate():
         # 3. Save the token for the backend to use later
         with open('token.json', 'w') as token:
             token.write(creds.to_json())
-            print("✅ Success! 'token.json' created. Your backend can now upload files as You.")
+            print("[INFO] Success! 'token.json' created. Your backend can now upload files as You.")
 
 if __name__ == '__main__':
     authenticate()

@@ -4,7 +4,7 @@ import { Sparkles, MessageSquarePlus, X } from 'lucide-react';
 interface SnippetMenuProps {
     imageBlob: Blob | string; // Can be base64 string
     onClose: () => void;
-    onSend: (data: { text: string; attachments: string[] }) => void;
+    onSend: (data: { text: string; attachments: string[]; systemInstruction?: string }) => void;
     onAddToInput: (image: string) => void;
 }
 
@@ -41,7 +41,6 @@ const SnippetMenu: React.FC<SnippetMenuProps> = ({
         onSend({
             text: userVisibleText,
             attachments: [attachment],
-            // @ts-ignore - We'll update the interface next
             systemInstruction: hiddenPrompt
         });
         onClose();

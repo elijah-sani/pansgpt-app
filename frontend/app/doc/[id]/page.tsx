@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, use } from 'react';
+import { useEffect, useState, use, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
@@ -23,10 +23,17 @@ interface DocumentJSON {
     pages: SlideData[];
 }
 
+interface DocumentRow {
+    id: string;
+    filename?: string;
+    subject?: string;
+    content: string;
+}
+
 export default function DocumentPage({ params }: DocumentPageProps) {
     const { id } = use(params);
 
-    const [doc, setDoc] = useState<any>(null);
+    const [doc, setDoc] = useState<DocumentRow | null>(null);
     const [slides, setSlides] = useState<SlideData[]>([]);
     const [metadata, setMetadata] = useState<DocumentJSON['metadata'] | null>(null);
     const [loading, setLoading] = useState(true);
@@ -35,10 +42,22 @@ export default function DocumentPage({ params }: DocumentPageProps) {
     // Flashcard State (for Desktop)
     const [currentSlide, setCurrentSlide] = useState(0);
 
+    const nextSlide = useCallback(() => {
+        if (currentSlide < slides.length - 1) {
+            setCurrentSlide((prev) => prev + 1);
+        }
+    }, [currentSlide, slides.length]);
+
+    const prevSlide = useCallback(() => {
+        if (currentSlide > 0) {
+            setCurrentSlide((prev) => prev - 1);
+        }
+    }, [currentSlide]);
+
     // --- 1. FETCH & PARSE JSON ---
     useEffect(() => {
         const fetchDoc = async () => {
-            const { data, error } = await supabase
+            const { data } = await supabase
                 .from('documents')
                 .select('*')
                 .eq('id', id)
@@ -62,7 +81,7 @@ export default function DocumentPage({ params }: DocumentPageProps) {
                             slots: { slot_1: data.content },
                         }]);
                     }
-                } catch (e) {
+                } catch {
                     // Legacy format: Create a single standard slide
                     setSlides([{
                         page_number: 1,
@@ -93,19 +112,7 @@ export default function DocumentPage({ params }: DocumentPageProps) {
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [currentSlide, slides.length]);
-
-    const nextSlide = () => {
-        if (currentSlide < slides.length - 1) {
-            setCurrentSlide(prev => prev + 1);
-        }
-    };
-
-    const prevSlide = () => {
-        if (currentSlide > 0) {
-            setCurrentSlide(prev => prev - 1);
-        }
-    };
+    }, [currentSlide, nextSlide, prevSlide, slides.length]);
 
     // --- LOADING STATE ---
     if (loading) return (

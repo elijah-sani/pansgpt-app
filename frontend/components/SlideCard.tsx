@@ -20,7 +20,6 @@ export default function SlideCard({ url, caption, context }: SlideCardProps) {
                 className="group relative my-8 cursor-pointer overflow-hidden rounded-xl border border-gray-200 bg-white transition-all hover:ring-2 hover:ring-indigo-500 hover:ring-offset-2"
             >
                 <div className="bg-gray-50 p-6">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                         src={url}
                         alt={caption}
@@ -60,7 +59,6 @@ export default function SlideCard({ url, caption, context }: SlideCardProps) {
 
                         {/* Left: Image Area */}
                         <div className="flex flex-1 items-center justify-center bg-gray-100 p-6">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
                                 src={url}
                                 alt={caption}

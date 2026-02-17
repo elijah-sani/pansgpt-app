@@ -5,12 +5,9 @@ import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
 import { useTheme } from 'next-themes';
 import { useRouter } from 'next/navigation';
 import {
-    Camera,
     LogOut,
     AlertTriangle,
     Moon,
-    Sun,
-    Save,
     Cpu,
     CheckCircle2,
     Shield,
@@ -19,12 +16,12 @@ import {
     Cloud,
     Wrench,
     X,
-    ChevronLeft,
     LayoutGrid,
     RefreshCw,
     Check,
     Loader2
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { api } from '@/lib/api';
 
@@ -34,28 +31,31 @@ interface AvatarSelectionModalProps {
     isOpen: boolean;
     onClose: () => void;
     onConfirm: (avatarUrl: string) => void;
-    currentAvatarUrl: string;
 }
 
-const AvatarSelectionModal = ({ isOpen, onClose, onConfirm, currentAvatarUrl }: AvatarSelectionModalProps) => {
+const AvatarSelectionModal = ({ isOpen, onClose, onConfirm }: AvatarSelectionModalProps) => {
     const [seeds, setSeeds] = useState<string[]>([]);
     const [selectedSeed, setSelectedSeed] = useState<string | null>(null);
     const [isGenerating, setIsGenerating] = useState(false);
 
-    // Generate random seeds on open
-    useEffect(() => {
-        if (isOpen) {
-            generateSeeds();
-            setSelectedSeed(null);
-        }
-    }, [isOpen]);
-
-    const generateSeeds = () => {
+    function generateSeeds() {
         setIsGenerating(true);
         const newSeeds = Array.from({ length: 12 }, () => Math.random().toString(36).substring(7));
         setSeeds(newSeeds);
         setTimeout(() => setIsGenerating(false), 500); // Fake delay for UX
-    };
+    }
+
+    // Generate random seeds on open
+    useEffect(() => {
+        if (!isOpen) return;
+
+        const timer = window.setTimeout(() => {
+            generateSeeds();
+            setSelectedSeed(null);
+        }, 0);
+
+        return () => window.clearTimeout(timer);
+    }, [isOpen]);
 
     const getAvatarUrl = (seed: string) => `https://api.dicebear.com/9.x/toon-head/svg?translateY=5&beardProbability=30&eyebrows=happy,neutral,raised,sad,angry&hairColor=2c1b18,724133,a55728,b58143&backgroundColor=ffdfbf,ffd5dc,d1d4f9,c0aede,b6e3f4&seed=${seed}`;
 
@@ -230,6 +230,8 @@ const AIEditor = ({ systemConfig, setSystemConfig, userEmail }: AIEditorProps) =
         }, 500);
 
         return () => clearTimeout(timer);
+        // Intentional: avoid including full object/setter deps to prevent save-loop churn while typing.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [localTemperature, userEmail]);
 
     const handleSavePrompt = async () => {
@@ -250,7 +252,7 @@ const AIEditor = ({ systemConfig, setSystemConfig, userEmail }: AIEditorProps) =
 
             setPromptMessage({ type: 'success', text: 'Configuration saved.' });
             setTimeout(() => setPromptMessage(null), 3000);
-        } catch (err) {
+        } catch {
             setPromptMessage({ type: 'error', text: 'Failed to save.' });
         } finally {
             setIsSavingPrompt(false);
@@ -564,7 +566,7 @@ export default function SettingsPage() {
         </div>
     );
 
-    const SettingsRow = ({ icon: Icon, label, action, onClick, isDanger }: { icon: any, label: string, action?: React.ReactNode, onClick?: () => void, isDanger?: boolean }) => (
+    const SettingsRow = ({ icon: Icon, label, action, onClick, isDanger }: { icon: LucideIcon, label: string, action?: React.ReactNode, onClick?: () => void, isDanger?: boolean }) => (
         <div
             onClick={onClick}
             className={`flex items-center justify-between p-4 ${onClick ? 'cursor-pointer hover:bg-muted/50 active:bg-muted transition-colors' : ''}`}
@@ -793,7 +795,6 @@ export default function SettingsPage() {
                 isOpen={isAvatarModalOpen}
                 onClose={() => setIsAvatarModalOpen(false)}
                 onConfirm={handleUpdateAvatar}
-                currentAvatarUrl={profileData.avatarUrl}
             />
         </div>
     );

@@ -14,6 +14,13 @@ venv/
 env/
 archived_streamlit/
 token.json
+tests/*
+backend/tests/*
+frontend/tests/*
+**/tests/
+**/tests/**
+**/test_*.py
+**/*_test.py
 
 # Google Cloud Secrets
 credentials.json
@@ -22,3 +29,4 @@ service_account.json
 # Local Logs
 lint_log.txt
 *.log
+Report.md

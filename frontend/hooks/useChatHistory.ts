@@ -8,7 +8,8 @@ export interface ChatSession {
 }
 
 export interface Message {
-    role: 'user' | 'assistant' | 'system';
+    role: 'user' | 'assistant' | 'system' | 'ai';
+    id?: string | number;
     content: string;
     image_data?: string;
     images?: string[];
@@ -52,7 +53,7 @@ export const useChatHistory = () => {
     const createSession = useCallback(async (title?: string, contextId?: string): Promise<ChatSession | null> => {
         try {
             // Note: api.post automatically handles token injection
-            const body: any = {};
+            const body: Record<string, string> = {};
             if (title) body.title = title;
             if (contextId) body.context_id = contextId;
 

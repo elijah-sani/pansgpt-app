@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo } from 'react';
-import { BookOpen, ChevronRight, File, Library, RefreshCw, Layers, FolderOpen, ArrowLeft, User, LogOut, LogIn, Loader2, LayoutDashboard } from 'lucide-react';
+import { BookOpen, ChevronRight, File, Library, FolderOpen, ArrowLeft, User, LogOut, LogIn, LayoutDashboard } from 'lucide-react';
 import Link from 'next/link';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
@@ -26,7 +26,7 @@ export default function HomeContent() {
     const [docs, setDocs] = useState<PDFDocument[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [maintenanceMode, setMaintenanceMode] = useState(false);
+    const [, setMaintenanceMode] = useState(false);
 
     // Navigation State (URL Driven)
     const router = useRouter();

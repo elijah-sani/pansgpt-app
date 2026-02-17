@@ -17,25 +17,26 @@ def test_connections():
     if not supabase_key: missing.append("SUPABASE_SERVICE_ROLE_KEY")
     
     if missing:
-        print(f"❌ Missing keys in .env: {', '.join(missing)}")
+        print(f"[ERROR] Missing keys in .env: {', '.join(missing)}")
         return
 
-    print("✅ Keys found.")
+    print("[INFO] Keys found.")
 
     # Test Groq
     try:
         client = Groq(api_key=groq_key)
         # Just a simple local check, not making a call to save tokens/avoid 401 if strict
-        print("✅ Groq client initialized.")
+        print("[INFO] Groq client initialized.")
     except Exception as e:
-        print(f"❌ Groq init failed: {e}")
+        print(f"[ERROR] Groq init failed: {e}")
 
     # Test Supabase
     try:
         supabase = create_client(supabase_url, supabase_key)
-        print("✅ Supabase client initialized.")
+        print("[INFO] Supabase client initialized.")
     except Exception as e:
-        print(f"❌ Supabase init failed: {e}")
+        print(f"[ERROR] Supabase init failed: {e}")
 
 if __name__ == "__main__":
     test_connections()
+

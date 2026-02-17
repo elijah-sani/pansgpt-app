@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, use } from 'react';
+import type { ComponentPropsWithoutRef } from 'react';
 import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
 import { ArrowLeft, User, Calendar, Clock, SquarePen, AlertTriangle, ThumbsUp, ThumbsDown } from 'lucide-react';
 import Link from 'next/link';
@@ -34,7 +35,7 @@ const getImages = (imgData: string | undefined): string[] => {
             if (Array.isArray(parsed)) return parsed;
         }
         return [imgData];
-    } catch (e) {
+    } catch {
         return [imgData];
     }
 };
@@ -74,7 +75,7 @@ export default function AdminChatViewerPage({
                     .single();
 
                 if (sessionError) throw sessionError;
-                setSession(sessionData as any);
+                setSession((sessionData as ChatSession) ?? null);
 
                 // 2. Fetch Messages
                 const { data: messagesData, error: messagesError } = await supabase
@@ -84,7 +85,7 @@ export default function AdminChatViewerPage({
                     .order('created_at', { ascending: true });
 
                 if (messagesError) throw messagesError;
-                setMessages(messagesData as any);
+                setMessages((messagesData as Message[]) ?? []);
 
             } catch (err) {
                 console.error("Error loading chat:", err);
@@ -279,9 +280,9 @@ export default function AdminChatViewerPage({
                                             remarkPlugins={[remarkGfm]}
                                             components={{
                                                 // Customize link rendering to open in new tab
-                                                a: ({ node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline" />,
+                                                a: ({ ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline" />,
                                                 // Ensure code blocks look good
-                                                code: ({ node, className, children, ...props }: any) => {
+                                                code: ({ className, children, ...props }: ComponentPropsWithoutRef<'code'> & { inline?: boolean }) => {
                                                     const match = /language-(\w+)/.exec(className || '')
                                                     return !props.inline && match ? (
                                                         <code className={className} {...props}>

@@ -2,11 +2,12 @@
 
 import { useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import type { User } from '@supabase/supabase-js';
 import { Loader2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 interface OnboardingModalProps {
-    user: any;
+    user: User;
     onComplete: () => void;
 }
 
@@ -73,7 +74,7 @@ export default function OnboardingModal({ user, onComplete }: OnboardingModalPro
                         Welcome to PansGPT! 💊
                     </h2>
                     <p className="text-muted-foreground mt-2">
-                        Let's set up your profile to personalize your study experience.
+                        Let&apos;s set up your profile to personalize your study experience.
                     </p>
                 </div>
 
@@ -133,3 +134,4 @@ export default function OnboardingModal({ user, onComplete }: OnboardingModalPro
         </div>
     );
 }
+

@@ -3,7 +3,7 @@
 import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Loader2, AlertCircle, CheckCircle2, ArrowRight, ArrowLeft } from 'lucide-react';
+import { Loader2, AlertCircle, CheckCircle2, ArrowLeft } from 'lucide-react';
 import AbstractCube from '@/components/AbstractCube';
 
 const NIGERIAN_UNIVERSITIES = [
@@ -62,8 +62,9 @@ export default function AuthPage() {
             if (error) throw error;
             router.push('/admin');
             router.refresh();
-        } catch (error: any) {
-            setMessage({ type: 'error', text: error.message });
+        } catch (error: unknown) {
+            const errorMessage = error instanceof Error ? error.message : 'Login failed.';
+            setMessage({ type: 'error', text: errorMessage });
         } finally {
             setLoading(false);
         }
@@ -107,8 +108,9 @@ export default function AuthPage() {
 
             setMessage({ type: 'success', text: 'Account created! Check your email to confirm.' });
 
-        } catch (error: any) {
-            setMessage({ type: 'error', text: error.message });
+        } catch (error: unknown) {
+            const errorMessage = error instanceof Error ? error.message : 'Sign up failed.';
+            setMessage({ type: 'error', text: errorMessage });
         } finally {
             setLoading(false);
         }

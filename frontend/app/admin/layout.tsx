@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, Library, Users, Settings, Menu, X, ArrowRight, MessageSquareWarning } from 'lucide-react';
+import { LayoutDashboard, Library, Users, Settings, ArrowRight, MessageSquareWarning } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
 import { useRouter, usePathname } from 'next/navigation';
@@ -127,7 +128,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     );
 }
 
-function SidebarItem({ icon: Icon, label, href, active }: { icon: any, label: string, href: string, active?: boolean }) {
+function SidebarItem({ icon: Icon, label, href, active }: { icon: LucideIcon, label: string, href: string, active?: boolean }) {
     return (
         <Link
             href={href}
@@ -145,7 +146,7 @@ function SidebarItem({ icon: Icon, label, href, active }: { icon: any, label: st
     );
 }
 
-function BottomNavItem({ icon: Icon, label, href, active }: { icon: any, label: string, href: string, active?: boolean }) {
+function BottomNavItem({ icon: Icon, label, href, active }: { icon: LucideIcon, label: string, href: string, active?: boolean }) {
     return (
         <Link href={href} className="flex flex-col items-center gap-1 p-2 flex-1">
             <div className={`p-1.5 rounded-full ${active ? 'bg-primary/20 text-primary' : 'text-muted-foreground'}`}>

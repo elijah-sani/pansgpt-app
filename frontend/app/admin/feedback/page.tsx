@@ -9,9 +9,9 @@ import {
     MessageSquare,
     Search,
     ArrowUpRight,
-    List,
-    LayoutGrid
+    List
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import Link from 'next/link';
 
 // --- Types ---
@@ -66,7 +66,7 @@ export default function AdminFeedbackPage() {
                 if (error) {
                     console.error("Error fetching feedback:", error);
                 } else {
-                    setFeedback(data as any);
+                    setFeedback((data || []) as FeedbackItem[]);
                 }
             } catch (err) {
                 console.error("Failed to fetch:", err);
@@ -334,7 +334,21 @@ export default function AdminFeedbackPage() {
 
 // --- Sub-components ---
 
-function StatsCard({ label, value, icon: Icon, color, bg, borderColor = "border-border/50" }: any) {
+function StatsCard({
+    label,
+    value,
+    icon: Icon,
+    color,
+    bg,
+    borderColor = "border-border/50"
+}: {
+    label: string;
+    value: number;
+    icon: LucideIcon;
+    color: string;
+    bg: string;
+    borderColor?: string;
+}) {
     return (
         <div className={`p-5 rounded-xl border ${borderColor} ${bg} shadow-sm flex flex-col justify-between h-28 relative overflow-hidden group hover:shadow-md transition-shadow`}>
             <div className="flex justify-between items-start z-10">

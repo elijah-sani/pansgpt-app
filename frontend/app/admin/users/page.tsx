@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
-import { Search, Plus, User, Shield, Trash2, Check, X, Mail, Lock, ShieldAlert } from 'lucide-react';
+import { Search, Plus, Shield, Trash2, Check, X, Mail, Lock, ShieldAlert } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { api } from '@/lib/api';
 
@@ -29,15 +29,7 @@ export default function UsersPage() {
         process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     );
 
-    useEffect(() => {
-        const init = async () => {
-            await fetchCurrentUserRole();
-            await fetchUsers();
-        };
-        init();
-    }, []);
-
-    const fetchCurrentUserRole = async () => {
+    const fetchCurrentUserRole = useCallback(async () => {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session?.user?.email) return;
 
@@ -50,9 +42,9 @@ export default function UsersPage() {
         if (data && !error) {
             setCurrentUserRole(data.role); // 'admin' or 'super_admin'
         }
-    };
+    }, [supabase]);
 
-    const fetchUsers = async () => {
+    const fetchUsers = useCallback(async () => {
         setIsLoading(true);
         try {
             const { data, error } = await supabase
@@ -67,7 +59,15 @@ export default function UsersPage() {
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [supabase]);
+
+    useEffect(() => {
+        const init = async () => {
+            await fetchCurrentUserRole();
+            await fetchUsers();
+        };
+        init();
+    }, [fetchCurrentUserRole, fetchUsers]);
 
     const handleDeleteUser = async (targetEmail: string) => {
         if (!confirm(`Are you sure you want to remove ${targetEmail}?`)) return;
@@ -283,10 +283,10 @@ function InviteModal({ onClose, onSuccess }: { onClose: () => void, onSuccess: (
                 onSuccess();
             }, 1500);
 
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error(err);
             setStatus('error');
-            setErrorMsg(err.message || "Failed to add user.");
+            setErrorMsg(err instanceof Error ? err.message : "Failed to add user.");
         }
     };
 

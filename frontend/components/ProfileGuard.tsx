@@ -3,14 +3,14 @@
 import React, { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
-import { Loader2 } from 'lucide-react';
+import type { User } from '@supabase/supabase-js';
 import OnboardingModal from './OnboardingModal';
 
 export default function ProfileGuard({ children }: { children: React.ReactNode }) {
     const pathname = usePathname();
     const [loading, setLoading] = useState(true);
     const [showOnboarding, setShowOnboarding] = useState(false);
-    const [user, setUser] = useState<any>(null);
+    const [user, setUser] = useState<User | null>(null);
 
     useEffect(() => {
         const checkProfile = async () => {

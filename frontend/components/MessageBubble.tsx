@@ -2,12 +2,15 @@
 import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 import { ThumbsUp, ThumbsDown, Copy, Check, RotateCcw } from 'lucide-react';
 import FeedbackModal from './FeedbackModal';
 import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
 
 export interface Message {
-    role: 'system' | 'user' | 'assistant';
+    role: 'system' | 'user' | 'assistant' | 'ai';
     content: string;
     id?: string;
     session_id?: string;
@@ -105,7 +108,7 @@ export default function MessageBubble({ message, onRegenerate }: MessageBubblePr
         <div className="w-full pl-2 pr-4 group relative">
             {/* Markdown Content */}
             <div className="prose prose-zinc dark:prose-invert max-w-none prose-p:leading-relaxed prose-li:marker:text-primary/70">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
                     {message.content}
                 </ReactMarkdown>
             </div>

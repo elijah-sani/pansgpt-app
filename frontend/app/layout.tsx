@@ -11,6 +11,16 @@ const outfit = Outfit({ subsets: ["latin"] });
 export const metadata: Metadata = {
   title: "PansGPT | AI Pharmacy Study Companion",
   description: "Your intelligent study assistant for pharmacy concepts",
+  manifest: "/manifest.json",
+  icons: {
+    icon: "/favicon.png",
+    apple: "/favicon.png",
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "PansGPT",
+  },
 };
 
 export default function RootLayout({

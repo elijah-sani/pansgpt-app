@@ -2,7 +2,7 @@
 Settings Router: System Configuration Management
 Handles AI prompt settings, temperature, and maintenance mode.
 """
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, HTTPException, Header, Depends
 from pydantic import BaseModel
 from typing import Optional
 import logging
@@ -13,6 +13,7 @@ router = APIRouter(prefix="/admin/config", tags=["settings"])
 
 # Injected from main api.py
 supabase_client = None
+verify_api_key_handler = None
 
 # --- Models ---
 class SystemConfigUpdate(BaseModel):
@@ -20,16 +21,50 @@ class SystemConfigUpdate(BaseModel):
     temperature: Optional[float] = None
     maintenance_mode: Optional[bool] = None
 
+class User(BaseModel):
+    id: str
+    email: Optional[str] = None
+
 # --- Helper ---
-async def verify_super_admin(x_user_email: str = Header(None)):
-    if not x_user_email:
-        raise HTTPException(status_code=400, detail="Missing x-user-email header")
-    
+async def verify_api_key(x_api_key: str = Header(...)):
+    """
+    Direct API key dependency used by all protected settings endpoints.
+    """
+    if verify_api_key_handler is None:
+        raise HTTPException(status_code=500, detail="API key verifier not configured")
+    return await verify_api_key_handler(x_api_key)
+
+async def get_current_user(authorization: Optional[str] = Header(None)):
+    """
+    Verify Supabase JWT and return authenticated user.
+    """
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing Authorization Header")
+
     if not supabase_client:
         raise HTTPException(status_code=500, detail="Database connection unavailable")
 
     try:
-        res = supabase_client.table('user_roles').select('role').eq('email', x_user_email).execute()
+        token = authorization.split(" ")[1]
+        user_res = supabase_client.auth.get_user(token)
+        if not user_res.user:
+            raise HTTPException(status_code=401, detail="Invalid Token")
+        return User(id=user_res.user.id, email=user_res.user.email)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Auth User Decode Error: {e}")
+        raise HTTPException(status_code=401, detail="Authentication Failed")
+
+async def verify_super_admin(current_user: User = Depends(get_current_user)):
+    if not current_user.email:
+        raise HTTPException(status_code=403, detail="Access Denied: user email missing.")
+
+    if not supabase_client:
+        raise HTTPException(status_code=500, detail="Database connection unavailable")
+
+    try:
+        res = supabase_client.table('user_roles').select('role').eq('email', current_user.email).execute()
         
         if not res.data or len(res.data) == 0:
             raise HTTPException(status_code=403, detail="Access Denied: User not found or no role.")
@@ -47,8 +82,8 @@ async def verify_super_admin(x_user_email: str = Header(None)):
 
 # --- Endpoints ---
 
-@router.get("")
-async def get_system_config():
+@router.get("", dependencies=[Depends(verify_api_key)])
+async def get_system_config(current_user: User = Depends(get_current_user)):
     """
     Fetch the current system configuration.
     Assumes a single row in 'system_settings' table (id=1).
@@ -75,13 +110,14 @@ async def get_system_config():
 @router.post("/update")
 async def update_system_config(
     config: SystemConfigUpdate,
-    x_user_email: str = Header(None)
+    _: str = Depends(verify_api_key),
+    current_user: User = Depends(get_current_user)
 ):
     """
     Update system configuration.
     SECURE: Only allows Super Admins.
     """
-    await verify_super_admin(x_user_email)
+    await verify_super_admin(current_user)
 
     updates = {}
     if config.system_prompt is not None:
@@ -102,7 +138,8 @@ async def update_system_config(
         raise HTTPException(status_code=500, detail=f"Update failed: {e}")
 
 # Function to set dependencies (called from main api.py)
-def set_dependencies(supabase):
-    global supabase_client
+def set_dependencies(supabase, api_key_verifier):
+    global supabase_client, verify_api_key_handler
     supabase_client = supabase
+    verify_api_key_handler = api_key_verifier
 

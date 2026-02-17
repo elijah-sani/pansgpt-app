@@ -1,13 +1,14 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 
 import {
     Search, Filter, Plus, FileText, Trash2, Pencil,
-    MoreVertical, Check, AlertCircle, Loader2,
+    AlertCircle, Loader2,
     UploadCloud, HardDrive, BookOpen, X, ChevronRight,
     Sparkles, Clock
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
 import { SystemStatusBadge } from '../../../components/SystemStatusBadge';
@@ -31,6 +32,31 @@ interface Document {
     embedding_progress: number;
     embedding_error?: string; // For partial success or failure details
     total_chunks: number;
+}
+
+interface AIBadgeConfig {
+    style: string;
+    icon: LucideIcon;
+    text: string;
+    tooltip: string;
+}
+
+interface StatsCardProps {
+    icon: LucideIcon;
+    label: string;
+    value: string;
+    trend?: string;
+    sub?: string;
+    color: string;
+    progress?: number;
+}
+
+interface FormInputProps {
+    label: string;
+    name: string;
+    placeholder?: string;
+    value: string;
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }
 
 export default function LibraryPage() {
@@ -69,7 +95,7 @@ export default function LibraryPage() {
     }, [supabase]);
 
     // --- Data Fetching ---
-    const fetchDocuments = async () => {
+    const fetchDocuments = useCallback(async () => {
         if (!userEmail) return;
         setIsLoadingData(true);
         try {
@@ -105,11 +131,11 @@ export default function LibraryPage() {
         } finally {
             setIsLoadingData(false);
         }
-    };
+    }, [supabase, userEmail]);
 
     useEffect(() => {
         if (userEmail) fetchDocuments();
-    }, [userEmail]);
+    }, [userEmail, fetchDocuments]);
 
     // --- Computed Stats ---
     const totalDocs = documents.length;
@@ -494,7 +520,7 @@ function AIBadge({ status, progress, total, error }: { status: string, progress:
     }
 
     // 3. Static States
-    const configs: any = {
+    const configs: Record<string, AIBadgeConfig> = {
         'completed': {
             style: 'bg-amber-100 text-amber-700 border-amber-300',
             icon: Sparkles,
@@ -537,7 +563,7 @@ function AIBadge({ status, progress, total, error }: { status: string, progress:
 
 // SidebarItem moved to layout.tsx
 
-function StatsCard({ icon: Icon, label, value, trend, sub, color, progress }: any) {
+function StatsCard({ icon: Icon, label, value, trend, sub, color, progress }: StatsCardProps) {
     // Exact mapping for tone-on-tone styles
     const styles: { [key: string]: { bg: string, text: string } } = {
         'bg-blue-500': { bg: 'bg-blue-600', text: 'text-blue-100' },
@@ -580,7 +606,7 @@ function StatsCard({ icon: Icon, label, value, trend, sub, color, progress }: an
     );
 }
 
-function UploadModal({ isOpen, onClose, userEmail, onSuccess }: { isOpen: boolean, onClose: () => void, userEmail: string, onSuccess: () => void }) {
+function UploadModal({ onClose, userEmail, onSuccess }: { isOpen: boolean, onClose: () => void, userEmail: string, onSuccess: () => void }) {
     const [isLoading, setIsLoading] = useState(false);
     const [isTraining, setIsTraining] = useState(false); // New State for AI Training
     const [trainingProgress, setTrainingProgress] = useState(0);
@@ -637,6 +663,16 @@ function UploadModal({ isOpen, onClose, userEmail, onSuccess }: { isOpen: boolea
 
                 // Step 3: Start Polling Validation
                 let isLocalComplete = false; // Guard to prevent multiple refreshes from race conditions
+                let consecutiveFailures = 0;
+                const maxConsecutiveFailures = 3;
+
+                const stopPollingWithFailure = (message: string) => {
+                    if (isLocalComplete) return;
+                    isLocalComplete = true;
+                    clearInterval(pollInterval);
+                    setIsTraining(false);
+                    setError(message);
+                };
 
                 const pollInterval = setInterval(async () => {
                     if (isLocalComplete) return;
@@ -645,6 +681,7 @@ function UploadModal({ isOpen, onClose, userEmail, onSuccess }: { isOpen: boolea
                         const statusRes = await api.fetch(`/admin/documents/${documentId}/status`);
 
                         if (statusRes.ok) {
+                            consecutiveFailures = 0;
                             const statusData = await statusRes.json();
 
                             // Double check after await
@@ -674,12 +711,24 @@ function UploadModal({ isOpen, onClose, userEmail, onSuccess }: { isOpen: boolea
                                 setError(`AI Training Failed: ${statusData.error || 'Unknown error'}`);
                                 setIsTraining(false);
                             }
+                        } else {
+                            consecutiveFailures += 1;
+                            if (statusRes.status >= 500) {
+                                stopPollingWithFailure('Upload/Processing Failed: Server error while checking training status.');
+                                return;
+                            }
+                            if (consecutiveFailures >= maxConsecutiveFailures) {
+                                stopPollingWithFailure('Upload/Processing Failed: Unable to retrieve training status after multiple attempts.');
+                            }
                         }
                     } catch (err) {
                         console.error("Polling error:", err);
-                        // Don't stop polling on transient network errors
+                        consecutiveFailures += 1;
+                        if (consecutiveFailures >= maxConsecutiveFailures) {
+                            stopPollingWithFailure('Upload/Processing Failed: Network error while checking training status.');
+                        }
                     }
-                }, 1000);
+                }, 3000);
             } else {
                 // Fallback for no document ID (shouldn't happen)
                 setIsLoading(false);
@@ -687,10 +736,10 @@ function UploadModal({ isOpen, onClose, userEmail, onSuccess }: { isOpen: boolea
                 finishUpload();
             }
 
-        } catch (error: any) {
+        } catch (error: unknown) {
             setIsLoading(false);
             setIsTraining(false);
-            setError(error.message || 'Something went wrong.');
+            setError(error instanceof Error ? error.message : 'Something went wrong.');
         }
     };
 
@@ -867,7 +916,7 @@ function UploadModal({ isOpen, onClose, userEmail, onSuccess }: { isOpen: boolea
 }
 
 // Helper Component for Inputs
-function FormInput({ label, name, placeholder, value, onChange }: any) {
+function FormInput({ label, name, placeholder, value, onChange }: FormInputProps) {
     return (
         <div className="space-y-2 group">
             <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest group-focus-within:text-primary transition-colors ml-1">
@@ -885,7 +934,7 @@ function FormInput({ label, name, placeholder, value, onChange }: any) {
     );
 }
 
-function DeleteModal({ isOpen, onClose, onConfirm }: { isOpen: boolean, onClose: () => void, onConfirm: () => Promise<void> }) {
+function DeleteModal({ onClose, onConfirm }: { isOpen: boolean, onClose: () => void, onConfirm: () => Promise<void> }) {
     const [isDeleting, setIsDeleting] = useState(false);
 
     const handleConfirm = async () => {
@@ -951,7 +1000,7 @@ function DeleteModal({ isOpen, onClose, onConfirm }: { isOpen: boolean, onClose:
     );
 }
 
-function EditDocumentModal({ isOpen, onClose, doc, onUpdate }: { isOpen: boolean, onClose: () => void, doc: Document, onUpdate: (d: any) => void }) {
+function EditDocumentModal({ onClose, doc, onUpdate }: { isOpen: boolean, onClose: () => void, doc: Document, onUpdate: (d: Document) => void }) {
     const [isLoading, setIsLoading] = useState(false);
     const [formData, setFormData] = useState({
         title: doc.title || '',
@@ -1027,11 +1076,11 @@ function EditDocumentModal({ isOpen, onClose, doc, onUpdate }: { isOpen: boolean
                 <form onSubmit={handleSubmit} className="p-5 space-y-4">
                     <div className="space-y-4">
                         <div className="grid grid-cols-2 gap-4">
-                            <FormInput label="Course Code" name="course_code" value={formData.course_code} onChange={(e: any) => setFormData({ ...formData, course_code: e.target.value })} />
-                            <FormInput label="Topic" name="topic" value={formData.topic} onChange={(e: any) => setFormData({ ...formData, topic: e.target.value })} />
+                            <FormInput label="Course Code" name="course_code" value={formData.course_code} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, course_code: e.target.value })} />
+                            <FormInput label="Topic" name="topic" value={formData.topic} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, topic: e.target.value })} />
                         </div>
-                        <FormInput label="Course Title" name="title" value={formData.title} onChange={(e: any) => setFormData({ ...formData, title: e.target.value })} />
-                        <FormInput label="Lecturer" name="lecturer" value={formData.lecturer} onChange={(e: any) => setFormData({ ...formData, lecturer: e.target.value })} />
+                        <FormInput label="Course Title" name="title" value={formData.title} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, title: e.target.value })} />
+                        <FormInput label="Lecturer" name="lecturer" value={formData.lecturer} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, lecturer: e.target.value })} />
                     </div>
                     <div className="flex justify-end gap-3 pt-4 border-t border-border mt-4">
                         <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg text-sm font-medium text-muted-foreground hover:bg-muted">Cancel</button>

@@ -7,6 +7,7 @@ const API_KEY = process.env.NEXT_PUBLIC_API_KEY || '';
 
 interface FetchOptions extends RequestInit {
     headers?: Record<string, string>;
+    signal?: AbortSignal;
 }
 
 export const api = {
@@ -53,7 +54,7 @@ export const api = {
             try {
                 const errorData = await response.clone().json();
                 console.error("API Error Details:", errorData);
-            } catch (e) {
+            } catch {
                 console.error("API Error (Non-JSON):", response.statusText);
             }
         }
@@ -65,7 +66,7 @@ export const api = {
         return api.fetch(endpoint, { ...options, method: 'GET' });
     },
 
-    post: (endpoint: string, body: any, options: FetchOptions = {}) => {
+    post: (endpoint: string, body: unknown, options: FetchOptions = {}) => {
         const isFormData = body instanceof FormData;
         return api.fetch(endpoint, {
             ...options,

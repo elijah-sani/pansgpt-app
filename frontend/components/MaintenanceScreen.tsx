@@ -1,7 +1,6 @@
 'use client';
 
 import React from 'react';
-import { motion } from 'framer-motion';
 import { Construction } from 'lucide-react';
 
 export default function MaintenanceScreen() {
@@ -20,7 +19,7 @@ export default function MaintenanceScreen() {
                         System Maintenance
                     </h1>
                     <p className="text-muted-foreground leading-relaxed">
-                        We're currently upgrading the PansGPT system to serve you better.
+                        We&apos;re currently upgrading the PansGPT system to serve you better.
                         Access is temporarily paused while we deploy enhancements.
                     </p>
                 </div>

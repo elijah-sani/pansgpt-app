@@ -65,7 +65,6 @@ const ImageModal = ({
                     {title}
                 </div>
             )}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
                 src={imageUrl}
                 alt="Zoomed slide"
@@ -86,7 +85,6 @@ const OriginalSlideThumbnail = ({ imageUrl, pageNumber }: { imageUrl: string; pa
                 title={`View Original Slide - Page ${pageNumber}`}
                 className="group relative h-12 w-16 cursor-pointer overflow-hidden rounded-lg border-2 border-gray-200 bg-gray-50 shadow-sm transition-all hover:border-indigo-400 hover:shadow-md"
             >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                     src={imageUrl}
                     alt={`Original slide ${pageNumber}`}
@@ -122,7 +120,6 @@ const SlideCard = ({ imageUrl, caption, compact = false }: { imageUrl: string; c
                 onClick={() => setIsOpen(true)}
                 className={`group relative cursor-pointer overflow-hidden rounded-xl border border-gray-200 bg-gray-50 transition-all hover:border-indigo-300 hover:shadow-lg ${compact ? 'p-2' : ''}`}
             >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                     src={imageUrl}
                     alt={caption || "Slide image"}
