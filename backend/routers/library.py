@@ -505,11 +505,12 @@ async def process_and_embed(file_content: bytes, document_id: str, file_name: st
     except Exception as e:
         logger.error(f"[ERROR] RAG ingestion CRITICAL FAILURE for {document_id}: {e}")
         try:
+            error_msg = str(e)
             # Wrap error update
             await _execute_with_retry_async(
                 lambda: supabase_client.table('pans_library').update({
                     'embedding_status': 'failed',
-                    'embedding_error': f"Critical failures: {str(e)}"
+                    'embedding_error': f"Critical failures: {error_msg}"
                 }).eq('id', document_id).execute(),
                 f"Persist critical ingestion failure for {document_id}",
             )
