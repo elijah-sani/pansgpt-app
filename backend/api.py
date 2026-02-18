@@ -9,6 +9,7 @@ import time
 from dotenv import load_dotenv
 from google_drive import GoogleDriveService, get_drive_service
 from services import llm_engine
+import sentry_sdk
 
 import logging
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -27,6 +28,12 @@ logger = logging.getLogger("PansGPT")
 
 # Load environment variables
 load_dotenv()
+
+sentry_sdk.init(
+    dsn=os.getenv("SENTRY_DSN"),
+    traces_sample_rate=1.0,
+    profiles_sample_rate=1.0,
+)
 
 from routers import settings, system, library, chat
 
@@ -131,6 +138,13 @@ app.include_router(chat.router)
 @limiter.limit("60/minute")
 def health_check(request: Request):
     return {"status": "ok", "service": "PansGPT Backend"}
+
+
+if os.getenv("ENV", "").lower() != "production":
+    @app.get("/debug-sentry")
+    def trigger_error():
+        division_by_zero = 1 / 0
+        return {"result": division_by_zero}
 
 # Chat endpoint moved to routers/chat.py
 

@@ -21,5 +21,6 @@ google-auth-oauthlib
 httplib2
 Pillow
 langchain
+sentry-sdk[fastapi]
 pytest
 httpx
