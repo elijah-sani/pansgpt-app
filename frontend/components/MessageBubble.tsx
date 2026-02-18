@@ -17,14 +17,24 @@ export interface Message {
     imageBase64?: string;
     image_data?: string;
     images?: string[];
+    isThinking?: boolean;
 }
 
 interface MessageBubbleProps {
     message: Message;
     onRegenerate?: () => void;
+    useDirectTypingSpan?: boolean;
+    typingSpanRef?: React.RefObject<HTMLSpanElement | null>;
+    isThinking?: boolean;
 }
 
-export default function MessageBubble({ message, onRegenerate }: MessageBubbleProps) {
+export default function MessageBubble({
+    message,
+    onRegenerate,
+    useDirectTypingSpan = false,
+    typingSpanRef,
+    isThinking = false
+}: MessageBubbleProps) {
     const [feedback, setFeedback] = useState<'up' | 'down' | null>(null);
     const [copied, setCopied] = useState(false);
 
@@ -105,60 +115,81 @@ export default function MessageBubble({ message, onRegenerate }: MessageBubblePr
     };
 
     return (
-        <div className="w-full pl-2 pr-4 group relative">
-            {/* Markdown Content */}
-            <div className="prose prose-zinc dark:prose-invert max-w-none prose-p:leading-relaxed prose-li:marker:text-primary/70">
-                <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
-                    {message.content}
-                </ReactMarkdown>
+        <div className={`w-full pr-4 group relative ${message.role === 'user' ? 'mb-[5px]' : ''}`}>
+            <div className="flex flex-col items-start gap-1">
+                <div className="relative flex items-center justify-center w-10 h-10 mb-1 shrink-0 -ml-1.5">
+                    <div className="relative flex h-8 w-8 items-center justify-center">
+                        {isThinking && (
+                            <span className="absolute inset-0 w-full h-full rounded-full border-2 border-t-[#057400] border-r-[#1e811a] border-b-transparent border-l-transparent animate-spin animate-pulse" />
+                        )}
+                        <img
+                            src="/avatar.png"
+                            alt="PansGPT"
+                            className={`z-10 object-contain transition-all duration-500 ease-out ${isThinking ? 'h-4 w-4' : 'h-5 w-5'}`}
+                        />
+                    </div>
+                </div>
+
+                {/* Markdown Content */}
+                <div className="prose prose-zinc dark:prose-invert max-w-none prose-p:leading-relaxed prose-li:marker:text-primary/70 flex-1">
+                    {useDirectTypingSpan ? (
+                        <span ref={typingSpanRef} className="whitespace-pre-wrap" />
+                    ) : (
+                        <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
+                            {message.content}
+                        </ReactMarkdown>
+                    )}
+                </div>
             </div>
 
             {/* Action Bar */}
-            <div className="flex items-center gap-2 mt-3 text-muted-foreground opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-200">
-                {/* Feedback Buttons */}
-                <button
-                    onClick={() => handleFeedbackClick('up')}
-                    className={`p-1.5 hover:bg-muted rounded-md transition-colors ${feedback === 'up' ? 'text-green-500 bg-green-500/10' : ''}`}
-                    title="Helpful"
-                >
-                    <ThumbsUp className="w-4 h-4" />
-                </button>
-
-                <button
-                    onClick={() => handleFeedbackClick('down')}
-                    className={`p-1.5 hover:bg-muted rounded-md transition-colors ${feedback === 'down' ? 'text-red-500 bg-red-500/10' : ''}`}
-                    title="Not Helpful"
-                >
-                    <ThumbsDown className="w-4 h-4" />
-                </button>
-
-                {/* Divider */}
-                <div className="w-px h-4 bg-border/50 mx-1" />
-
-                {/* Copy Button */}
-                <button
-                    onClick={handleCopy}
-                    className="p-1.5 hover:bg-muted rounded-md transition-colors"
-                    title="Copy message"
-                >
-                    {copied ? (
-                        <Check className="w-4 h-4 text-green-500" />
-                    ) : (
-                        <Copy className="w-4 h-4" />
-                    )}
-                </button>
-
-                {/* Regenerate Button */}
-                {onRegenerate && (
+            {!isThinking && message.content.trim().length > 0 && (
+                <div className="flex flex-row justify-start items-center gap-2 mt-3 text-muted-foreground opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity duration-200">
+                    {/* Feedback Buttons */}
                     <button
-                        onClick={onRegenerate}
-                        className="p-1.5 hover:bg-muted rounded-md transition-colors"
-                        title="Regenerate response"
+                        onClick={() => handleFeedbackClick('up')}
+                        className={`p-1.5 hover:bg-muted rounded-md transition-colors ${feedback === 'up' ? 'text-green-500 bg-green-500/10' : ''}`}
+                        title="Helpful"
                     >
-                        <RotateCcw className="w-4 h-4" />
+                        <ThumbsUp className="w-4 h-4" />
                     </button>
-                )}
-            </div>
+
+                    <button
+                        onClick={() => handleFeedbackClick('down')}
+                        className={`p-1.5 hover:bg-muted rounded-md transition-colors ${feedback === 'down' ? 'text-red-500 bg-red-500/10' : ''}`}
+                        title="Not Helpful"
+                    >
+                        <ThumbsDown className="w-4 h-4" />
+                    </button>
+
+                    {/* Divider */}
+                    <div className="w-px h-4 bg-border/50 mx-1" />
+
+                    {/* Copy Button */}
+                    <button
+                        onClick={handleCopy}
+                        className="p-1.5 hover:bg-muted rounded-md transition-colors"
+                        title="Copy message"
+                    >
+                        {copied ? (
+                            <Check className="w-4 h-4 text-green-500" />
+                        ) : (
+                            <Copy className="w-4 h-4" />
+                        )}
+                    </button>
+
+                    {/* Regenerate Button */}
+                    {onRegenerate && (
+                        <button
+                            onClick={onRegenerate}
+                            className="p-1.5 hover:bg-muted rounded-md transition-colors"
+                            title="Regenerate response"
+                        >
+                            <RotateCcw className="w-4 h-4" />
+                        </button>
+                    )}
+                </div>
+            )}
 
             {/* Feedback Modal */}
             <FeedbackModal

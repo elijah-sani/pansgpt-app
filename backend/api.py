@@ -42,24 +42,39 @@ app.include_router(system.router)
 # Security Configuration
 API_KEYS = os.getenv("API_KEYS", "").split(",")
 GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
-# Initialize Google AI Studio Client (OpenAI Compatible)
+# Initialize OpenRouter + Google AI Studio Clients (OpenAI Compatible)
 try:
     from openai import AsyncOpenAI
     
-    # Use GOOGLE_API_KEY (same as RAG) for simplicity
-    GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-    if not GOOGLE_API_KEY:
-        logger.warning("[WARNING] GOOGLE_API_KEY not set! AI features will fail.")
-        groq_client = None
+    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+
+    openrouter_client = None
+    google_client = None
+
+    if OPENROUTER_API_KEY:
+        openrouter_client = AsyncOpenAI(
+            api_key=OPENROUTER_API_KEY,
+            base_url="https://openrouter.ai/api/v1",
+            max_retries=0
+        )
+        logger.info("[INFO] OpenRouter Client Initialized")
     else:
-        groq_client = AsyncOpenAI(
-            api_key=GOOGLE_API_KEY,
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+        logger.warning("[WARNING] OPENROUTER_API_KEY not set! OpenRouter primary AI will fail.")
+
+    if GEMINI_API_KEY:
+        google_client = AsyncOpenAI(
+            api_key=GEMINI_API_KEY,
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            max_retries=0
         )
         logger.info("[INFO] Google AI Studio Client Initialized")
+    else:
+        logger.warning("[WARNING] GEMINI_API_KEY not set! Google fallback AI will fail.")
 except Exception as e:
     logger.error(f"Failed to initialize AI client: {e}")
-    groq_client = None
+    openrouter_client = None
+    google_client = None
 
 # CORS: Allow your frontend to talk to this backend
 allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "")
@@ -133,7 +148,7 @@ logger.info("---------------------------------------")
 
 # --- Initialize Routers with Dependencies ---
 library.set_dependencies(drive_service, supabase_client, verify_api_key, GOOGLE_DRIVE_FOLDER_ID)
-chat.set_dependencies(groq_client, supabase_client, verify_api_key)
+chat.set_dependencies(openrouter_client, google_client, supabase_client, verify_api_key)
 system.set_dependencies(supabase_client)
 settings.set_dependencies(supabase_client, verify_api_key)
 

@@ -3,6 +3,7 @@ Chat Router: AI Conversation Endpoint with RAG Support
 Handles AI-powered chat interactions using Groq with vector search.
 """
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
 import logging
@@ -20,13 +21,145 @@ logger = logging.getLogger("PansGPT")
 router = APIRouter(tags=["chat"])
 
 # These will be injected from main api.py
-groq_client = None
+openrouter_client = None
+google_client = None
 supabase_client = None
 verify_api_key_handler = None
 
 # --- Global Model Constants ---
-HEAVY_VISION_MODEL = "gemma-3-27b-it"  # For images/multimodal
-FAST_TEXT_MODEL = "gemma-3-12b-it"     # For pure text
+TEXT_PRIMARY = "meta-llama/llama-3.3-70b-instruct:free"
+TEXT_FALLBACK = "gemma-3-27b-it"
+VISION_PRIMARY = "qwen/qwen3-vl-235b-a22b-thinking"
+VISION_FALLBACK = "gemma-3-27b-it"
+
+GRACEFUL_ASSISTANT_ERROR_PAYLOAD = {
+    "role": "assistant",
+    "content": "I encountered an error doing what you asked. Could you try again?"
+}
+
+async def _create_completion_with_failover(
+    messages: list[dict],
+    temperature: float,
+    max_tokens: int,
+    is_vision: bool,
+    stream: bool = False,
+):
+    """
+    Retry primary model 3 times, then perform one fallback attempt.
+    Returns completion object on success, or None if both primary and fallback fail.
+    """
+    primary_model = VISION_PRIMARY if is_vision else TEXT_PRIMARY
+    fallback_model = VISION_FALLBACK if is_vision else TEXT_FALLBACK
+
+    for attempt in range(1, 4):
+        try:
+            if openrouter_client is None:
+                raise RuntimeError("OpenRouter client not initialized")
+            return await openrouter_client.chat.completions.create(
+                model=primary_model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=stream,
+            )
+        except Exception as e:
+            logger.warning(
+                f"[WARNING] Primary model failed ({primary_model}) attempt {attempt}/3: {e}"
+            )
+            if attempt < 3:
+                await asyncio.sleep(2)
+
+    if google_client is None:
+        logger.error("[ERROR] Google fallback client not initialized.")
+        return None
+
+    try:
+        logger.warning(f"[WARNING] Failing over to Google model: {fallback_model}")
+        return await google_client.chat.completions.create(
+            model=fallback_model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=stream,
+        )
+    except Exception as e:
+        logger.error(f"[ERROR] Google fallback model failed ({fallback_model}): {e}")
+        return None
+
+async def _build_streaming_response(
+    api_stream,
+    session_id: Optional[str],
+    saved_user_message_id: Optional[str] = None,
+) -> StreamingResponse:
+    """
+    Stream assistant deltas via SSE and persist full assistant response to DB after completion.
+    """
+    async def stream_generator():
+        full_text = ""
+        saved_assistant_message_id = None
+        emitted_graceful = False
+
+        if saved_user_message_id is not None:
+            yield f"data: {json.dumps({'user_message_id': saved_user_message_id})}\n\n"
+
+        try:
+            if api_stream is None:
+                full_text = GRACEFUL_ASSISTANT_ERROR_PAYLOAD["content"]
+                emitted_graceful = True
+                yield f"data: {json.dumps({'delta': full_text})}\n\n"
+            else:
+                async for chunk in api_stream:
+                    delta = ""
+                    try:
+                        if chunk and chunk.choices and chunk.choices[0].delta:
+                            delta = chunk.choices[0].delta.content or ""
+                    except Exception:
+                        delta = ""
+                    if delta:
+                        full_text += delta
+                        yield f"data: {json.dumps({'delta': delta})}\n\n"
+        except Exception as e:
+            logger.error(f"[ERROR] Stream generation error: {e}")
+            if not full_text:
+                full_text = GRACEFUL_ASSISTANT_ERROR_PAYLOAD["content"]
+                emitted_graceful = True
+                yield f"data: {json.dumps({'delta': full_text})}\n\n"
+        finally:
+            if not full_text and not emitted_graceful:
+                full_text = GRACEFUL_ASSISTANT_ERROR_PAYLOAD["content"]
+                yield f"data: {json.dumps({'delta': full_text})}\n\n"
+
+            if session_id and supabase_client:
+                try:
+                    data = await _execute_with_retry(
+                        lambda: supabase_client.table("chat_messages").insert({
+                            "session_id": session_id,
+                            "role": "ai",
+                            "content": full_text
+                        }).execute(),
+                        "Save streamed assistant message",
+                    )
+                    if data.data and len(data.data) > 0:
+                        saved_assistant_message_id = data.data[0]["id"]
+                except Exception as db_err:
+                    logger.error(f"Failed to save streamed assistant message: {db_err}")
+
+            final_event = {
+                "done": True,
+                "message_id": saved_assistant_message_id,
+                "session_id": session_id
+            }
+            yield f"data: {json.dumps(final_event)}\n\n"
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        stream_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
 
 class User(BaseModel):
     id: str
@@ -367,8 +500,9 @@ async def chat(request: ChatRequest):
     Analyze text using Groq AI with support for conversation history.
     Modes: explain, example, memory, chat
     """
-    if not groq_client:
+    if not openrouter_client and not google_client:
         raise HTTPException(status_code=500, detail="AI client not initialized")
+    saved_user_message_id: Optional[str] = None
     
     # --- Persistence: Save User Message & Auto-Rename ---
     # Skip saving user message on retry  it already exists in DB from the failed attempt
@@ -382,7 +516,7 @@ async def chat(request: ChatRequest):
             elif request.image:
                 image_payload = request.image
 
-            await _execute_with_retry(
+            user_save_res = await _execute_with_retry(
                 lambda: supabase_client.table("chat_messages").insert({
                     "session_id": request.session_id,
                     "role": "user",
@@ -391,6 +525,8 @@ async def chat(request: ChatRequest):
                 }).execute(),
                 "Save user chat message",
             )
+            if user_save_res.data and len(user_save_res.data) > 0:
+                saved_user_message_id = user_save_res.data[0].get("id")
             
             # 2. Auto-Rename if "New Chat"
             try:
@@ -407,12 +543,15 @@ async def chat(request: ChatRequest):
                         try:
                             title_prompt = f"Create a short, professional title (maximum 4 words) for a chat that starts with this message: '{request.text}'. Return ONLY the title text, with no quotes, no punctuation, and no extra words."
                             
-                            title_completion = await groq_client.chat.completions.create(
-                                model="gemma-3-12b-it", # Llama-3 not available on Gemini, use Gemma
+                            title_completion = await _create_completion_with_failover(
                                 messages=[{"role": "user", "content": title_prompt}],
                                 temperature=0.5,
-                                max_tokens=10
+                                max_tokens=10,
+                                is_vision=False,
+                                stream=False
                             )
+                            if title_completion is None:
+                                raise RuntimeError("Title generation failed on primary and fallback")
                             
                             new_title = title_completion.choices[0].message.content.strip().strip('"')
                             
@@ -517,46 +656,21 @@ Do not hallucinate.
 
             # Model Selection Logic
             # Since we are in the "VISION MODE" block, we know there are images.
-            selected_model = HEAVY_VISION_MODEL 
+            selected_model = VISION_PRIMARY
             logger.info(f"[INFO] Smart Router: Detected images, switching to {selected_model}")
 
-            completion = await groq_client.chat.completions.create(
-                model=selected_model, 
+            completion_stream = await _create_completion_with_failover(
                 messages=messages,
                 temperature=temperature,
                 max_tokens=2048,
+                is_vision=True,
+                stream=True,
             )
-            
-            assistant_message = completion.choices[0].message
-            logger.info(f"[INFO] Vision Response Generated ({len(assistant_message.content)} chars)")
-            
-            # --- Persistence: Save Assistant Message ---
-            saved_msg_id = None
-            if request.session_id and supabase_client:
-                try:
-                    data = await _execute_with_retry(
-                        lambda: supabase_client.table("chat_messages").insert({
-                            "session_id": request.session_id,
-                            "role": "ai",
-                            "content": assistant_message.content
-                        }).execute(),
-                        "Save assistant vision message",
-                    )
-                    if data.data and len(data.data) > 0:
-                        saved_msg_id = data.data[0]['id']
-                except Exception as e:
-                    logger.error(f"Failed to save assistant vision message: {e}")
-            
-            return {
-                "choices": [{
-                    "message": {
-                        "role": assistant_message.role,
-                        "content": assistant_message.content,
-                        "id": saved_msg_id,
-                        "session_id": request.session_id
-                    }
-                }]
-            }
+            return await _build_streaming_response(
+                completion_stream,
+                request.session_id,
+                str(saved_user_message_id) if saved_user_message_id is not None else None,
+            )
             
         except Exception as e:
             logger.error(f"[ERROR] Vision API Error: {e}")
@@ -608,61 +722,39 @@ Do not hallucinate.
         # Check if any message in history has images (though this block is primarily text mode)
         # We use the helper to be sure
         if contains_image(messages):
-             selected_model = HEAVY_VISION_MODEL
+             selected_model = VISION_PRIMARY
              logger.info(f"[INFO] Smart Router: Found images in history, using {selected_model}")
+             is_vision_mode = True
         else:
-             selected_model = FAST_TEXT_MODEL
+             selected_model = TEXT_PRIMARY
              logger.info(f"[INFO] Smart Router: Pure text detected, processing efficiently with {selected_model}")
+             is_vision_mode = False
 
         # Flatten system prompt into user message for Google AI compatibility
         messages = merge_system_into_user(messages)
 
-        completion = await groq_client.chat.completions.create(
-            model=selected_model, 
+        completion_stream = await _create_completion_with_failover(
             messages=messages,
             temperature=temperature,
             max_tokens=2048,
+            is_vision=is_vision_mode,
+            stream=True,
         )
-        
-        assistant_message = completion.choices[0].message
-        logger.info(f"[INFO] AI Response Generated ({len(assistant_message.content)} chars)")
-        
-        # --- Persistence: Save Assistant Message ---
-        saved_msg_id = None
-        if request.session_id and supabase_client:
-            try:
-                data = await _execute_with_retry(
-                    lambda: supabase_client.table("chat_messages").insert({
-                        "session_id": request.session_id,
-                        "role": "ai",
-                        "content": assistant_message.content
-                    }).execute(),
-                    "Save assistant text message",
-                )
-                if data.data and len(data.data) > 0:
-                     saved_msg_id = data.data[0]['id']
-            except Exception as e:
-                logger.error(f"Failed to save assistant text message: {e}")
-        
-        return {
-            "choices": [{
-                "message": {
-                    "role": assistant_message.role,
-                    "content": assistant_message.content,
-                    "id": saved_msg_id,
-                    "session_id": request.session_id
-                }
-            }]
-        }
+        return await _build_streaming_response(
+            completion_stream,
+            request.session_id,
+            str(saved_user_message_id) if saved_user_message_id is not None else None,
+        )
         
     except Exception as e:
         logger.error(f"[ERROR] API Error: {e}")
         raise HTTPException(status_code=500, detail=f"AI processing failed: {str(e)}")
 
 # Function to set dependencies (called from main api.py)
-def set_dependencies(groq, supabase, api_key_verifier):
-    global groq_client, supabase_client, verify_api_key_handler
-    groq_client = groq
+def set_dependencies(openrouter, google, supabase, api_key_verifier):
+    global openrouter_client, google_client, supabase_client, verify_api_key_handler
+    openrouter_client = openrouter
+    google_client = google
     supabase_client = supabase
     verify_api_key_handler = api_key_verifier
 
@@ -805,7 +897,7 @@ async def edit_message(request: EditMessageRequest, current_user: User = Depends
     Edit a user message: delete it and all subsequent messages, then re-process with new text.
     Strict RLS: only the session owner can edit.
     """
-    if not supabase_client or not groq_client:
+    if not supabase_client or (not openrouter_client and not google_client):
         raise HTTPException(status_code=500, detail="Services not initialized")
 
     try:
@@ -890,36 +982,25 @@ async def edit_message(request: EditMessageRequest, current_user: User = Depends
         
         # Smart Router Check
         if contains_image(llm_messages):
-             selected_model = HEAVY_VISION_MODEL
+             selected_model = VISION_PRIMARY
              logger.info(f"[INFO] Smart Router: Images detected in context, using {selected_model}")
+             is_vision_mode = True
         else:
-             selected_model = FAST_TEXT_MODEL
+             selected_model = TEXT_PRIMARY
              logger.info(f"[INFO] Smart Router: Text-only context, using {selected_model}")
+             is_vision_mode = False
 
         # Flatten system prompt into user message for Google AI compatibility
         llm_messages = merge_system_into_user(llm_messages)
 
-        completion = await groq_client.chat.completions.create(
-            model=selected_model,
-            messages=llm_messages,  # All roles sanitized above
+        completion_stream = await _create_completion_with_failover(
+            messages=llm_messages,
             temperature=temperature,
             max_tokens=2048,
+            is_vision=is_vision_mode,
+            stream=True,
         )
-
-        assistant_content = completion.choices[0].message.content
-
-        # 7. Save AI response
-        await _execute_with_retry(
-            lambda: supabase_client.table("chat_messages").insert({
-                "session_id": request.session_id,
-                "role": "ai",
-                "content": assistant_content
-            }).execute(),
-            "Save regenerated edit response",
-        )
-
-        logger.info(f"[INFO] Edit complete for session {request.session_id}")
-        return {"status": "success"}
+        return await _build_streaming_response(completion_stream, request.session_id)
 
     except HTTPException:
         raise
@@ -933,7 +1014,7 @@ async def regenerate_response(session_id: str, current_user: User = Depends(get_
     Regenerate the last AI response.
     Deletes the last AI message and re-processes the preceding user message.
     """
-    if not supabase_client or not groq_client:
+    if not supabase_client or (not openrouter_client and not google_client):
         raise HTTPException(status_code=500, detail="Services not initialized")
 
     try:
@@ -1020,42 +1101,25 @@ async def regenerate_response(session_id: str, current_user: User = Depends(get_
         
         # Smart Router Check
         if contains_image(llm_messages):
-             selected_model = HEAVY_VISION_MODEL
+             selected_model = VISION_PRIMARY
              logger.info(f"[INFO] Smart Router: Images detected in context, using {selected_model}")
+             is_vision_mode = True
         else:
-             selected_model = FAST_TEXT_MODEL
+             selected_model = TEXT_PRIMARY
              logger.info(f"[INFO] Smart Router: Text-only context, using {selected_model}")
+             is_vision_mode = False
 
         # Flatten system prompt into user message for Google AI compatibility
         llm_messages = merge_system_into_user(llm_messages)
 
-        completion = await groq_client.chat.completions.create(
-            model=selected_model,
+        completion_stream = await _create_completion_with_failover(
             messages=llm_messages,
             temperature=temperature,
             max_tokens=2048,
+            is_vision=is_vision_mode,
+            stream=True,
         )
-        
-        assistant_content = completion.choices[0].message.content
-        
-        # 7. Save New Response
-        await _execute_with_retry(
-            lambda: supabase_client.table("chat_messages").insert({
-                "session_id": session_id,
-                "role": "ai",
-                "content": assistant_content
-            }).execute(),
-            "Save regenerated assistant response",
-        )
-        
-        return {
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": assistant_content
-                }
-            }]
-        }
+        return await _build_streaming_response(completion_stream, session_id)
 
     except HTTPException:
         raise

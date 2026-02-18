@@ -23,6 +23,7 @@ interface Message {
     imageBase64?: string;
     image_data?: string; // Backend field
     images?: string[]; // New Multi-image support
+    isThinking?: boolean;
 } // Kept for backward compat in message history, but we might want array here too later
 
 import { ChatSession } from '../hooks/useChatHistory';
@@ -56,6 +57,8 @@ interface ChatInterfaceProps {
     deletingId?: string | null;
     contextId?: string;
     onRegenerate?: () => void;
+    activeStreamingAssistantId?: string | null;
+    typingSpanRef?: React.RefObject<HTMLSpanElement | null>;
 }
 
 // Helper to safely parse image_data (JSON or raw string)
@@ -94,7 +97,9 @@ export default function ChatInterface({
     onLoadSession,
     onDeleteSession,
     deletingId,
-    onRegenerate
+    onRegenerate,
+    activeStreamingAssistantId,
+    typingSpanRef
 }: ChatInterfaceProps) {
     const chatEndRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -222,7 +227,7 @@ export default function ChatInterface({
                         </div>
                     ) : (
                         messages.filter(m => m.role !== 'system').map((msg, i) => (
-                            <div key={i} className={`flex flex-col ${msg.role === 'system' ? 'items-center' : msg.role === 'user' ? 'items-end' : 'items-start'} max-w-3xl mx-auto w-full group`}>
+                            <div key={i} className={`flex flex-col ${msg.role === 'system' ? 'items-center' : msg.role === 'user' ? 'items-end mb-[5px]' : 'items-start'} max-w-3xl mx-auto w-full group`}>
 
                                 {/* User Message Area */}
                                 {msg.role === 'user' ? (
@@ -317,7 +322,7 @@ export default function ChatInterface({
                                                                 setEditingMessageId(String(i));
                                                                 setEditDraft(msg.content);
                                                             }}
-                                                            className="mt-1 p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors opacity-0 group-hover:opacity-100"
+                                                            className="mt-1 p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
                                                             title="Edit message"
                                                         >
                                                             <Pencil className="w-3.5 h-3.5" />
@@ -336,6 +341,9 @@ export default function ChatInterface({
                                     /* AI Message (Markdown, No Background) */
                                     <MessageBubble
                                         message={msg}
+                                        isThinking={Boolean(msg.isThinking)}
+                                        useDirectTypingSpan={String(msg.id) === activeStreamingAssistantId}
+                                        typingSpanRef={String(msg.id) === activeStreamingAssistantId ? typingSpanRef : undefined}
                                         onRegenerate={
                                             // Only pass regenerate handler if it's the last message and it's from assistant
                                             (i === messages.length - 1 && onRegenerate) ? onRegenerate : undefined
@@ -344,17 +352,6 @@ export default function ChatInterface({
                                 )}
                             </div>
                         ))
-                    )}
-
-                    {/* Loading Indicator (Typing Bubble) */}
-                    {isLoading && (
-                        <div className="max-w-3xl mx-auto w-full pl-2">
-                            <div className="flex items-center gap-1 p-2 bg-transparent">
-                                <div className="w-2 h-2 bg-primary rounded-full animate-bounce [animation-delay:-0.3s]" />
-                                <div className="w-2 h-2 bg-primary rounded-full animate-bounce [animation-delay:-0.15s]" />
-                                <div className="w-2 h-2 bg-primary rounded-full animate-bounce" />
-                            </div>
-                        </div>
                     )}
 
                     {/* Error & Retry Block */}

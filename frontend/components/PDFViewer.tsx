@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import React, { useState, useRef, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Document, Page, pdfjs } from 'react-pdf';
@@ -29,6 +29,7 @@ interface Message {
     id?: string;
     session_id?: string;
     imageBase64?: string; // For vision messages: thumbnail of snipped area
+    isThinking?: boolean;
 }
 
 export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
@@ -112,9 +113,169 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     const [inputMessage, setInputMessage] = useState("");
     const [isError, setIsError] = useState(false);
     const abortControllerRef = useRef<AbortController | null>(null);
+    const streamFullTextRef = useRef('');
+    const streamDisplayedLenRef = useRef(0);
+    const streamNetworkDoneRef = useRef(false);
+    const streamIntervalRef = useRef<number | null>(null);
+    const [activeStreamingAssistantId, setActiveStreamingAssistantId] = useState<string | null>(null);
+    const typingSpanRef = useRef<HTMLSpanElement | null>(null);
 
     const [pendingAttachments, setPendingAttachments] = useState<string[]>([]); // Array of base64 images
     const selectionTimer = useRef<NodeJS.Timeout | null>(null);
+
+    useEffect(() => {
+        return () => {
+            if (streamIntervalRef.current !== null) {
+                window.clearInterval(streamIntervalRef.current);
+            }
+        };
+    }, []);
+
+    const stopTypewriterPainter = () => {
+        if (streamIntervalRef.current !== null) {
+            window.clearInterval(streamIntervalRef.current);
+            streamIntervalRef.current = null;
+        }
+        setActiveStreamingAssistantId(null);
+    };
+
+    const startTypewriterPainter = (assistantId: string) => {
+        setActiveStreamingAssistantId(assistantId);
+        streamDisplayedLenRef.current = 0;
+        streamNetworkDoneRef.current = false;
+        streamFullTextRef.current = '';
+        if (typingSpanRef.current) {
+            typingSpanRef.current.textContent = '';
+        }
+
+        if (streamIntervalRef.current !== null) {
+            window.clearInterval(streamIntervalRef.current);
+        }
+
+        streamIntervalRef.current = window.setInterval(() => {
+            const span = typingSpanRef.current;
+            if (!span) {
+                return;
+            }
+            const targetText = streamFullTextRef.current;
+            const currentText = span.textContent ?? '';
+            if (currentText.length < targetText.length) {
+                span.textContent = currentText + targetText.charAt(currentText.length);
+            }
+            streamDisplayedLenRef.current = span.textContent?.length ?? 0;
+
+            if (
+                streamNetworkDoneRef.current &&
+                streamDisplayedLenRef.current >= streamFullTextRef.current.length
+            ) {
+                if (streamIntervalRef.current !== null) {
+                    window.clearInterval(streamIntervalRef.current);
+                    streamIntervalRef.current = null;
+                }
+            }
+        }, 4);
+    };
+
+    const waitForTypewriterFlush = async () => {
+        while (
+            !streamNetworkDoneRef.current ||
+            streamDisplayedLenRef.current < streamFullTextRef.current.length
+        ) {
+            if (!typingSpanRef.current && streamNetworkDoneRef.current) {
+                streamDisplayedLenRef.current = streamFullTextRef.current.length;
+                break;
+            }
+            await new Promise(resolve => setTimeout(resolve, 10));
+        }
+    };
+
+    const consumeSSEStream = async (
+        response: Response,
+        assistantTempId: string,
+        onUserMessageId?: (id: string) => void
+    ): Promise<string | null> => {
+        if (!response.body) {
+            throw new Error('Streaming not supported by response body');
+        }
+
+        startTypewriterPainter(assistantTempId);
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let finalAssistantMessageId: string | null = null;
+        let firstTokenReceived = false;
+
+        const markThinkingComplete = () => {
+            setChatHistory(prev =>
+                prev.map(msg =>
+                    String(msg.id) === assistantTempId ? { ...msg, isThinking: false } : msg
+                )
+            );
+        };
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            let eventBoundary = buffer.indexOf('\n\n');
+
+            while (eventBoundary !== -1) {
+                const rawEvent = buffer.slice(0, eventBoundary).trim();
+                buffer = buffer.slice(eventBoundary + 2);
+
+                if (rawEvent) {
+                    const dataLines = rawEvent
+                        .split('\n')
+                        .filter(line => line.startsWith('data:'))
+                        .map(line => line.slice(5).trim());
+
+                    const payload = dataLines.join('\n');
+                    if (payload && payload !== '[DONE]') {
+                        try {
+                            const parsed = JSON.parse(payload);
+
+                            if (parsed?.user_message_id && onUserMessageId) {
+                                onUserMessageId(String(parsed.user_message_id));
+                            }
+
+                            if (typeof parsed?.delta === 'string' && parsed.delta.length > 0) {
+                                if (!firstTokenReceived) {
+                                    firstTokenReceived = true;
+                                    markThinkingComplete();
+                                }
+                                streamFullTextRef.current += parsed.delta;
+                            }
+
+                            if (parsed?.message_id) {
+                                finalAssistantMessageId = String(parsed.message_id);
+                            }
+                        } catch {
+                            if (!firstTokenReceived && payload.length > 0) {
+                                firstTokenReceived = true;
+                                markThinkingComplete();
+                            }
+                            streamFullTextRef.current += payload;
+                        }
+                    }
+                }
+
+                eventBoundary = buffer.indexOf('\n\n');
+            }
+        }
+
+        streamNetworkDoneRef.current = true;
+        await waitForTypewriterFlush();
+        const finalAssistantText = streamFullTextRef.current;
+        setChatHistory(prev =>
+            prev.map(msg =>
+                String(msg.id) === assistantTempId ? { ...msg, content: finalAssistantText, isThinking: false } : msg
+            )
+        );
+        stopTypewriterPainter();
+        return finalAssistantMessageId;
+    };
 
     // --- SESSION MANAGEMENT ---
     const { sessions, isLoadingHistory, fetchHistory, loadSession, createSession, clearHistory, deleteSession, deletingId } = useChatHistory();
@@ -160,7 +321,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                         const cachedResponse = await cache.match(cacheUrl);
 
                         if (cachedResponse) {
-                            console.log("⚡ Cache Hit! Loading instantly.");
+                            console.log("âš¡ Cache Hit! Loading instantly.");
                             const blob = await cachedResponse.blob();
                             if (active) {
                                 setPdfContent(URL.createObjectURL(blob));
@@ -169,14 +330,14 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                             return;
                         }
                     } catch (cacheErr) {
-                        console.warn("⚠️ Cache API check failed:", cacheErr);
+                        console.warn("âš ï¸ Cache API check failed:", cacheErr);
                     }
                 } else {
-                    console.log("🔒 Cache API not available (likely insecure context). Skipping cache lookup.");
+                    console.log("ðŸ”’ Cache API not available (likely insecure context). Skipping cache lookup.");
                 }
 
                 // 2. Network Fetch (Cache Miss or No Cache) - Use API Client for Auth
-                console.log("🌐 Fetching from network...");
+                console.log("ðŸŒ Fetching from network...");
                 // Note: api.fetch returns the response, which we can clone/stream
                 const response = await api.fetch(streamEndpoint);
 
@@ -512,34 +673,19 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     };
 
     const sendMessage = async (text: string, attachments: string[] = [], systemInstruction?: string, isRetry: boolean = false) => {
-        // Build user message
-        const newUserMsg: Message = {
-            role: 'user',
-            content: text,
-            ...(attachments.length > 0 && { imageBase64: attachments[0] }),
-        };
-
-        // Only append a new user bubble if this is NOT a retry
-        // On retry, the bubble is already on screen — reuse it
-        const updatedHistory = isRetry ? [...chatHistory] : [...chatHistory, newUserMsg];
-        if (!isRetry) {
-            setChatHistory(updatedHistory);
-        }
-
         setIsLoading(true);
         setIsError(false);
 
-        // Create AbortController for this request
         const controller = new AbortController();
         abortControllerRef.current = controller;
 
+        const tempUserId = `temp-user-${Date.now()}`;
+        const tempAssistantId = `temp-assistant-${Date.now()}`;
+
         try {
-            // Ensure Session ID exists
             let activeSessionId = currentSessionId;
             if (!activeSessionId) {
-                // Set title to "New Chat" to trigger backend AI auto-naming
                 const title = "New Chat";
-                // Create session with Context ID (fileId)
                 const newSession = await createSession(title, fileId);
 
                 if (!newSession) {
@@ -552,84 +698,97 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 setCurrentSessionId(activeSessionId);
             }
 
-            // USE API.POST HERE — pass signal for abort support
-            const response = await api.post('/chat', {
-                text: text,
-                mode: "chat",
-                messages: updatedHistory,
-                document_id: fileId,
-                images: attachments, // Send array
-                ...(attachments.length > 0 && { image_base64: attachments[0] }), // Backward compat
-                ...(systemInstruction && { system_instruction: systemInstruction }),
-                session_id: activeSessionId, // Persist message to session
-                is_retry: isRetry, // If true, backend skips saving user message (already in DB)
-            }, { signal: controller.signal });
+            const newUserMsg: Message = {
+                id: tempUserId,
+                role: 'user',
+                content: text,
+                session_id: activeSessionId || undefined,
+                ...(attachments.length > 0 && { imageBase64: attachments[0] }),
+            };
+            const assistantPlaceholder: Message = {
+                id: tempAssistantId,
+                role: 'assistant',
+                content: '',
+                session_id: activeSessionId || undefined,
+                isThinking: true
+            };
 
-            // Strict safety check: throw on failed response
-            const data = await response.json();
+            const updatedHistory = isRetry ? [...chatHistory] : [...chatHistory, newUserMsg];
+            setChatHistory(prev => (isRetry ? [...prev, assistantPlaceholder] : [...prev, newUserMsg, assistantPlaceholder]));
+
+            const response = await api.fetch('/chat', {
+                method: 'POST',
+                signal: controller.signal,
+                body: JSON.stringify({
+                    text: text,
+                    mode: 'chat',
+                    messages: updatedHistory,
+                    document_id: fileId,
+                    images: attachments,
+                    ...(attachments.length > 0 && { image_base64: attachments[0] }),
+                    ...(systemInstruction && { system_instruction: systemInstruction }),
+                    session_id: activeSessionId,
+                    is_retry: isRetry,
+                }),
+            });
+
             if (!response.ok) {
-                throw new Error(data?.detail || `API error: ${response.status}`);
-            }
-
-            // Validate expected response structure before destructuring
-            if (!data?.choices?.[0]?.message) {
-                throw new Error("Invalid API response format");
-            }
-
-            // Re-fetch ALL messages from DB so React state has real Supabase integer IDs
-            // This prevents the 'fake ID' 404 bug when editing
-            if (activeSessionId) {
-                const dbMessages = await loadSession(activeSessionId);
-                console.log('[State Sync] loadSession returned', dbMessages?.length, 'messages. Sample IDs:', dbMessages?.slice(0, 3).map((m) => m.id));
-                if (dbMessages && dbMessages.length > 0) {
-                    setChatHistory(dbMessages as Message[]);
-                } else {
-                    // Fallback: use the API response directly
-                    const assistantMessage = data.choices[0].message;
-                    setChatHistory(prev => [...prev, assistantMessage]);
+                let detail = `API error: ${response.status}`;
+                try {
+                    const errData = await response.json();
+                    detail = errData?.detail || detail;
+                } catch {
+                    // Keep default detail
                 }
-            } else {
-                const assistantMessage = data.choices[0].message;
-                setChatHistory(prev => [...prev, assistantMessage]);
+                throw new Error(detail);
             }
 
-            // Refresh sidebar if this was the first message (new session created)
-            if (!currentSessionId && activeSessionId) {
-                await fetchHistory(fileId);
+            const finalAssistantMessageId = await consumeSSEStream(
+                response,
+                tempAssistantId,
+                !isRetry
+                    ? (userMessageId: string) => {
+                        setChatHistory(prev =>
+                            prev.map(msg =>
+                                String(msg.id) === tempUserId ? { ...msg, id: userMessageId } : msg
+                            )
+                        );
+                    }
+                    : undefined
+            );
+            if (finalAssistantMessageId) {
+                setChatHistory(prev =>
+                    prev.map(msg =>
+                        String(msg.id) === tempAssistantId ? { ...msg, id: finalAssistantMessageId } : msg
+                    )
+                );
             }
 
         } catch (err: unknown) {
             if (err instanceof Error && err.name === 'AbortError') {
-                // Intentional user action — silent catch, no console.error, no isError
-                // Append as 'assistant' role so it renders like a normal AI response (left side, action buttons)
-                // This message is LOCAL STATE ONLY — never persisted to Supabase
-                setChatHistory(prev => [...prev, { role: 'assistant', content: '_You stopped this response._' }]);
+                streamNetworkDoneRef.current = true;
+                setChatHistory(prev =>
+                    prev.map(msg =>
+                        String(msg.id) === tempAssistantId ? { ...msg, content: '_You stopped this response._', isThinking: false } : msg
+                    )
+                );
+                stopTypewriterPainter();
             } else {
-                console.error("Chat Error:", err);
-                // Network/server error
+                console.error('Chat Error:', err);
+                streamNetworkDoneRef.current = true;
+                setChatHistory(prev =>
+                    prev.map(msg =>
+                        String(msg.id) === tempAssistantId ? { ...msg, isThinking: false } : msg
+                    )
+                );
+                stopTypewriterPainter();
                 setIsError(true);
-
-                // Sync state with DB — if the user message was saved before the LLM crashed,
-                // this replaces the temporary frontend ID with the real DB integer ID.
-                // Smart Retry will then correctly use /chat/edit instead of duplicating.
-                if (currentSessionId) {
-                    try {
-                        const dbMessages = await loadSession(currentSessionId);
-                        if (dbMessages && dbMessages.length > 0) {
-                            setChatHistory(dbMessages as Message[]);
-                            console.log('[Error Sync] Refreshed state with', dbMessages.length, 'DB messages');
-                        }
-                    } catch (syncErr) {
-                        console.warn('[Error Sync] Failed to refresh history:', syncErr);
-                    }
-                }
             }
         } finally {
             setIsLoading(false);
             abortControllerRef.current = null;
         }
     };
-
     const stopGeneration = () => {
         abortControllerRef.current?.abort();
     };
@@ -661,49 +820,19 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         const images = lastUserMsg.imageBase64 ? [lastUserMsg.imageBase64] : [];
 
         if (isRealDbId) {
-            // Path A: SERVER ERROR (DB saved it, LLM crashed)
             console.log('[Retry] Path A: Attempting /chat/edit with ID:', rawId);
-
-            // Optimistic UI: immediately show only the user's message, remove stale AI responses
-            const editIndex = chatHistory.findIndex(m => String(m.id) === String(rawId));
-            if (editIndex !== -1) {
-                setChatHistory(chatHistory.slice(0, editIndex + 1));
-            }
-
-            try {
-                setIsLoading(true);
-                // Call handleEditMessage directly since we have a confirmed DB ID
-                const response = await api.post('/chat/edit', {
-                    session_id: currentSessionId,
-                    message_id: String(rawId),
-                    new_text: lastUserMsg.content,
-                });
-
-                if (!response.ok) {
-                    throw new Error(`Edit failed: ${response.status}`);
-                }
-
-                // Success! Refresh state
-                const msgs = await loadSession(currentSessionId!);
-                setChatHistory(msgs as Message[]);
-                setIsLoading(false);
-
-            } catch (editErr) {
-                console.warn('[Retry] Path A failed, falling back to resend:', editErr);
-                // Fallback: If edit fails (e.g. 404), remove the message and Resend
-                setChatHistory(prev => prev.slice(0, -1));
-                sendMessage(lastUserMsg.content, images, undefined, true);
-            }
+            await handleEditMessage(String(rawId), lastUserMsg.content);
         } else {
             // Path B: NETWORK ERROR (Message never reached DB or has Temp ID)
-            console.log('[Retry] Path B: Network error / temporary ID — Resending fresh');
-            // Leave the existing bubble on screen — sendMessage with isRetry=true won't add another
+            console.log('[Retry] Path B: Network error / temporary ID â€” Resending fresh');
+            // Leave the existing bubble on screen â€” sendMessage with isRetry=true won't add another
             sendMessage(lastUserMsg.content, images, undefined, true);
         }
     };
 
     const handleEditMessage = async (messageId: string, newText: string) => {
         if (!currentSessionId) return;
+        const tempAssistantId = `temp-assistant-edit-${Date.now()}`;
 
         // Safety log: what ID is being sent to the backend?
         console.log('[Edit] Editing Message ID:', messageId, 'Type:', typeof messageId);
@@ -718,6 +847,13 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 ...optimisticMessages[editIndex],
                 content: newText,
             };
+            optimisticMessages.push({
+                id: tempAssistantId,
+                role: 'assistant',
+                content: '',
+                session_id: currentSessionId,
+                isThinking: true
+            });
             setChatHistory(optimisticMessages);
         }
 
@@ -725,23 +861,39 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         setIsError(false);
 
         try {
-            const response = await api.post('/chat/edit', {
-                session_id: currentSessionId,
-                message_id: messageId,
-                new_text: newText,
+            const response = await api.fetch('/chat/edit', {
+                method: 'POST',
+                body: JSON.stringify({
+                    session_id: currentSessionId,
+                    message_id: messageId,
+                    new_text: newText,
+                }),
             });
 
             if (!response.ok) {
                 throw new Error(`Edit failed: ${response.status}`);
             }
 
-            // --- CLEAN STATE REFRESH: overwrite with fresh DB timeline ---
-            const msgs = await loadSession(currentSessionId);
-            console.log('[Edit] State refresh:', msgs?.length, 'messages from DB');
-            setChatHistory(msgs as Message[]);
+            const finalAssistantMessageId = await consumeSSEStream(response, tempAssistantId);
+            if (finalAssistantMessageId) {
+                setChatHistory(prev =>
+                    prev.map(msg =>
+                        String(msg.id) === tempAssistantId
+                            ? { ...msg, id: String(finalAssistantMessageId) }
+                            : msg
+                    )
+                );
+            }
 
         } catch (err) {
             console.error("Edit Error:", err);
+            streamNetworkDoneRef.current = true;
+            setChatHistory(prev =>
+                prev.map(msg =>
+                    String(msg.id) === tempAssistantId ? { ...msg, isThinking: false } : msg
+                )
+            );
+            stopTypewriterPainter();
             setIsError(true);
         } finally {
             setIsLoading(false);
@@ -825,6 +977,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     const handleNewChat = () => {
         // Reset Logic: synchronously clear state
         setIsLoading(false);
+        streamNetworkDoneRef.current = true;
+        stopTypewriterPainter();
         setChatHistory([]);
         setInputMessage('');
         setPendingAttachments([]);
@@ -872,35 +1026,53 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
             }}
             deletingId={deletingId}
             contextId={fileId}
+            activeStreamingAssistantId={activeStreamingAssistantId}
+            typingSpanRef={typingSpanRef}
             onRegenerate={async () => {
                 // Regenerate Logic (Backend-driven):
                 if (!currentSessionId) return;
+                const tempAssistantId = `temp-assistant-regen-${Date.now()}`;
 
-                // 1. Optimistic UI Update: Remove last assistant message and show loading
+                // 1. Optimistic UI Update: Remove last assistant message and add placeholder
                 setChatHistory(prev => {
                     if (prev.length === 0) return prev;
                     const last = prev[prev.length - 1];
-                    // Check for both 'assistant' (groq) and 'ai' (supabase) roles
-                    if (last.role === 'assistant' || last.role === 'ai') {
-                        return prev.slice(0, -1);
-                    }
-                    return prev;
+                    const base = (last.role === 'assistant' || last.role === 'ai') ? prev.slice(0, -1) : prev;
+                    return [...base, { id: tempAssistantId, role: 'assistant', content: '', session_id: currentSessionId, isThinking: true }];
                 });
                 setIsLoading(true);
 
                 try {
-                    // 2. Call Backend Regenerate Endpoint
-                    const res = await api.post(`/chat/${currentSessionId}/regenerate`, {});
-                    const data = await res.json();
+                    // 2. Call Backend Regenerate Endpoint (SSE stream)
+                    const res = await api.fetch(`/chat/${currentSessionId}/regenerate`, {
+                        method: 'POST',
+                        body: JSON.stringify({})
+                    });
 
-                    if (data.choices && data.choices[0] && data.choices[0].message) {
-                        const newMsg = data.choices[0].message;
-                        setChatHistory(prev => [...prev, newMsg]);
+                    if (!res.ok) {
+                        throw new Error(`Regenerate failed: ${res.status}`);
+                    }
+                    const finalAssistantMessageId = await consumeSSEStream(res, tempAssistantId);
+                    if (finalAssistantMessageId) {
+                        setChatHistory(prev =>
+                            prev.map(msg =>
+                                String(msg.id) === tempAssistantId
+                                    ? { ...msg, id: String(finalAssistantMessageId) }
+                                    : msg
+                            )
+                        );
                     }
                 } catch (err) {
                     console.error("Regenerate failed:", err);
-                    // Warn user
-                    setChatHistory(prev => [...prev, { role: 'assistant', content: "Sorry, failed to regenerate." }]);
+                    streamNetworkDoneRef.current = true;
+                    stopTypewriterPainter();
+                    setChatHistory(prev =>
+                        prev.map(msg =>
+                            String(msg.id) === tempAssistantId
+                                ? { ...msg, content: "Sorry, failed to regenerate.", isThinking: false }
+                                : msg
+                        )
+                    );
                 } finally {
                     setIsLoading(false);
                 }
@@ -987,7 +1159,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                     <span>
                                         {meta.topic}
                                         <span className="text-muted-foreground font-normal ml-2 opacity-75">
-                                            • {meta.lecturer}
+                                            â€¢ {meta.lecturer}
                                         </span>
                                     </span>
                                 ) : (
