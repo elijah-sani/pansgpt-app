@@ -15,22 +15,15 @@ import time
 import uuid
 import json
 from datetime import datetime
+from services import llm_engine, chat_history
 
 logger = logging.getLogger("PansGPT")
 
 router = APIRouter(tags=["chat"])
 
 # These will be injected from main api.py
-openrouter_client = None
-google_client = None
 supabase_client = None
 verify_api_key_handler = None
-
-# --- Global Model Constants ---
-TEXT_PRIMARY = "meta-llama/llama-3.3-70b-instruct:free"
-TEXT_FALLBACK = "gemma-3-27b-it"
-VISION_PRIMARY = "qwen/qwen3-vl-235b-a22b-thinking"
-VISION_FALLBACK = "gemma-3-27b-it"
 
 GRACEFUL_ASSISTANT_ERROR_PAYLOAD = {
     "role": "assistant",
@@ -44,47 +37,13 @@ async def _create_completion_with_failover(
     is_vision: bool,
     stream: bool = False,
 ):
-    """
-    Retry primary model 3 times, then perform one fallback attempt.
-    Returns completion object on success, or None if both primary and fallback fail.
-    """
-    primary_model = VISION_PRIMARY if is_vision else TEXT_PRIMARY
-    fallback_model = VISION_FALLBACK if is_vision else TEXT_FALLBACK
-
-    for attempt in range(1, 4):
-        try:
-            if openrouter_client is None:
-                raise RuntimeError("OpenRouter client not initialized")
-            return await openrouter_client.chat.completions.create(
-                model=primary_model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stream=stream,
-            )
-        except Exception as e:
-            logger.warning(
-                f"[WARNING] Primary model failed ({primary_model}) attempt {attempt}/3: {e}"
-            )
-            if attempt < 3:
-                await asyncio.sleep(2)
-
-    if google_client is None:
-        logger.error("[ERROR] Google fallback client not initialized.")
-        return None
-
-    try:
-        logger.warning(f"[WARNING] Failing over to Google model: {fallback_model}")
-        return await google_client.chat.completions.create(
-            model=fallback_model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=stream,
-        )
-    except Exception as e:
-        logger.error(f"[ERROR] Google fallback model failed ({fallback_model}): {e}")
-        return None
+    return await llm_engine.generate_completion_with_failover(
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        has_images=is_vision,
+        stream=stream,
+    )
 
 async def _build_streaming_response(
     api_stream,
@@ -129,18 +88,12 @@ async def _build_streaming_response(
                 full_text = GRACEFUL_ASSISTANT_ERROR_PAYLOAD["content"]
                 yield f"data: {json.dumps({'delta': full_text})}\n\n"
 
-            if session_id and supabase_client:
+            if session_id and chat_history.has_client():
                 try:
-                    data = await _execute_with_retry(
-                        lambda: supabase_client.table("chat_messages").insert({
-                            "session_id": session_id,
-                            "role": "ai",
-                            "content": full_text
-                        }).execute(),
-                        "Save streamed assistant message",
+                    saved_assistant_message_id = await chat_history.save_assistant_message(
+                        session_id=session_id,
+                        content=full_text,
                     )
-                    if data.data and len(data.data) > 0:
-                        saved_assistant_message_id = data.data[0]["id"]
                 except Exception as db_err:
                     logger.error(f"Failed to save streamed assistant message: {db_err}")
 
@@ -500,79 +453,53 @@ async def chat(request: ChatRequest):
     Analyze text using Groq AI with support for conversation history.
     Modes: explain, example, memory, chat
     """
-    if not openrouter_client and not google_client:
+    if not llm_engine.has_available_client():
         raise HTTPException(status_code=500, detail="AI client not initialized")
     saved_user_message_id: Optional[str] = None
     
     # --- Persistence: Save User Message & Auto-Rename ---
     # Skip saving user message on retry  it already exists in DB from the failed attempt
-    if request.session_id and supabase_client and not request.is_retry:
+    if request.session_id and chat_history.has_client() and not request.is_retry:
         try:
             # 1. Save Message
-            # Flatten image list to JSON string for storage
             image_payload = None
             if request.images:
                 image_payload = json.dumps(request.images)
             elif request.image:
                 image_payload = request.image
 
-            user_save_res = await _execute_with_retry(
-                lambda: supabase_client.table("chat_messages").insert({
-                    "session_id": request.session_id,
-                    "role": "user",
-                    "content": request.text,
-                    "image_data": image_payload
-                }).execute(),
-                "Save user chat message",
+            saved_user_message_id = await chat_history.save_user_message(
+                session_id=request.session_id,
+                content=request.text,
+                image_data=image_payload,
             )
-            if user_save_res.data and len(user_save_res.data) > 0:
-                saved_user_message_id = user_save_res.data[0].get("id")
-            
+
             # 2. Auto-Rename if "New Chat"
             try:
-                # Fetch current title
-                sess_res = await _execute_with_retry(
-                    lambda: supabase_client.table("chat_sessions").select("title").eq("id", request.session_id).execute(),
-                    "Fetch chat session title",
-                )
-                if sess_res.data and len(sess_res.data) > 0:
-                    current_title = sess_res.data[0].get('title')
-                    if current_title == "New Chat":
-                        logger.info(f"[INFO] Triggering AI Auto-Rename for session {request.session_id}...")
-                        # Generate title via AI
-                        try:
-                            title_prompt = f"Create a short, professional title (maximum 4 words) for a chat that starts with this message: '{request.text}'. Return ONLY the title text, with no quotes, no punctuation, and no extra words."
-                            
-                            title_completion = await _create_completion_with_failover(
-                                messages=[{"role": "user", "content": title_prompt}],
-                                temperature=0.5,
-                                max_tokens=10,
-                                is_vision=False,
-                                stream=False
-                            )
-                            if title_completion is None:
-                                raise RuntimeError("Title generation failed on primary and fallback")
-                            
-                            new_title = title_completion.choices[0].message.content.strip().strip('"')
-                            
-                            # Fallback if empty
-                            if not new_title:
-                                new_title = request.text[:30] + "..."
-                                
-                            await _execute_with_retry(
-                                lambda: supabase_client.table("chat_sessions").update({"title": new_title}).eq("id", request.session_id).execute(),
-                                "Update chat session title",
-                            )
-                            logger.info(f"[INFO] AI Auto-renamed session {request.session_id} to '{new_title}'")
-                            
-                        except Exception as ai_title_err:
-                            logger.error(f"AI Title Generation Failed: {ai_title_err}")
-                            # Fallback to simple truncation
-                            fallback_title = request.text[:30] + "..."
-                            await _execute_with_retry(
-                                lambda: supabase_client.table("chat_sessions").update({"title": fallback_title}).eq("id", request.session_id).execute(),
-                                "Fallback update chat session title",
-                            )
+                current_title = await chat_history.get_session_title(request.session_id)
+                if current_title == "New Chat":
+                    logger.info(f"[INFO] Triggering AI Auto-Rename for session {request.session_id}...")
+                    try:
+                        title_prompt = f"Create a short, professional title (maximum 4 words) for a chat that starts with this message: '{request.text}'. Return ONLY the title text, with no quotes, no punctuation, and no extra words."
+                        title_completion = await _create_completion_with_failover(
+                            messages=[{"role": "user", "content": title_prompt}],
+                            temperature=0.5,
+                            max_tokens=10,
+                            is_vision=False,
+                            stream=False
+                        )
+                        if title_completion is None:
+                            raise RuntimeError("Title generation failed on primary and fallback")
+
+                        new_title = title_completion.choices[0].message.content.strip().strip('"')
+                        if not new_title:
+                            new_title = request.text[:30] + "..."
+                        await chat_history.update_session_title(request.session_id, new_title)
+                        logger.info(f"[INFO] AI Auto-renamed session {request.session_id} to '{new_title}'")
+                    except Exception as ai_title_err:
+                        logger.error(f"AI Title Generation Failed: {ai_title_err}")
+                        fallback_title = request.text[:30] + "..."
+                        await chat_history.update_session_title(request.session_id, fallback_title)
 
             except Exception as rename_err:
                  logger.warning(f"Auto-rename failed: {rename_err}")
@@ -656,15 +583,14 @@ Do not hallucinate.
 
             # Model Selection Logic
             # Since we are in the "VISION MODE" block, we know there are images.
-            selected_model = VISION_PRIMARY
+            selected_model = llm_engine.VISION_PRIMARY
             logger.info(f"[INFO] Smart Router: Detected images, switching to {selected_model}")
 
-            completion_stream = await _create_completion_with_failover(
+            completion_stream = llm_engine.generate_dual_cloud_stream(
                 messages=messages,
+                has_images=True,
                 temperature=temperature,
                 max_tokens=2048,
-                is_vision=True,
-                stream=True,
             )
             return await _build_streaming_response(
                 completion_stream,
@@ -722,23 +648,22 @@ Do not hallucinate.
         # Check if any message in history has images (though this block is primarily text mode)
         # We use the helper to be sure
         if contains_image(messages):
-             selected_model = VISION_PRIMARY
+             selected_model = llm_engine.VISION_PRIMARY
              logger.info(f"[INFO] Smart Router: Found images in history, using {selected_model}")
              is_vision_mode = True
         else:
-             selected_model = TEXT_PRIMARY
+             selected_model = llm_engine.TEXT_PRIMARY
              logger.info(f"[INFO] Smart Router: Pure text detected, processing efficiently with {selected_model}")
              is_vision_mode = False
 
         # Flatten system prompt into user message for Google AI compatibility
         messages = merge_system_into_user(messages)
 
-        completion_stream = await _create_completion_with_failover(
+        completion_stream = llm_engine.generate_dual_cloud_stream(
             messages=messages,
+            has_images=is_vision_mode,
             temperature=temperature,
             max_tokens=2048,
-            is_vision=is_vision_mode,
-            stream=True,
         )
         return await _build_streaming_response(
             completion_stream,
@@ -751,12 +676,11 @@ Do not hallucinate.
         raise HTTPException(status_code=500, detail=f"AI processing failed: {str(e)}")
 
 # Function to set dependencies (called from main api.py)
-def set_dependencies(openrouter, google, supabase, api_key_verifier):
-    global openrouter_client, google_client, supabase_client, verify_api_key_handler
-    openrouter_client = openrouter
-    google_client = google
+def set_dependencies(supabase, api_key_verifier):
+    global supabase_client, verify_api_key_handler
     supabase_client = supabase
     verify_api_key_handler = api_key_verifier
+    chat_history.set_dependencies(supabase, _execute_with_retry)
 
 # --- Session Management Endpoints ---
 
@@ -897,7 +821,7 @@ async def edit_message(request: EditMessageRequest, current_user: User = Depends
     Edit a user message: delete it and all subsequent messages, then re-process with new text.
     Strict RLS: only the session owner can edit.
     """
-    if not supabase_client or (not openrouter_client and not google_client):
+    if not supabase_client or not llm_engine.has_available_client():
         raise HTTPException(status_code=500, detail="Services not initialized")
 
     try:
@@ -982,23 +906,22 @@ async def edit_message(request: EditMessageRequest, current_user: User = Depends
         
         # Smart Router Check
         if contains_image(llm_messages):
-             selected_model = VISION_PRIMARY
+             selected_model = llm_engine.VISION_PRIMARY
              logger.info(f"[INFO] Smart Router: Images detected in context, using {selected_model}")
              is_vision_mode = True
         else:
-             selected_model = TEXT_PRIMARY
+             selected_model = llm_engine.TEXT_PRIMARY
              logger.info(f"[INFO] Smart Router: Text-only context, using {selected_model}")
              is_vision_mode = False
 
         # Flatten system prompt into user message for Google AI compatibility
         llm_messages = merge_system_into_user(llm_messages)
 
-        completion_stream = await _create_completion_with_failover(
+        completion_stream = llm_engine.generate_dual_cloud_stream(
             messages=llm_messages,
+            has_images=is_vision_mode,
             temperature=temperature,
             max_tokens=2048,
-            is_vision=is_vision_mode,
-            stream=True,
         )
         return await _build_streaming_response(completion_stream, request.session_id)
 
@@ -1014,7 +937,7 @@ async def regenerate_response(session_id: str, current_user: User = Depends(get_
     Regenerate the last AI response.
     Deletes the last AI message and re-processes the preceding user message.
     """
-    if not supabase_client or (not openrouter_client and not google_client):
+    if not supabase_client or not llm_engine.has_available_client():
         raise HTTPException(status_code=500, detail="Services not initialized")
 
     try:
@@ -1101,23 +1024,22 @@ async def regenerate_response(session_id: str, current_user: User = Depends(get_
         
         # Smart Router Check
         if contains_image(llm_messages):
-             selected_model = VISION_PRIMARY
+             selected_model = llm_engine.VISION_PRIMARY
              logger.info(f"[INFO] Smart Router: Images detected in context, using {selected_model}")
              is_vision_mode = True
         else:
-             selected_model = TEXT_PRIMARY
+             selected_model = llm_engine.TEXT_PRIMARY
              logger.info(f"[INFO] Smart Router: Text-only context, using {selected_model}")
              is_vision_mode = False
 
         # Flatten system prompt into user message for Google AI compatibility
         llm_messages = merge_system_into_user(llm_messages)
 
-        completion_stream = await _create_completion_with_failover(
+        completion_stream = llm_engine.generate_dual_cloud_stream(
             messages=llm_messages,
+            has_images=is_vision_mode,
             temperature=temperature,
             max_tokens=2048,
-            is_vision=is_vision_mode,
-            stream=True,
         )
         return await _build_streaming_response(completion_stream, session_id)
 

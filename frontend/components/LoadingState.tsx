@@ -21,13 +21,41 @@ export function LoadingState({ progress }: LoadingStateProps) {
             {/* 1. The Capsule Pill */}
             <div className="relative w-16 h-48 rounded-full border-4 border-white/20 dark:border-white/10 bg-black/20 overflow-hidden shadow-[0_0_30px_color-mix(in_srgb,var(--primary),transparent_80%)]">
 
-                {/* Fill Animation */}
+                {/* The Liquid Container */}
                 <div
-                    className="absolute bottom-0 left-0 right-0 bg-primary shadow-[0_0_20px_color-mix(in_srgb,var(--primary),transparent_50%)] transition-all duration-300 ease-out"
+                    className="absolute bottom-0 left-0 right-0 transition-all duration-300 ease-out"
                     style={{ height: `${clampedProgress}%` }}
                 >
-                    {/* Liquid Highlight */}
-                    <div className="absolute top-0 left-0 right-0 h-2 bg-white/30 skew-y-6" />
+                    {/* Solid Fill Block - Placed first to be behind waves */}
+                    {/* Using top: -3px to force overlap with wave bottom and prevent gap */}
+                    <div
+                        className="absolute bottom-0 left-0 right-0 bg-primary shadow-[0_0_20px_color-mix(in_srgb,var(--primary),transparent_50%)]"
+                        style={{ top: '-3px' }}
+                    />
+
+                    {/* Floating Bubbles (Particles) */}
+                    {/* We could add actual particle divs here if needed, but keeping it clean for now */}
+
+                    {/* Wave Layer 1 (Back/Darker) */}
+                    <div className="absolute -top-3 left-0 right-0 h-4 w-[200%] animate-wave opacity-60"
+                        style={{
+                            // Using a repeating SVG background or mask would be ideal, but for pure CSS/SVG:
+                            backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 800 88.7'%3E%3Cpath d='M800 56.9c-155.5 0-204.9-50-405.5-49.9-200 0-250 49.9-394.5 49.9v31.8h800v-.2-31.6z' fill='%2353d22d'/%3E%3C/svg%3E")`,
+                            backgroundSize: '50% 100%',
+                            animationDuration: '6s',
+                            filter: 'brightness(0.8)'
+                        }}
+                    />
+
+                    {/* Wave Layer 2 (Front/Lighter) */}
+                    <div className="absolute -top-3 left-0 right-0 h-4 w-[200%] animate-wave"
+                        style={{
+                            backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 800 88.7'%3E%3Cpath d='M800 56.9c-155.5 0-204.9-50-405.5-49.9-200 0-250 49.9-394.5 49.9v31.8h800v-.2-31.6z' fill='%2353d22d'/%3E%3C/svg%3E")`,
+                            backgroundSize: '50% 100%',
+                            animationDuration: '4s',
+                            marginLeft: '-20px' // Offset
+                        }}
+                    />
                 </div>
 
                 {/* Glass Reflection */}
@@ -36,12 +64,12 @@ export function LoadingState({ progress }: LoadingStateProps) {
 
             {/* 2. Status Text */}
             <div className="text-center space-y-2">
-                <h3 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-purple-400">
+                <h3 className="text-2xl font-bold font-mono tracking-tighter text-foreground">
                     {Math.round(clampedProgress)}%
                 </h3>
-                <div className="flex items-center gap-2 text-muted-foreground font-medium">
-                    {clampedProgress < 100 && <Loader2 className="w-4 h-4 animate-spin text-primary" />}
-                    <span className="tracking-wide animate-pulse">
+                <div className="flex items-center gap-2 text-muted-foreground font-medium text-sm uppercase tracking-widest">
+                    {clampedProgress < 100 && <Loader2 className="w-3 h-3 animate-spin text-primary" />}
+                    <span className="animate-pulse">
                         {getStatusText(clampedProgress)}
                     </span>
                 </div>

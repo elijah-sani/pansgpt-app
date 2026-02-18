@@ -21,6 +21,8 @@ frontend/tests/*
 **/tests/**
 **/test_*.py
 **/*_test.py
+!backend/tests/
+!backend/tests/test_api.py
 
 # Google Cloud Secrets
 credentials.json

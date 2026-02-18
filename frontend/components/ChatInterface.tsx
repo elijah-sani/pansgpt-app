@@ -197,19 +197,20 @@ export default function ChatInterface({
                     {/* New Chat Button */}
                     <button
                         onClick={handleNewChatClick}
-                        className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-full transition-colors"
+                        className="hidden md:inline-flex p-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-full transition-colors"
                         title="New Chat"
                     >
                         <SquarePen className="w-5 h-5" />
                     </button>
 
-                    {/* Mobile Close Button (if applicable) */}
-                    {isMobile && onCloseSidebar && (
+                    {/* Mobile New Chat Button */}
+                    {isMobile && (
                         <button
-                            onClick={onCloseSidebar}
+                            onClick={handleNewChatClick}
                             className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-full transition-colors md:hidden"
+                            title="New Chat"
                         >
-                            <X className="w-5 h-5" />
+                            <SquarePen className="w-5 h-5" />
                         </button>
                     )}
                 </div>

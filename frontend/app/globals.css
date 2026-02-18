@@ -134,3 +134,18 @@ body {
 .modal-input {
   @apply w-full px-4 py-3 bg-background border-2 border-border rounded-xl outline-none text-foreground placeholder:text-muted-foreground focus:bg-background focus:border-primary/50 focus:ring-4 focus:ring-primary/10 transition-all shadow-inner;
 }
+
+/* Liquid Wave Animation */
+@keyframes wave-scroll {
+  0% {
+    transform: translateX(0);
+  }
+
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-wave {
+  animation: wave-scroll 2s linear infinite;
+}

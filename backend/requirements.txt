@@ -21,3 +21,5 @@ google-auth-oauthlib
 httplib2
 Pillow
 langchain
+pytest
+httpx
