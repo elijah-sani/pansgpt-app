@@ -2,13 +2,14 @@
 Chat Router: AI Conversation Endpoint with RAG Support
 Handles AI-powered chat interactions using Groq with vector search.
 """
-from fastapi import APIRouter, HTTPException, Depends
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, Depends, Header, File, UploadFile
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional
 import logging
 import os
 import asyncio
+import tempfile
 import google.generativeai as genai
 from cachetools import TTLCache
 import time
@@ -16,14 +17,26 @@ import uuid
 import json
 from datetime import datetime
 from services import llm_engine, chat_history
+from groq import AsyncGroq
 
 logger = logging.getLogger("PansGPT")
+RAG_NETWORK_TIMEOUT_MESSAGE = (
+    "Network timeout. Please check your internet connection, or try disabling your VPN/Firewall if you are using one."
+)
+
+try:
+    import grpc  # type: ignore
+except Exception:
+    grpc = None
 
 router = APIRouter(tags=["chat"])
 
 # These will be injected from main api.py
 supabase_client = None
 verify_api_key_handler = None
+groq_client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY")) if os.getenv("GROQ_API_KEY") else None
+if groq_client is None:
+    logger.warning("[WARNING] GROQ_API_KEY not set! /transcribe endpoint will be unavailable.")
 
 GRACEFUL_ASSISTANT_ERROR_PAYLOAD = {
     "role": "assistant",
@@ -118,8 +131,6 @@ class User(BaseModel):
     id: str
     email: Optional[str] = None
 
-from fastapi import Header
-
 async def verify_api_key(x_api_key: str = Header(...)):
     """
     Direct API key dependency used by all protected endpoints.
@@ -127,6 +138,66 @@ async def verify_api_key(x_api_key: str = Header(...)):
     if verify_api_key_handler is None:
         raise HTTPException(status_code=500, detail="API key verifier not configured")
     return await verify_api_key_handler(x_api_key)
+
+
+@router.post("/transcribe", dependencies=[Depends(verify_api_key)])
+async def transcribe_audio(audio: UploadFile = File(...)):
+    """
+    Transcribe uploaded audio using Groq Whisper.
+    """
+    if groq_client is None:
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
+
+    temp_file_path = None
+    try:
+        audio_bytes = await audio.read()
+        if not audio_bytes:
+            raise HTTPException(status_code=400, detail="Empty audio file")
+
+        ext = ".webm"
+        if audio.content_type in ["audio/mp4", "audio/m4a"]:
+            ext = ".m4a"
+        elif audio.content_type == "audio/wav":
+            ext = ".wav"
+        elif audio.content_type == "audio/ogg":
+            ext = ".ogg"
+        elif audio.content_type == "audio/mpeg":
+            ext = ".mp3"
+
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as temp_file:
+            temp_file.write(audio_bytes)
+            temp_file_path = temp_file.name
+
+        try:
+            with open(temp_file_path, "rb") as temp_audio_file:
+                transcription = await groq_client.audio.transcriptions.create(
+                    file=temp_audio_file,
+                    model="whisper-large-v3-turbo",
+                )
+            return {"text": transcription.text}
+        except Exception as primary_error:
+            logger.warning(f"[WARNING] Groq turbo transcription failed, falling back to whisper-large-v3: {primary_error}")
+            try:
+                with open(temp_file_path, "rb") as temp_audio_file:
+                    transcription = await groq_client.audio.transcriptions.create(
+                        file=temp_audio_file,
+                        model="whisper-large-v3",
+                    )
+                return {"text": transcription.text}
+            except Exception as secondary_error:
+                logger.error(f"[ERROR] Groq fallback transcription failed: {secondary_error}")
+                return JSONResponse(status_code=429, content={"error": "groq_limits_reached"})
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[ERROR] Audio transcription failed: {e}")
+        raise HTTPException(status_code=500, detail="Audio transcription failed")
+    finally:
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.remove(temp_file_path)
+            except Exception as cleanup_error:
+                logger.warning(f"[WARNING] Failed to delete temp audio file: {cleanup_error}")
 
 def _is_retryable_network_error(exc: Exception) -> bool:
     """
@@ -142,6 +213,38 @@ def _is_retryable_network_error(exc: Exception) -> bool:
         "ssl",
     )
     return any(marker in msg for marker in retry_markers)
+
+def _is_rag_network_timeout_error(exc: Exception) -> bool:
+    """
+    Detect timeout/network/gRPC-unavailable failures that should surface a user-friendly message.
+    """
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return True
+
+    # Match common gRPC 503 / transport timeout signatures.
+    msg = str(exc).lower()
+    network_markers = (
+        "503",
+        "tcp stream",
+        "service unavailable",
+        "statuscode.unavailable",
+        "deadline exceeded",
+        "timed out",
+        "timeout",
+        "connection reset",
+    )
+    if any(marker in msg for marker in network_markers):
+        return True
+
+    # If grpc is available, include RpcError type checks.
+    if grpc is not None:
+        try:
+            if isinstance(exc, grpc.RpcError):
+                return True
+        except Exception:
+            pass
+
+    return False
 
 async def _execute_with_retry(execute_fn, operation_name: str, max_attempts: int = 3):
     """
@@ -442,7 +545,14 @@ async def get_relevant_context(user_question: str, document_id: str) -> str:
         return context_text
         
     except Exception as e:
-        logger.error(f"[ERROR] RAG context retrieval failed: {e}")
+        if _is_rag_network_timeout_error(e):
+            logger.warning(f"[WARNING] RAG network timeout/unavailable: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=503,
+                detail=RAG_NETWORK_TIMEOUT_MESSAGE,
+            )
+
+        logger.error(f"[ERROR] RAG context retrieval failed: {e}", exc_info=True)
         return ""
 
 # --- Endpoint ---

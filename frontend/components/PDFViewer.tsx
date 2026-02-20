@@ -32,6 +32,21 @@ interface Message {
     isThinking?: boolean;
 }
 
+const extractApiErrorMessage = (errorBody: unknown, fallback: string): string => {
+    if (!errorBody || typeof errorBody !== 'object') return fallback;
+    const payload = errorBody as Record<string, unknown>;
+    if (typeof payload.detail === 'string' && payload.detail.trim().length > 0) {
+        return payload.detail;
+    }
+    if (typeof payload.message === 'string' && payload.message.trim().length > 0) {
+        return payload.message;
+    }
+    if (typeof payload.error === 'string' && payload.error.trim().length > 0) {
+        return payload.error;
+    }
+    return fallback;
+};
+
 export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     const router = useRouter();
     const searchParams = useSearchParams();
@@ -112,6 +127,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     const [isLoading, setIsLoading] = useState(false);
     const [inputMessage, setInputMessage] = useState("");
     const [isError, setIsError] = useState(false);
+    const [chatError, setChatError] = useState<string | null>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
     const streamFullTextRef = useRef('');
     const streamDisplayedLenRef = useRef(0);
@@ -284,6 +300,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     // Reset error state when switching chat sessions
     useEffect(() => {
         setIsError(false);
+        setChatError(null);
     }, [currentSessionId]);
 
     // Load history on mount (scoped to file)
@@ -675,6 +692,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     const sendMessage = async (text: string, attachments: string[] = [], systemInstruction?: string, isRetry: boolean = false) => {
         setIsLoading(true);
         setIsError(false);
+        setChatError(null);
+        setChatError(null);
 
         const controller = new AbortController();
         abortControllerRef.current = controller;
@@ -736,7 +755,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 let detail = `API error: ${response.status}`;
                 try {
                     const errData = await response.json();
-                    detail = errData?.detail || detail;
+                    detail = extractApiErrorMessage(errData, detail);
                 } catch {
                     // Keep default detail
                 }
@@ -767,22 +786,15 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         } catch (err: unknown) {
             if (err instanceof Error && err.name === 'AbortError') {
                 streamNetworkDoneRef.current = true;
-                setChatHistory(prev =>
-                    prev.map(msg =>
-                        String(msg.id) === tempAssistantId ? { ...msg, content: '_You stopped this response._', isThinking: false } : msg
-                    )
-                );
+                setChatHistory(prev => prev.filter(msg => String(msg.id) !== tempAssistantId));
                 stopTypewriterPainter();
             } else {
                 console.error('Chat Error:', err);
                 streamNetworkDoneRef.current = true;
-                setChatHistory(prev =>
-                    prev.map(msg =>
-                        String(msg.id) === tempAssistantId ? { ...msg, isThinking: false } : msg
-                    )
-                );
+                setChatHistory(prev => prev.filter(msg => String(msg.id) !== tempAssistantId));
                 stopTypewriterPainter();
                 setIsError(true);
+                setChatError(err instanceof Error ? err.message : "Network Error: Please try again.");
             }
         } finally {
             setIsLoading(false);
@@ -808,26 +820,11 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
         // Reset error state
         setIsError(false);
-
-        // Smart Retry Logic --------------------------------------------------
-        const rawId = lastUserMsg.id;
-        const numericId = Number(rawId);
-        // Valid if: not NaN, > 0, and not a massive timestamp like Date.now() (which are > 1 trillion)
-        const isRealDbId = rawId !== undefined && !isNaN(numericId) && numericId > 0 && numericId < 1000000000;
-
-        console.log('[Retry] Triggered - ID:', rawId, 'Numeric:', numericId, 'IsRealDB:', isRealDbId);
+        setChatError(null);
 
         const images = lastUserMsg.imageBase64 ? [lastUserMsg.imageBase64] : [];
-
-        if (isRealDbId) {
-            console.log('[Retry] Path A: Attempting /chat/edit with ID:', rawId);
-            await handleEditMessage(String(rawId), lastUserMsg.content);
-        } else {
-            // Path B: NETWORK ERROR (Message never reached DB or has Temp ID)
-            console.log('[Retry] Path B: Network error / temporary ID â€” Resending fresh');
-            // Leave the existing bubble on screen â€” sendMessage with isRetry=true won't add another
-            sendMessage(lastUserMsg.content, images, undefined, true);
-        }
+        setChatHistory(prev => prev.filter(msg => !String(msg.id || '').startsWith('temp-assistant')));
+        await sendMessage(lastUserMsg.content, images);
     };
 
     const handleEditMessage = async (messageId: string, newText: string) => {
@@ -888,13 +885,10 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         } catch (err) {
             console.error("Edit Error:", err);
             streamNetworkDoneRef.current = true;
-            setChatHistory(prev =>
-                prev.map(msg =>
-                    String(msg.id) === tempAssistantId ? { ...msg, isThinking: false } : msg
-                )
-            );
+            setChatHistory(prev => prev.filter(msg => String(msg.id) !== tempAssistantId));
             stopTypewriterPainter();
             setIsError(true);
+            setChatError(err instanceof Error ? err.message : "Edit failed. Please try again.");
         } finally {
             setIsLoading(false);
         }
@@ -968,9 +962,13 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
             setChatHistory(msgs as Message[]);
             setCurrentSessionId(sessionId);
             setPendingAttachments([]);
+            setIsError(false);
+            setChatError(null);
         } catch (err) {
             console.error("Failed to load session UI:", err);
             setChatHistory([]);
+            setIsError(true);
+            setChatError("Failed to load chat history.");
         }
     };
 
@@ -979,6 +977,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         setIsLoading(false);
         streamNetworkDoneRef.current = true;
         stopTypewriterPainter();
+        setIsError(false);
+        setChatError(null);
         setChatHistory([]);
         setInputMessage('');
         setPendingAttachments([]);
@@ -988,6 +988,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     const handleClearHistory = async () => {
         if (window.confirm("Are you sure you want to delete all chat history? This cannot be undone.")) {
             await clearHistory();
+            setIsError(false);
+            setChatError(null);
             setChatHistory([]);
             setCurrentSessionId(null);
             setPendingAttachments([]);
@@ -1011,6 +1013,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
             // Premium UX Props
             isError={isError}
+            chatError={chatError}
             onRetry={handleRetry}
             onStopGeneration={stopGeneration}
             onEditMessage={handleEditMessage}
@@ -1066,13 +1069,9 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                     console.error("Regenerate failed:", err);
                     streamNetworkDoneRef.current = true;
                     stopTypewriterPainter();
-                    setChatHistory(prev =>
-                        prev.map(msg =>
-                            String(msg.id) === tempAssistantId
-                                ? { ...msg, content: "Sorry, failed to regenerate.", isThinking: false }
-                                : msg
-                        )
-                    );
+                    setChatHistory(prev => prev.filter(msg => String(msg.id) !== tempAssistantId));
+                    setIsError(true);
+                    setChatError(err instanceof Error ? err.message : "Regenerate failed. Please try again.");
                 } finally {
                     setIsLoading(false);
                 }

@@ -38,16 +38,38 @@ class GoogleDriveService:
         # 2. Refresh if needed
         if not self.credentials or not self.credentials.valid:
             if self.credentials and self.credentials.expired and self.credentials.refresh_token:
-                try:
-                    logger.info("Refreshing access token...")
-                    from google.auth.transport.requests import Request
-                    self.credentials.refresh(Request())
-                    # Save the refreshed token
-                    with open(self.TOKEN_FILE, 'w') as token:
-                        token.write(self.credentials.to_json())
-                    logger.info("Token refreshed and saved.")
-                except Exception as e:
-                    raise Exception(f"CRITICAL: Failed to refresh token: {e}. Please re-run setup_auth.py")
+                import google.auth.exceptions
+                from google.auth.transport.requests import Request
+                import time
+                
+                max_retries = 3
+                success = False
+                last_error = None
+                
+                for attempt in range(max_retries):
+                    try:
+                        logger.info("Refreshing access token...")
+                        self.credentials.refresh(Request())
+                        # Save the refreshed token
+                        with open(self.TOKEN_FILE, 'w') as token:
+                            token.write(self.credentials.to_json())
+                        logger.info("Token refreshed and saved.")
+                        success = True
+                        break
+                    except (google.auth.exceptions.RefreshError, ConnectionError) as e:
+                        last_error = e
+                        logger.warning(f"Network blip during token refresh, retrying in 2 seconds... ({e})")
+                        if attempt < max_retries - 1:
+                            time.sleep(2)
+                    except Exception as e:
+                        last_error = e
+                        logger.warning(f"Unexpected error during token refresh: {e}")
+                        if attempt < max_retries - 1:
+                            time.sleep(2)
+                
+                if not success:
+                    logger.error("CRITICAL: Token refresh failed after 3 attempts. Please delete token.json and re-authenticate.")
+                    raise Exception(f"CRITICAL: Token refresh failed after 3 attempts. Please delete token.json and re-authenticate. Last error: {last_error}")
             else:
                 raise Exception("CRITICAL: token.json is missing or invalid. Please run setup_auth.py locally.")
         

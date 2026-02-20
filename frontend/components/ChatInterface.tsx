@@ -27,6 +27,8 @@ interface Message {
 } // Kept for backward compat in message history, but we might want array here too later
 
 import { ChatSession } from '../hooks/useChatHistory';
+import { useVoiceInput } from '../hooks/useVoiceInput';
+import { InlineWaveform } from './InlineWaveform';
 import MessageBubble from './MessageBubble';
 import ReportProblemModal from './ReportProblemModal';
 
@@ -44,6 +46,7 @@ interface ChatInterfaceProps {
 
     // Premium UX Props
     isError?: boolean;
+    chatError?: string | null;
     onRetry?: () => void;
     onStopGeneration?: () => void;
     onEditMessage?: (messageId: string, newText: string) => void;
@@ -86,9 +89,9 @@ export default function ChatInterface({
     pendingAttachments,
     setPendingAttachments,
     isMobile = false,
-    onCloseSidebar,
     onNewChat,
     isError,
+    chatError,
     onRetry,
     onStopGeneration,
     onEditMessage,
@@ -103,6 +106,7 @@ export default function ChatInterface({
 }: ChatInterfaceProps) {
     const chatEndRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const inputMessageRef = useRef(inputMessage);
     const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
     // Delete Confirmation State
@@ -115,6 +119,18 @@ export default function ChatInterface({
     // Inline Editing State
     const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
     const [editDraft, setEditDraft] = useState("");
+    const {
+        isListening,
+        isStarting,
+        isProcessing,
+        transcript,
+        interimTranscript,
+        volume,
+        startListening,
+        stopListening,
+        resetTranscript,
+    } = useVoiceInput();
+    const voiceBaseInputRef = useRef('');
 
     // State for Interactivity
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
@@ -123,6 +139,18 @@ export default function ChatInterface({
     useEffect(() => {
         chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages, isLoading]);
+
+    useEffect(() => {
+        inputMessageRef.current = inputMessage;
+    }, [inputMessage]);
+
+    useEffect(() => {
+        if (!transcript && !interimTranscript) return;
+        const base = voiceBaseInputRef.current;
+        const spoken = `${transcript}${interimTranscript}`.trimStart();
+        const spacer = base.trim().length > 0 && spoken.length > 0 ? ' ' : '';
+        setInputMessage(`${base}${spacer}${spoken}`.trimStart());
+    }, [transcript, interimTranscript, setInputMessage]);
 
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
@@ -175,6 +203,18 @@ export default function ChatInterface({
     const handleNewChatClick = () => {
         setIsHistoryOpen(false);
         if (onNewChat) onNewChat();
+    };
+
+    const handleVoiceToggleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+        e.preventDefault();
+        if (isProcessing || isStarting) return;
+        if (isListening) {
+            stopListening();
+            return;
+        }
+        voiceBaseInputRef.current = inputMessageRef.current;
+        resetTranscript();
+        void startListening();
     };
 
     return (
@@ -360,7 +400,7 @@ export default function ChatInterface({
                         <div className="max-w-3xl mx-auto w-full px-2">
                             <div className="flex items-center gap-3 p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-sm">
                                 <AlertCircle className="w-5 h-5 text-destructive shrink-0" />
-                                <span className="text-destructive font-medium flex-1">Network Error: Please try again.</span>
+                                <span className="text-destructive font-medium flex-1">{chatError || "Network Error: Please try again."}</span>
                                 {onRetry && (
                                     <button
                                         type="button"
@@ -412,62 +452,104 @@ export default function ChatInterface({
                     <form
                         onSubmit={(e) => {
                             e.preventDefault();
+                            if (isListening) {
+                                stopListening();
+                                return;
+                            }
                             onSendMessage();
                         }}
-                        className="flex items-center gap-2 p-2 bg-background border border-input rounded-full shadow-xl hover:shadow-2xl hover:border-primary/20 transition-all duration-300 ring-offset-background focus-within:ring-2 focus-within:ring-primary/20"
+                        className={`flex items-center gap-2 p-2 bg-background border border-input rounded-full shadow-xl hover:shadow-2xl hover:border-primary/20 transition-all duration-300 ring-offset-background focus-within:ring-2 focus-within:ring-primary/20 ${isListening ? 'ring-2 ring-primary/20' : ''}`}
                     >
 
-                        {/* Plus Button (Upload) */}
-                        <button
-                            type="button"
-                            onClick={() => fileInputRef.current?.click()}
-                            className="p-3 text-muted-foreground hover:text-foreground hover:bg-muted rounded-full transition-colors shrink-0"
-                            title="Add Attachment"
-                        >
-                            <Plus className="w-5 h-5" />
-                        </button>
-                        {/* Hidden File Input */}
-                        <input
-                            type="file"
-                            multiple
-                            ref={fileInputRef}
-                            className="hidden"
-                            accept="image/*" // Restrict to images
-                            onChange={handleFileUpload}
-                        />
+                        {/* Plus Button (Upload) - Hidden when listening/processing */}
+                        {!isListening && !isProcessing && (
+                            <>
+                                <button
+                                    type="button"
+                                    onClick={() => fileInputRef.current?.click()}
+                                    className="p-3 text-muted-foreground hover:text-foreground hover:bg-muted rounded-full transition-colors shrink-0"
+                                    title="Add Attachment"
+                                >
+                                    <Plus className="w-5 h-5" />
+                                </button>
+                                {/* Hidden File Input */}
+                                <input
+                                    type="file"
+                                    multiple
+                                    ref={fileInputRef}
+                                    className="hidden"
+                                    accept="image/*" // Restrict to images
+                                    onChange={handleFileUpload}
+                                />
+                            </>
+                        )}
 
-                        {/* Text Input */}
-                        <input
-                            type="text"
-                            value={inputMessage}
-                            onChange={(e) => setInputMessage(e.target.value)}
-                            onPaste={handlePaste}
-                            // onKeyDown removed - form submit handles Enter key now
-                            placeholder={pendingAttachments.length > 0 ? "Ask about these images..." : "Ask a question..."}
-                            className="flex-1 bg-transparent border-none outline-none text-base placeholder:text-muted-foreground px-2 h-10"
-                        />
+                        {/* Middle Area: Input or Waveform or Status */}
+                        <div className="flex-1 min-w-0 flex items-center justify-center h-10">
+                            {isListening ? (
+                                <div className="w-full flex items-center justify-center px-4 animate-in fade-in zoom-in duration-300">
+                                    <InlineWaveform volume={volume} />
+                                </div>
+                            ) : isProcessing ? (
+                                <div className="flex items-center gap-2 px-2 text-muted-foreground animate-pulse">
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                    <span className="text-sm font-medium">Transcribing...</span>
+                                </div>
+                            ) : (
+                                <input
+                                    type="text"
+                                    value={inputMessage}
+                                    onChange={(e) => setInputMessage(e.target.value)}
+                                    onPaste={handlePaste}
+                                    // onKeyDown removed - form submit handles Enter key now
+                                    placeholder={pendingAttachments.length > 0 ? "Ask about these images..." : "Ask a question..."}
+                                    className="w-full bg-transparent border-none outline-none text-base placeholder:text-muted-foreground px-2"
+                                    autoFocus
+                                />
+                            )}
+                        </div>
 
                         {/* Right Tools - Dynamic Mic/Send/Stop */}
                         <div className="flex items-center gap-1 pr-1">
                             {isLoading ? (
-                                /* Stop Button (morphed from Send) */
+                                /* Stop Generation Button - Regular App Color (Primary) */
                                 <button
                                     type="button"
                                     onClick={onStopGeneration}
-                                    className="p-2.5 bg-destructive text-destructive-foreground rounded-full hover:bg-destructive/90 transition-all shadow-md flex items-center justify-center aspect-square animate-in zoom-in duration-200"
+                                    className="p-2.5 bg-primary text-primary-foreground rounded-full hover:bg-primary/90 transition-all shadow-md flex items-center justify-center aspect-square animate-in zoom-in duration-200"
                                     title="Stop generation"
                                 >
                                     <Square className="w-4 h-4 fill-current" />
                                 </button>
-                            ) : !inputMessage.trim() && pendingAttachments.length === 0 ? (
+                            ) : isProcessing ? (
+                                /* Hidden or Disabled during processing */
+                                <div className="w-10 h-10" />
+                            ) : isListening ? (
+                                /* Stop Recording Button - Regular App Color (Primary) */
+                                <div className="relative">
+                                    <button
+                                        type="button"
+                                        onClick={handleVoiceToggleClick}
+                                        disabled={isStarting || isProcessing}
+                                        className={`p-2.5 bg-primary text-primary-foreground rounded-full transition-all shadow-md flex items-center justify-center aspect-square animate-in zoom-in duration-200 ${(isStarting || isProcessing) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-primary/90'}`}
+                                        title="Stop recording"
+                                    >
+                                        <Square className="w-4 h-4 fill-current" />
+                                    </button>
+                                </div>
+                            ) : (!inputMessage.trim() && pendingAttachments.length === 0) ? (
+                                /* Mic Button */
                                 <button
                                     type="button"
-                                    className="p-2.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-full transition-colors"
-                                    title="Voice Input (Coming Soon)"
+                                    onClick={handleVoiceToggleClick}
+                                    disabled={isStarting || isProcessing}
+                                    className={`p-2.5 rounded-full transition-colors text-muted-foreground ${(isStarting || isProcessing) ? 'opacity-50 cursor-not-allowed' : 'hover:text-foreground hover:bg-muted'}`}
+                                    title="Start voice input"
                                 >
                                     <Mic className="w-5 h-5" />
                                 </button>
                             ) : (
+                                /* Send Button */
                                 <button
                                     type="submit"
                                     className="p-2.5 bg-[#466b3c] text-white rounded-full hover:bg-[#3a5630] transition-all shadow-md flex items-center justify-center aspect-square"

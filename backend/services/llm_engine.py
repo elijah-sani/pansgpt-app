@@ -5,7 +5,7 @@ from typing import Any, AsyncIterator, Optional
 
 logger = logging.getLogger("PansGPT")
 
-TEXT_PRIMARY = "meta-llama/llama-3.3-70b-instruct:free"
+TEXT_PRIMARY = "qwen/qwen3-next-80b-a3b-instruct:free"
 TEXT_FALLBACK = "gemma-3-27b-it"
 VISION_PRIMARY = "qwen/qwen3-vl-235b-a22b-thinking"
 VISION_FALLBACK = "gemma-3-27b-it"
@@ -33,7 +33,7 @@ def initialize_clients() -> None:
             )
             logger.info("[INFO] OpenRouter Client Initialized")
         else:
-            logger.warning("[WARNING] OPENROUTER_API_KEY not set! OpenRouter primary AI will fail.")
+            logger.warning("[WARNING] OPENROUTER_API_KEY not set! OpenRouter primary main AI will fail.")
 
         if gemini_api_key:
             google_client = AsyncOpenAI(
