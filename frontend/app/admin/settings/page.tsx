@@ -367,12 +367,15 @@ export default function SettingsPage() {
                 let dbDisplayName = '';
                 const { data: profile } = await supabase
                     .from('profiles')
-                    .select('full_name, avatar_url')
+                    .select('first_name, other_names, avatar_url')
                     .eq('id', id)
                     .single();
 
-                if (profile?.full_name) {
-                    dbDisplayName = profile.full_name;
+                const firstName = profile?.first_name?.trim() || '';
+                const otherNames = profile?.other_names?.trim() || '';
+                const profileDisplayName = [firstName, otherNames].filter(Boolean).join(' ').trim();
+                if (profileDisplayName) {
+                    dbDisplayName = profileDisplayName;
                 }
 
                 // 2. Fallback to Metadata if DB is empty
@@ -439,6 +442,9 @@ export default function SettingsPage() {
 
             const newName = profileData.displayName;
             const uid = session.user.id;
+            const [firstNamePart, ...otherNameParts] = (newName || '').trim().split(/\s+/).filter(Boolean);
+            const firstName = firstNamePart || null;
+            const otherNames = otherNameParts.length ? otherNameParts.join(' ') : null;
 
             // Update 1: Auth Metadata
             const authUpdate = supabase.auth.updateUser({
@@ -449,7 +455,7 @@ export default function SettingsPage() {
             // Check if profile exists first, or use upsert
             const profileUpdate = supabase
                 .from('profiles')
-                .upsert({ id: uid, full_name: newName, updated_at: new Date() });
+                .upsert({ id: uid, first_name: firstName, other_names: otherNames });
 
             // Run in parallel
             await Promise.all([authUpdate, profileUpdate]);
@@ -475,7 +481,7 @@ export default function SettingsPage() {
         if (session?.user) {
             await Promise.all([
                 supabase.auth.updateUser({ data: { avatar_url: url } }),
-                supabase.from('profiles').upsert({ id: session.user.id, avatar_url: url, updated_at: new Date() })
+                supabase.from('profiles').upsert({ id: session.user.id, avatar_url: url })
             ]);
         }
     };

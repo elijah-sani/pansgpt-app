@@ -4,6 +4,7 @@ Provides maintenance mode status for frontend checks.
 """
 from fastapi import APIRouter
 import logging
+from dependencies import get_jwks_status
 
 logger = logging.getLogger("PansGPT")
 
@@ -30,6 +31,14 @@ async def get_system_status():
     except Exception as e:
         logger.warning(f"Error fetching system status: {e}")
         return {"maintenance_mode": False}
+
+
+@router.get("/auth-status")
+async def get_auth_status():
+    """
+    Lightweight auth status endpoint backed by startup-cached JWKS preflight state.
+    """
+    return get_jwks_status()
 
 # Function to set dependencies (called from main api.py)
 def set_dependencies(supabase):

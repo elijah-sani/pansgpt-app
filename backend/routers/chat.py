@@ -5,7 +5,7 @@ Handles AI-powered chat interactions using Groq with vector search.
 from fastapi import APIRouter, HTTPException, Depends, Header, File, UploadFile
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Literal
 import logging
 import os
 import asyncio
@@ -18,6 +18,7 @@ import json
 from datetime import datetime
 from services import llm_engine, chat_history
 from groq import AsyncGroq
+from dependencies import get_current_user, User
 
 logger = logging.getLogger("PansGPT")
 RAG_NETWORK_TIMEOUT_MESSAGE = (
@@ -33,6 +34,7 @@ router = APIRouter(tags=["chat"])
 
 # These will be injected from main api.py
 supabase_client = None
+supabase_service_client = None
 verify_api_key_handler = None
 groq_client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY")) if os.getenv("GROQ_API_KEY") else None
 if groq_client is None:
@@ -126,10 +128,6 @@ async def _build_streaming_response(
             "Connection": "keep-alive",
         },
     )
-
-class User(BaseModel):
-    id: str
-    email: Optional[str] = None
 
 async def verify_api_key(x_api_key: str = Header(...)):
     """
@@ -265,31 +263,6 @@ async def _execute_with_retry(execute_fn, operation_name: str, max_attempts: int
             raise
     raise last_error
 
-async def get_current_user(authorization: Optional[str] = Header(None)):
-    """
-    Verify Supabase JWT and return User.
-    """
-    if not supabase_client:
-        raise HTTPException(status_code=500, detail="Database not active")
-
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Missing Authorization Header")
-    
-    try:
-        token = authorization.split(" ")[1]
-        user_res = await _execute_with_retry(
-            lambda: supabase_client.auth.get_user(token),
-            "Supabase auth.get_user",
-        )
-        if not user_res.user:
-             raise HTTPException(status_code=401, detail="Invalid Token")
-        return User(id=user_res.user.id, email=user_res.user.email)
-    except Exception as e:
-        logger.error(f"Auth Error: {e}")
-        # Only for development/transition, maybe fallback? 
-        # But user asked for STRICT ownership.
-        raise HTTPException(status_code=401, detail=f"Authentication Failed: {str(e)}")
-
 async def _assert_session_owner(session_id: str, current_user: User):
     """
     Strict ownership check used before any chat-message mutation.
@@ -303,6 +276,20 @@ async def _assert_session_owner(session_id: str, current_user: User):
     )
     if not session_res.data:
         raise HTTPException(status_code=403, detail="Unauthorized")
+
+
+async def _assert_super_admin(current_user: User):
+    if not current_user.email:
+        raise HTTPException(status_code=403, detail="Access Denied: user email missing.")
+    if not supabase_client:
+        raise HTTPException(status_code=500, detail="Database not active")
+
+    res = await _execute_with_retry(
+        lambda: supabase_client.table("user_roles").select("role").eq("email", current_user.email).execute(),
+        "Fetch user role",
+    )
+    if not res.data or len(res.data) == 0 or res.data[0].get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="Only Super Admins can access feedback dashboard")
 
 # Settings Cache (TTL = 5 minutes)
 _settings_cache = TTLCache(maxsize=1, ttl=300)
@@ -365,6 +352,14 @@ class CreateSessionResponse(BaseModel):
     title: str
     context_id: Optional[str] = None
     created_at: datetime
+
+
+class FeedbackRequest(BaseModel):
+    message_id: Optional[int] = None
+    session_id: Optional[str] = None
+    rating: Literal["up", "down", "report"]
+    category: Optional[str] = None
+    comments: Optional[str] = None
 
 # Function to set dependencies (called from main api.py)
 
@@ -591,21 +586,26 @@ async def chat(request: ChatRequest):
                     logger.info(f"[INFO] Triggering AI Auto-Rename for session {request.session_id}...")
                     try:
                         title_prompt = f"Create a short, professional title (maximum 4 words) for a chat that starts with this message: '{request.text}'. Return ONLY the title text, with no quotes, no punctuation, and no extra words."
-                        title_completion = await _create_completion_with_failover(
+                        if llm_engine.google_client is None:
+                            logger.error("[ERROR] Google client not initialized for title generation")
+                            raise RuntimeError("Google client not initialized")
+                        
+                        title_completion = await llm_engine.google_client.chat.completions.create(
+                            model=llm_engine.TEXT_FALLBACK,
                             messages=[{"role": "user", "content": title_prompt}],
                             temperature=0.5,
                             max_tokens=10,
-                            is_vision=False,
                             stream=False
                         )
+                        
                         if title_completion is None:
-                            raise RuntimeError("Title generation failed on primary and fallback")
+                            raise RuntimeError("Title generation failed on Google model")
 
                         new_title = title_completion.choices[0].message.content.strip().strip('"')
                         if not new_title:
                             new_title = request.text[:30] + "..."
                         await chat_history.update_session_title(request.session_id, new_title)
-                        logger.info(f"[INFO] AI Auto-renamed session {request.session_id} to '{new_title}'")
+                        logger.info(f"[INFO] AI Auto-renamed session {request.session_id} to '{new_title}' (via Google AI)")
                     except Exception as ai_title_err:
                         logger.error(f"AI Title Generation Failed: {ai_title_err}")
                         fallback_title = request.text[:30] + "..."
@@ -786,9 +786,10 @@ Do not hallucinate.
         raise HTTPException(status_code=500, detail=f"AI processing failed: {str(e)}")
 
 # Function to set dependencies (called from main api.py)
-def set_dependencies(supabase, api_key_verifier):
-    global supabase_client, verify_api_key_handler
+def set_dependencies(supabase, api_key_verifier, supabase_service=None):
+    global supabase_client, supabase_service_client, verify_api_key_handler
     supabase_client = supabase
+    supabase_service_client = supabase_service
     verify_api_key_handler = api_key_verifier
     chat_history.set_dependencies(supabase, _execute_with_retry)
 
@@ -1166,5 +1167,132 @@ async def regenerate_response(session_id: str, current_user: User = Depends(get_
         logger.info("[INFO] Gemini API configured for RAG in chat router")
     else:
         logger.warning("[WARNING] GOOGLE_API_KEY not set - RAG features will be disabled")
+
+
+@router.post("/feedback", dependencies=[Depends(verify_api_key)])
+async def submit_feedback(
+    request: FeedbackRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Save message feedback/report with authenticated user ownership.
+    """
+    if not supabase_client:
+        raise HTTPException(status_code=500, detail="Database not active")
+
+    if request.rating in ("up", "down") and (request.message_id is None or request.session_id is None):
+        raise HTTPException(status_code=400, detail="message_id and session_id are required for ratings")
+
+    if request.session_id:
+        await _assert_session_owner(request.session_id, current_user)
+
+    payload = {
+        "user_id": current_user.id,
+        "rating": request.rating,
+        "category": request.category,
+        "comments": request.comments,
+        "message_id": request.message_id,
+        "session_id": request.session_id,
+    }
+
+    try:
+        res = await _execute_with_retry(
+            lambda: supabase_client.table("message_feedback").insert(payload).execute(),
+            "Insert message feedback",
+        )
+        return {"status": "success", "data": res.data}
+    except Exception as e:
+        logger.error(f"Feedback Save Error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save feedback")
+
+
+@router.get("/admin/feedback", dependencies=[Depends(verify_api_key)])
+async def get_admin_feedback(current_user: User = Depends(get_current_user)):
+    """
+    Admin feedback list enriched with robust display-name fallback.
+    """
+    if not supabase_client:
+        raise HTTPException(status_code=500, detail="Database not active")
+
+    await _assert_super_admin(current_user)
+
+    try:
+        feedback_res = await _execute_with_retry(
+            lambda: supabase_client.table("message_feedback")
+            .select("id,rating,category,comments,created_at,session_id,message_id,user_id")
+            .order("created_at", desc=True)
+            .limit(500)
+            .execute(),
+            "Fetch admin feedback",
+        )
+    except Exception as e:
+        logger.error(f"Feedback Fetch Error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch feedback")
+
+    rows = feedback_res.data or []
+    user_ids = sorted({row.get("user_id") for row in rows if row.get("user_id")})
+
+    profiles_by_id = {}
+    if user_ids:
+        try:
+            profiles_res = await _execute_with_retry(
+                lambda: supabase_client.table("profiles")
+                .select("id,first_name,other_names,university,level")
+                .in_("id", user_ids)
+                .execute(),
+                "Fetch feedback profiles",
+            )
+            for profile in (profiles_res.data or []):
+                profiles_by_id[profile.get("id")] = profile
+        except Exception as e:
+            logger.warning(f"Feedback profile join failed: {e}")
+
+    auth_users_by_id = {}
+    if supabase_service_client and user_ids:
+        for uid in user_ids:
+            if uid in profiles_by_id and (profiles_by_id[uid].get("first_name") or profiles_by_id[uid].get("other_names")):
+                continue
+            try:
+                admin_res = supabase_service_client.auth.admin.get_user_by_id(uid)
+                user_obj = getattr(admin_res, "user", None)
+                if user_obj:
+                    auth_users_by_id[uid] = {
+                        "email": getattr(user_obj, "email", None),
+                        "user_metadata": getattr(user_obj, "user_metadata", {}) or {},
+                    }
+            except Exception as e:
+                logger.debug(f"Auth metadata fallback failed for {uid}: {e}")
+
+    enriched = []
+    for row in rows:
+        uid = row.get("user_id")
+        profile = profiles_by_id.get(uid) if uid else None
+        auth_user = auth_users_by_id.get(uid) if uid else None
+
+        first_name = (profile or {}).get("first_name") or ""
+        other_names = (profile or {}).get("other_names") or ""
+        profile_name = " ".join([part for part in [first_name.strip(), other_names.strip()] if part]).strip()
+
+        metadata = (auth_user or {}).get("user_metadata", {}) if auth_user else {}
+        metadata_name = (metadata.get("full_name") or metadata.get("name") or "").strip()
+        auth_email = ((auth_user or {}).get("email") or "").strip()
+
+        display_name = profile_name or metadata_name or auth_email or (f"User {uid[:8]}" if uid else "Anonymous")
+
+        enriched.append(
+            {
+                **row,
+                "display_name": display_name,
+                "profiles": {
+                    "first_name": profile.get("first_name") if profile else None,
+                    "other_names": profile.get("other_names") if profile else None,
+                    "university": profile.get("university") if profile else None,
+                    "level": profile.get("level") if profile else None,
+                    "email": auth_email or None,
+                },
+            }
+        )
+
+    return {"data": enriched}
 
 

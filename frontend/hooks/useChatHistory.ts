@@ -91,7 +91,7 @@ export const useChatHistory = () => {
     const deleteSession = useCallback(async (sessionId: string) => {
         setDeletingId(sessionId);
         try {
-            const res = await api.delete(`/session/${sessionId}`);
+            const res = await api.delete(`/history/${sessionId}`);
             if (res.ok) {
                 setSessions(prev => prev.filter(s => s.id !== sessionId));
             } else {

@@ -19,8 +19,11 @@ interface Message {
 interface ChatSession {
     title: string;
     created_at: string;
+    user_id: string | null;
+    display_name: string;
     profiles: {
         first_name: string | null;
+        other_names: string | null;
         university: string | null;
         level: string | null;
     } | null;
@@ -29,8 +32,15 @@ interface ChatSession {
 interface RawSessionData {
     title: string;
     created_at: string;
-    profiles?: Array<{
+    user_id: string | null;
+    profiles?: {
         first_name: string | null;
+        other_names: string | null;
+        university: string | null;
+        level: string | null;
+    } | Array<{
+        first_name: string | null;
+        other_names: string | null;
         university: string | null;
         level: string | null;
     }> | null;
@@ -80,17 +90,26 @@ export default function AdminChatViewerPage({
                 // 1. Fetch Session Details
                 const { data: sessionData, error: sessionError } = await supabase
                     .from('chat_sessions')
-                    .select('title, created_at, profiles (first_name, university, level)')
+                    .select('title, created_at, user_id, profiles (first_name, other_names, university, level)')
                     .eq('id', id)
                     .single();
 
                 if (sessionError) throw sessionError;
                 if (sessionData) {
                     const raw = sessionData as RawSessionData;
+                    const resolvedProfile = Array.isArray(raw.profiles)
+                        ? (raw.profiles[0] ?? null)
+                        : (raw.profiles ?? null);
+                    const firstName = resolvedProfile?.first_name?.trim() || '';
+                    const otherNames = resolvedProfile?.other_names?.trim() || '';
+                    const displayName = [firstName, otherNames].filter(Boolean).join(' ').trim()
+                        || (raw.user_id ? `User ${raw.user_id.slice(0, 8)}` : 'Anonymous User');
                     setSession({
                         title: raw.title,
                         created_at: raw.created_at,
-                        profiles: raw.profiles?.[0] ?? null,
+                        user_id: raw.user_id,
+                        display_name: displayName,
+                        profiles: resolvedProfile,
                     });
                 } else {
                     setSession(null);
@@ -230,7 +249,7 @@ export default function AdminChatViewerPage({
                             </div>
                             <div>
                                 <div className="font-medium text-sm">
-                                    {session.profiles?.first_name || 'Anonymous User'}
+                                    {session.display_name}
                                 </div>
                                 {(session.profiles?.university || session.profiles?.level) && (
                                     <div className="text-xs text-muted-foreground mt-0.5">

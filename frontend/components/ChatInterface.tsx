@@ -31,6 +31,7 @@ import { useVoiceInput } from '../hooks/useVoiceInput';
 import { InlineWaveform } from './InlineWaveform';
 import MessageBubble from './MessageBubble';
 import ReportProblemModal from './ReportProblemModal';
+import ChatSessionItem from './ChatSessionItem';
 
 interface ChatInterfaceProps {
     messages: Message[];
@@ -597,52 +598,19 @@ export default function ChatInterface({
                                     ) : sessions.length === 0 ? (
                                         <div className="text-sm text-muted-foreground p-2 italic">No history yet.</div>
                                     ) : (
-                                        sessions.map(chat => {
-                                            // Safe Date Formatting
-                                            const date = new Date(chat.created_at);
-                                            const isValidDate = !isNaN(date.getTime());
-
-                                            return (
-                                                <div
-                                                    key={chat.id}
-                                                    onClick={() => {
-                                                        onLoadSession(chat.id);
-                                                        setIsHistoryOpen(false);
-                                                    }}
-                                                    className="p-3 hover:bg-muted/50 rounded-lg cursor-pointer text-sm font-medium transition-colors flex items-center gap-2 group w-full justify-between"
-                                                >
-                                                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                                                        <MessageSquare className="w-4 h-4 text-muted-foreground group-hover:text-primary shrink-0" />
-                                                        <span className="truncate flex-1 min-w-0 text-left">{chat.title}</span>
-                                                    </div>
-
-                                                    <div className="flex items-center gap-1 shrink-0">
-                                                        <span className="text-xs text-muted-foreground whitespace-nowrap hidden group-hover:block transition-opacity opacity-0 group-hover:opacity-100">
-                                                            {isValidDate ? date.toLocaleDateString() : ''}
-                                                        </span>
-                                                        {onDeleteSession && (
-                                                            deletingId === chat.id ? (
-                                                                <div className="p-1">
-                                                                    <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-                                                                </div>
-                                                            ) : (
-                                                                <button
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        setDeleteTargetId(chat.id);
-                                                                        setIsDeleteModalOpen(true);
-                                                                    }}
-                                                                    className="text-gray-400 hover:text-red-600 p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                                                                    title="Delete Chat"
-                                                                >
-                                                                    <Trash2 className="w-4 h-4" />
-                                                                </button>
-                                                            )
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            );
-                                        })
+                                        sessions.map(chat => (
+                                            <ChatSessionItem
+                                                key={chat.id}
+                                                chat={chat}
+                                                onLoadSession={onLoadSession}
+                                                setIsHistoryOpen={setIsHistoryOpen}
+                                                onDeleteClick={onDeleteSession ? () => {
+                                                    setDeleteTargetId(chat.id);
+                                                    setIsDeleteModalOpen(true);
+                                                } : undefined}
+                                                isDeleting={deletingId === chat.id}
+                                            />
+                                        ))
                                     )}
                                 </div>
                             </div>

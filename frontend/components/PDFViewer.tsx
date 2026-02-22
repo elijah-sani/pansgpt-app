@@ -693,7 +693,6 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         setIsLoading(true);
         setIsError(false);
         setChatError(null);
-        setChatError(null);
 
         const controller = new AbortController();
         abortControllerRef.current = controller;
@@ -701,9 +700,12 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         const tempUserId = `temp-user-${Date.now()}`;
         const tempAssistantId = `temp-assistant-${Date.now()}`;
 
+        let isNewSession = false;
+
         try {
             let activeSessionId = currentSessionId;
             if (!activeSessionId) {
+                isNewSession = true;
                 const title = "New Chat";
                 const newSession = await createSession(title, fileId);
 
@@ -799,6 +801,11 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         } finally {
             setIsLoading(false);
             abortControllerRef.current = null;
+
+            // Sync the auto-generated title from the backend if this was the first message
+            if (isNewSession) {
+                fetchHistory(fileId || undefined);
+            }
         }
     };
     const stopGeneration = () => {
@@ -1338,6 +1345,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                                 >
                                                     <SnippetMenu
                                                         imageBlob={snipPopup.imageBase64}
+                                                        isLoading={isLoading}
                                                         onClose={() => setSnipPopup(null)}
                                                         onSend={handleMenuSend}
                                                         onAddToInput={handleMenuAddToInput}
@@ -1364,10 +1372,15 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                             {/* Primary Actions (Horizontal) */}
                                             <button
                                                 onClick={() => handleAIRequest('explain')}
-                                                className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium text-zinc-200 hover:text-white hover:bg-zinc-800 transition-colors group"
+                                                disabled={isLoading}
+                                                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors group ${isLoading ? 'opacity-50 cursor-not-allowed text-zinc-400 bg-zinc-800' : 'text-zinc-200 hover:text-white hover:bg-zinc-800'
+                                                    }`}
                                             >
-                                                <Sparkles className="w-4 h-4 text-[#53d22d]" />
-                                                <span>Explain</span>
+                                                {isLoading ?
+                                                    <Loader2 className="w-4 h-4 animate-spin text-zinc-400" /> :
+                                                    <Sparkles className="w-4 h-4 text-[#53d22d]" />
+                                                }
+                                                <span>{isLoading ? 'Thinking...' : 'Explain'}</span>
                                             </button>
 
                                             <div className="w-px h-4 bg-zinc-700 mx-1" />
@@ -1409,41 +1422,51 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                                 >
                                                     <button
                                                         onClick={() => handleAIRequest('define')}
-                                                        className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm text-zinc-300 hover:text-white hover:bg-zinc-800 transition-colors group"
+                                                        disabled={isLoading}
+                                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors group ${isLoading ? 'opacity-50 cursor-not-allowed text-zinc-500 bg-zinc-800' : 'text-zinc-300 hover:text-white hover:bg-zinc-800'
+                                                            }`}
                                                     >
-                                                        <BookOpen className="w-4 h-4 text-zinc-400 group-hover:text-blue-400" />
+                                                        {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <BookOpen className="w-4 h-4 text-zinc-400 group-hover:text-blue-400" />}
                                                         <span>Define</span>
                                                     </button>
 
                                                     <button
                                                         onClick={() => handleAIRequest('example')}
-                                                        className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm text-zinc-300 hover:text-white hover:bg-zinc-800 transition-colors group"
+                                                        disabled={isLoading}
+                                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors group ${isLoading ? 'opacity-50 cursor-not-allowed text-zinc-500 bg-zinc-800' : 'text-zinc-300 hover:text-white hover:bg-zinc-800'
+                                                            }`}
                                                     >
-                                                        <Lightbulb className="w-4 h-4 text-zinc-400 group-hover:text-yellow-400" />
+                                                        {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lightbulb className="w-4 h-4 text-zinc-400 group-hover:text-yellow-400" />}
                                                         <span>Example</span>
                                                     </button>
 
                                                     <button
                                                         onClick={() => handleAIRequest('summarize')}
-                                                        className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm text-zinc-300 hover:text-white hover:bg-zinc-800 transition-colors group"
+                                                        disabled={isLoading}
+                                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors group ${isLoading ? 'opacity-50 cursor-not-allowed text-zinc-500 bg-zinc-800' : 'text-zinc-300 hover:text-white hover:bg-zinc-800'
+                                                            }`}
                                                     >
-                                                        <ListChecks className="w-4 h-4 text-zinc-400 group-hover:text-orange-400" />
+                                                        {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ListChecks className="w-4 h-4 text-zinc-400 group-hover:text-orange-400" />}
                                                         <span>Summarize</span>
                                                     </button>
 
                                                     <button
                                                         onClick={() => handleAIRequest('answer')}
-                                                        className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm text-zinc-300 hover:text-white hover:bg-zinc-800 transition-colors group"
+                                                        disabled={isLoading}
+                                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors group ${isLoading ? 'opacity-50 cursor-not-allowed text-zinc-500 bg-zinc-800' : 'text-zinc-300 hover:text-white hover:bg-zinc-800'
+                                                            }`}
                                                     >
-                                                        <MessageSquare className="w-4 h-4 text-zinc-400 group-hover:text-purple-400" />
+                                                        {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <MessageSquare className="w-4 h-4 text-zinc-400 group-hover:text-purple-400" />}
                                                         <span>Answer</span>
                                                     </button>
 
                                                     <button
                                                         onClick={() => handleAIRequest('memory')}
-                                                        className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm text-zinc-300 hover:text-white hover:bg-zinc-800 transition-colors group"
+                                                        disabled={isLoading}
+                                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors group ${isLoading ? 'opacity-50 cursor-not-allowed text-zinc-500 bg-zinc-800' : 'text-zinc-300 hover:text-white hover:bg-zinc-800'
+                                                            }`}
                                                     >
-                                                        <Brain className="w-4 h-4 text-zinc-400 group-hover:text-pink-400" />
+                                                        {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Brain className="w-4 h-4 text-zinc-400 group-hover:text-pink-400" />}
                                                         <span>Memory Aid</span>
                                                     </button>
                                                 </div>

@@ -431,9 +431,6 @@ async def process_and_embed(file_content: bytes, document_id: str, file_name: st
         await asyncio.to_thread(_update_progress, document_id, 42)
         
         # 4. Embedding Loop  42%  100%
-        failed_chunks_count = 0
-        error_log = ""
-        
         for idx, chunk_text in enumerate(chunks):
             try:
                 # Generate embedding using Gemini (v1 SDK) - Likely Sync I/O
@@ -453,24 +450,46 @@ async def process_and_embed(file_content: bytes, document_id: str, file_name: st
                 # v1 SDK returns object with .embeddings list
                 embedding = response.embeddings[0].values
                 
-                # Insert into Supabase - Sync I/O
-                # Wrap Supabase insert
-                await _execute_with_retry_async(
-                    lambda: supabase_client.table('document_embeddings').insert({
-                        'document_id': document_id,
-                        'content': chunk_text,
-                        'embedding': embedding
-                    }).execute(),
-                    f"Insert document embedding chunk {idx+1}",
-                )
+                insert_success = False
+                last_insert_error = None
+                
+                # Retry loop specifically for database insertion as requested
+                for attempt in range(3):
+                    try:
+                        # Insert into Supabase - Sync I/O
+                        await asyncio.to_thread(
+                            lambda: supabase_client.table('document_embeddings').insert({
+                                'document_id': document_id,
+                                'content': chunk_text,
+                                'embedding': embedding
+                            }).execute()
+                        )
+                        insert_success = True
+                        break
+                    except Exception as ins_err:
+                        last_insert_error = ins_err
+                        err_str = str(ins_err).lower()
+                        
+                        if any(marker in err_str for marker in ["streamreset", "remoteprotocolerror", "network", "timeout", "ssl"]):
+                            logger.warning(f"Network drop while saving chunk {idx}, retrying in 2 seconds...")
+                            # using await asyncio.sleep to avoid blocking the outer event loop as requested by framework
+                            import time
+                            await asyncio.sleep(2)
+                        else:
+                            break # Not a retryable error
+                
+                if not insert_success:
+                    error_msg = f"Failed to save chunk {idx} after 3 attempts: {str(last_insert_error)}"
+                    logger.error(f"[ERROR] {error_msg}")
+                    raise RuntimeError(error_msg)
                 
                 logger.info(f"[INFO] Chunk {idx+1}/{len(chunks)} embedded")
                 
             except Exception as e:
-                failed_chunks_count += 1
-                error_msg = f"Chunk {idx} failed: {str(e)}"
-                error_log += error_msg + "\n"
+                # Job fails on first chunk failure
+                error_msg = f"Chunk {idx} processing failed: {str(e)}"
                 logger.error(f"[ERROR] {error_msg}")
+                raise RuntimeError(error_msg)
             
             # Update progress: map chunk index to 42%  99%
             # _update_progress uses Supabase sync call. Wrap it!
@@ -481,20 +500,12 @@ async def process_and_embed(file_content: bytes, document_id: str, file_name: st
         final_status = 'completed'
         final_error = None
         
-        if failed_chunks_count > 0:
-            if failed_chunks_count == len(chunks):
-                final_status = 'failed'
-                final_error = f"All {len(chunks)} chunks failed to process.\n{error_log}"
-            else:
-                final_status = 'completed' 
-                final_error = f"Completed with {failed_chunks_count} failed chunks.\n{error_log}"
-        
         # Wrap final update
         await _execute_with_retry_async(
             lambda: supabase_client.table('pans_library').update({
                 'embedding_status': final_status,
                 'embedding_progress': 100,  # 100% done
-                'total_chunks': 100,
+                'total_chunks': len(chunks),
                 'embedding_error': final_error
             }).eq('id', document_id).execute(),
             f"Finalize ingestion status for {document_id}",

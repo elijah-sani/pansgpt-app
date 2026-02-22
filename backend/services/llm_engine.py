@@ -79,6 +79,12 @@ async def generate_completion_with_failover(
             logger.warning(
                 f"[WARNING] Primary model failed ({primary_model}) attempt {attempt}/3: {exc}"
             )
+            # Fail fast on non-recoverable 400 errors or 429 Rate Limits that we don't want to wait for
+            status_code = getattr(exc, 'status_code', None)
+            if status_code in (400, 429) or type(exc).__name__ in ("BadRequestError", "RateLimitError") or "400" in str(exc) or "429" in str(exc):
+                logger.error(f"[ERROR] Non-recoverable or Rate Limit ({status_code}) encountered with primary model. Failing fast.")
+                break
+
             if attempt < 3:
                 await asyncio.sleep(2)
 

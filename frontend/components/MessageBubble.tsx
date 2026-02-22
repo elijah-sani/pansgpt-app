@@ -7,7 +7,7 @@ import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 import { ThumbsUp, ThumbsDown, Copy, Check, RotateCcw } from 'lucide-react';
 import FeedbackModal from './FeedbackModal';
-import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
+import { api } from '@/lib/api';
 
 export interface Message {
     role: 'system' | 'user' | 'assistant' | 'ai';
@@ -64,27 +64,16 @@ export default function MessageBubble({
     };
 
     const handleFeedbackSubmit = async (category: string, text: string) => {
-        // 1. Initialize Supabase client
-        const supabase = createBrowserClient(
-            process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-        );
-
-        // 2. Await the current session/user
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        const userId = session?.user?.id;
-
-        if (sessionError) {
-            console.error("Auth Error:", sessionError);
-        }
-
-        // 3. The Guard Clause
-        if (!userId || !message.id || !message.session_id) {
+        if (!message.id || !message.session_id) {
             console.error("Feedback Error - Missing Data:", {
-                userId: userId,
                 messageId: message.id,
                 sessionId: message.session_id
             });
+            return;
+        }
+        const messageId = Number(message.id);
+        if (!Number.isFinite(messageId)) {
+            console.error("Feedback Error - Invalid message ID:", message.id);
             return;
         }
 
@@ -92,17 +81,17 @@ export default function MessageBubble({
             // Optimistic update
             setFeedback(currentRating);
 
-            // 4. Proceed with insert using the fetched userId
-            const { error } = await supabase.from('message_feedback').insert({
-                message_id: message.id,
+            const res = await api.post('/feedback', {
+                message_id: messageId,
                 session_id: message.session_id,
-                user_id: userId,
                 rating: currentRating,
                 category: category,
                 comments: text
             });
 
-            if (error) throw error;
+            if (!res.ok) {
+                throw new Error(`Feedback API failed: ${res.status}`);
+            }
             console.log("Feedback submitted successfully!");
 
             // Show Success Toast

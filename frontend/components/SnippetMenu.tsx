@@ -1,8 +1,9 @@
 import React from 'react';
-import { Sparkles, MessageSquarePlus, X } from 'lucide-react';
+import { Sparkles, MessageSquarePlus, X, Loader2 } from 'lucide-react';
 
 interface SnippetMenuProps {
     imageBlob: Blob | string; // Can be base64 string
+    isLoading?: boolean;
     onClose: () => void;
     onSend: (data: { text: string; attachments: string[]; systemInstruction?: string }) => void;
     onAddToInput: (image: string) => void;
@@ -10,6 +11,7 @@ interface SnippetMenuProps {
 
 const SnippetMenu: React.FC<SnippetMenuProps> = ({
     imageBlob,
+    isLoading,
     onClose,
     onSend,
     onAddToInput
@@ -69,12 +71,18 @@ const SnippetMenu: React.FC<SnippetMenuProps> = ({
             {/* --- BUTTON 1: ASK AI (Auto-Send) --- */}
             <button
                 onClick={handleAskAI}
-                className="flex items-center gap-2 px-4 py-2 rounded-full transition-all group hover:bg-zinc-800 active:scale-95"
+                disabled={isLoading}
+                className={`flex items-center gap-2 px-4 py-2 rounded-full transition-all group active:scale-95 ${isLoading ? 'opacity-50 cursor-not-allowed bg-zinc-800' : 'hover:bg-zinc-800'
+                    }`}
             >
                 {/* Brand Green Icon - using explicit hex for neon green */}
-                <Sparkles className="w-4 h-4 text-[#53d22d] transition-colors" />
-                <span className="text-sm font-medium text-zinc-100 group-hover:text-white whitespace-nowrap">
-                    Ask AI
+                {isLoading ? (
+                    <Loader2 className="w-4 h-4 text-zinc-400 animate-spin" />
+                ) : (
+                    <Sparkles className="w-4 h-4 text-[#53d22d] transition-colors" />
+                )}
+                <span className={`text-sm font-medium whitespace-nowrap ${isLoading ? 'text-zinc-400' : 'text-zinc-100 group-hover:text-white'}`}>
+                    {isLoading ? 'Thinking...' : 'Ask AI'}
                 </span>
             </button>
 

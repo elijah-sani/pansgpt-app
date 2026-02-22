@@ -1,7 +1,7 @@
 'use client';
 import React, { useState, useEffect } from 'react';
 import { X, AlertCircle, Loader2, Check } from 'lucide-react';
-import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
+import { api } from '@/lib/api';
 
 interface ReportProblemModalProps {
     isOpen: boolean;
@@ -38,35 +38,16 @@ export default function ReportProblemModal({ isOpen, onClose }: ReportProblemMod
 
         setIsSubmitting(true);
         try {
-            // 1. Initialize Supabase client
-            const supabase = createBrowserClient(
-                process.env.NEXT_PUBLIC_SUPABASE_URL!,
-                process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-            );
-
-            // 2. Await the current session/user
-            const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-            const userId = session?.user?.id;
-
-            if (sessionError) {
-                console.error("Auth Error:", sessionError);
-            }
-
-            if (!userId) {
-                console.error("Report Error - Missing User ID");
-                return;
-            }
-
-            // 3. Insert report
-            const { error } = await supabase.from('message_feedback').insert({
-                user_id: userId,
+            const res = await api.post('/feedback', {
                 rating: 'report', // Flags it as a general issue
                 category: selectedCategory,
                 comments: description
                 // message_id and session_id are intentionally null
             });
 
-            if (error) throw error;
+            if (!res.ok) {
+                throw new Error(`Report API failed: ${res.status}`);
+            }
             console.log("Report submitted successfully!");
 
             // Show Success Toast

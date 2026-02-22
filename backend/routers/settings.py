@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Header, Depends
 from pydantic import BaseModel
 from typing import Optional
 import logging
+from dependencies import get_current_user, User
 
 logger = logging.getLogger("PansGPT")
 
@@ -21,10 +22,6 @@ class SystemConfigUpdate(BaseModel):
     temperature: Optional[float] = None
     maintenance_mode: Optional[bool] = None
 
-class User(BaseModel):
-    id: str
-    email: Optional[str] = None
-
 # --- Helper ---
 async def verify_api_key(x_api_key: str = Header(...)):
     """
@@ -33,28 +30,6 @@ async def verify_api_key(x_api_key: str = Header(...)):
     if verify_api_key_handler is None:
         raise HTTPException(status_code=500, detail="API key verifier not configured")
     return await verify_api_key_handler(x_api_key)
-
-async def get_current_user(authorization: Optional[str] = Header(None)):
-    """
-    Verify Supabase JWT and return authenticated user.
-    """
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Missing Authorization Header")
-
-    if not supabase_client:
-        raise HTTPException(status_code=500, detail="Database connection unavailable")
-
-    try:
-        token = authorization.split(" ")[1]
-        user_res = supabase_client.auth.get_user(token)
-        if not user_res.user:
-            raise HTTPException(status_code=401, detail="Invalid Token")
-        return User(id=user_res.user.id, email=user_res.user.email)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Auth User Decode Error: {e}")
-        raise HTTPException(status_code=401, detail="Authentication Failed")
 
 async def verify_super_admin(current_user: User = Depends(get_current_user)):
     if not current_user.email:

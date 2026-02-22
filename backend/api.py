@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from google_drive import GoogleDriveService, get_drive_service
 from services import llm_engine
 import sentry_sdk
+from dependencies import prime_jwks_cache
 
 import logging
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -123,9 +124,19 @@ except Exception as e:
     logger.error(f"[ERROR] Failed to initialize Supabase: {e}")
 logger.info("---------------------------------------")
 
+# --- Auth JWKS Preflight (startup-only, no request-path overhead) ---
+try:
+    jwks_health = prime_jwks_cache()
+    if jwks_health.get("ready"):
+        logger.info(f"[INFO] JWKS preflight ready via {jwks_health.get('endpoint')}")
+    else:
+        logger.warning(f"[WARNING] JWKS preflight not ready: {jwks_health.get('error')}")
+except Exception as e:
+    logger.warning(f"[WARNING] JWKS preflight failed: {e}")
+
 # --- Initialize Routers with Dependencies ---
 library.set_dependencies(drive_service, supabase_client, verify_api_key, GOOGLE_DRIVE_FOLDER_ID)
-chat.set_dependencies(supabase_client, verify_api_key)
+chat.set_dependencies(supabase_client, verify_api_key, supabase_service_client)
 system.set_dependencies(supabase_client)
 settings.set_dependencies(supabase_client, verify_api_key)
 
