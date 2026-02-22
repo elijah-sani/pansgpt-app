@@ -1,6 +1,15 @@
-# Environments
+# Environment and secret files
 .env
-.env.local
+.env.*
+!.env.example
+!.env.template
+*.env
+*.env.*
+backend/.env
+backend/.env.*
+frontend/.env.local
+frontend/.env.*
+
 
 # Node / Next.js
 node_modules/
@@ -24,11 +33,57 @@ frontend/tests/*
 !backend/tests/
 !backend/tests/test_api.py
 
-# Google Cloud Secrets
-credentials.json
-service_account.json
 
 # Local Logs
 lint_log.txt
 *.log
 Report.md
+auth_doc.md
+auth_doc
+
+# Keys / credentials / tokens
+credentials.json
+service_account.json
+token.json
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Node / Next.js
+node_modules/
+**/node_modules/
+.next/
+frontend/.next/
+out/
+dist/
+coverage/
+*.tsbuildinfo
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs and temporary outputs
+*.log
+lint_log.txt
+frontend/lint-report.json
+backend/service_account.json
+fast
