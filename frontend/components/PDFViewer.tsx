@@ -788,7 +788,13 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         } catch (err: unknown) {
             if (err instanceof Error && err.name === 'AbortError') {
                 streamNetworkDoneRef.current = true;
-                setChatHistory(prev => prev.filter(msg => String(msg.id) !== tempAssistantId));
+                setChatHistory(prev =>
+                    prev.map(msg =>
+                        String(msg.id) === tempAssistantId
+                            ? { ...msg, content: streamFullTextRef.current, isThinking: false }
+                            : msg
+                    )
+                );
                 stopTypewriterPainter();
             } else {
                 console.error('Chat Error:', err);
@@ -809,6 +815,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         }
     };
     const stopGeneration = () => {
+        setIsLoading(false);
         abortControllerRef.current?.abort();
     };
 
@@ -837,6 +844,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     const handleEditMessage = async (messageId: string, newText: string) => {
         if (!currentSessionId) return;
         const tempAssistantId = `temp-assistant-edit-${Date.now()}`;
+        const controller = new AbortController();
+        abortControllerRef.current = controller;
 
         // Safety log: what ID is being sent to the backend?
         console.log('[Edit] Editing Message ID:', messageId, 'Type:', typeof messageId);
@@ -867,6 +876,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         try {
             const response = await api.fetch('/chat/edit', {
                 method: 'POST',
+                signal: controller.signal,
                 body: JSON.stringify({
                     session_id: currentSessionId,
                     message_id: messageId,
@@ -890,14 +900,27 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
             }
 
         } catch (err) {
-            console.error("Edit Error:", err);
-            streamNetworkDoneRef.current = true;
-            setChatHistory(prev => prev.filter(msg => String(msg.id) !== tempAssistantId));
-            stopTypewriterPainter();
-            setIsError(true);
-            setChatError(err instanceof Error ? err.message : "Edit failed. Please try again.");
+            if (err instanceof Error && err.name === 'AbortError') {
+                streamNetworkDoneRef.current = true;
+                setChatHistory(prev =>
+                    prev.map(msg =>
+                        String(msg.id) === tempAssistantId
+                            ? { ...msg, content: streamFullTextRef.current, isThinking: false }
+                            : msg
+                    )
+                );
+                stopTypewriterPainter();
+            } else {
+                console.error("Edit Error:", err);
+                streamNetworkDoneRef.current = true;
+                setChatHistory(prev => prev.filter(msg => String(msg.id) !== tempAssistantId));
+                stopTypewriterPainter();
+                setIsError(true);
+                setChatError(err instanceof Error ? err.message : "Edit failed. Please try again.");
+            }
         } finally {
             setIsLoading(false);
+            abortControllerRef.current = null;
         }
     };
 
@@ -1042,6 +1065,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 // Regenerate Logic (Backend-driven):
                 if (!currentSessionId) return;
                 const tempAssistantId = `temp-assistant-regen-${Date.now()}`;
+                const controller = new AbortController();
+                abortControllerRef.current = controller;
 
                 // 1. Optimistic UI Update: Remove last assistant message and add placeholder
                 setChatHistory(prev => {
@@ -1056,6 +1081,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                     // 2. Call Backend Regenerate Endpoint (SSE stream)
                     const res = await api.fetch(`/chat/${currentSessionId}/regenerate`, {
                         method: 'POST',
+                        signal: controller.signal,
                         body: JSON.stringify({})
                     });
 
@@ -1073,14 +1099,27 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                         );
                     }
                 } catch (err) {
-                    console.error("Regenerate failed:", err);
-                    streamNetworkDoneRef.current = true;
-                    stopTypewriterPainter();
-                    setChatHistory(prev => prev.filter(msg => String(msg.id) !== tempAssistantId));
-                    setIsError(true);
-                    setChatError(err instanceof Error ? err.message : "Regenerate failed. Please try again.");
+                    if (err instanceof Error && err.name === 'AbortError') {
+                        streamNetworkDoneRef.current = true;
+                        setChatHistory(prev =>
+                            prev.map(msg =>
+                                String(msg.id) === tempAssistantId
+                                    ? { ...msg, content: streamFullTextRef.current, isThinking: false }
+                                    : msg
+                            )
+                        );
+                        stopTypewriterPainter();
+                    } else {
+                        console.error("Regenerate failed:", err);
+                        streamNetworkDoneRef.current = true;
+                        stopTypewriterPainter();
+                        setChatHistory(prev => prev.filter(msg => String(msg.id) !== tempAssistantId));
+                        setIsError(true);
+                        setChatError(err instanceof Error ? err.message : "Regenerate failed. Please try again.");
+                    }
                 } finally {
                     setIsLoading(false);
+                    abortControllerRef.current = null;
                 }
             }}
         />

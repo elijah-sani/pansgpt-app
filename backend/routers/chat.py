@@ -2,7 +2,7 @@
 Chat Router: AI Conversation Endpoint with RAG Support
 Handles AI-powered chat interactions using Groq with vector search.
 """
-from fastapi import APIRouter, HTTPException, Depends, Header, File, UploadFile
+from fastapi import APIRouter, HTTPException, Depends, Header, File, UploadFile, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional, Literal
@@ -44,6 +44,7 @@ GRACEFUL_ASSISTANT_ERROR_PAYLOAD = {
     "role": "assistant",
     "content": "I encountered an error doing what you asked. Could you try again?"
 }
+STOPPED_ASSISTANT_NOTE = "*[You stopped this response]*"
 
 async def _create_completion_with_failover(
     messages: list[dict],
@@ -62,6 +63,7 @@ async def _create_completion_with_failover(
 
 async def _build_streaming_response(
     api_stream,
+    request: Request,
     session_id: Optional[str],
     saved_user_message_id: Optional[str] = None,
 ) -> StreamingResponse:
@@ -72,6 +74,8 @@ async def _build_streaming_response(
         full_text = ""
         saved_assistant_message_id = None
         emitted_graceful = False
+        disconnected = False
+        cancelled = False
 
         if saved_user_message_id is not None:
             yield f"data: {json.dumps({'user_message_id': saved_user_message_id})}\n\n"
@@ -83,6 +87,11 @@ async def _build_streaming_response(
                 yield f"data: {json.dumps({'delta': full_text})}\n\n"
             else:
                 async for chunk in api_stream:
+                    if await request.is_disconnected():
+                        disconnected = True
+                        logger.info("[INFO] Client disconnected during stream; stopping generation.")
+                        break
+
                     delta = ""
                     try:
                         if chunk and chunk.choices and chunk.choices[0].delta:
@@ -92,25 +101,46 @@ async def _build_streaming_response(
                     if delta:
                         full_text += delta
                         yield f"data: {json.dumps({'delta': delta})}\n\n"
+        except asyncio.CancelledError:
+            cancelled = True
+            logger.info("[INFO] Stream task cancelled; persisting partial assistant response.")
+            raise
         except Exception as e:
             logger.error(f"[ERROR] Stream generation error: {e}")
-            if not full_text:
+            if not full_text and not disconnected:
                 full_text = GRACEFUL_ASSISTANT_ERROR_PAYLOAD["content"]
                 emitted_graceful = True
                 yield f"data: {json.dumps({'delta': full_text})}\n\n"
         finally:
-            if not full_text and not emitted_graceful:
+            if api_stream is not None and hasattr(api_stream, "aclose"):
+                try:
+                    await api_stream.aclose()
+                except Exception:
+                    pass
+
+            if not full_text and not emitted_graceful and not disconnected and not cancelled:
                 full_text = GRACEFUL_ASSISTANT_ERROR_PAYLOAD["content"]
                 yield f"data: {json.dumps({'delta': full_text})}\n\n"
+
+            text_to_save = full_text
+            if disconnected or cancelled:
+                if text_to_save.strip():
+                    if STOPPED_ASSISTANT_NOTE not in text_to_save:
+                        text_to_save = f"{text_to_save}\n\n{STOPPED_ASSISTANT_NOTE}"
+                else:
+                    text_to_save = STOPPED_ASSISTANT_NOTE
 
             if session_id and chat_history.has_client():
                 try:
                     saved_assistant_message_id = await chat_history.save_assistant_message(
                         session_id=session_id,
-                        content=full_text,
+                        content=text_to_save,
                     )
                 except Exception as db_err:
                     logger.error(f"Failed to save streamed assistant message: {db_err}")
+
+            if disconnected or cancelled:
+                return
 
             final_event = {
                 "done": True,
@@ -552,7 +582,7 @@ async def get_relevant_context(user_question: str, document_id: str) -> str:
 
 # --- Endpoint ---
 @router.post("/chat", dependencies=[Depends(verify_api_key)])
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, http_request: Request):
     """
     AI Chat Endpoint (formerly /ask-ai).
     Analyze text using Groq AI with support for conversation history.
@@ -704,6 +734,7 @@ Do not hallucinate.
             )
             return await _build_streaming_response(
                 completion_stream,
+                http_request,
                 request.session_id,
                 str(saved_user_message_id) if saved_user_message_id is not None else None,
             )
@@ -777,6 +808,7 @@ Do not hallucinate.
         )
         return await _build_streaming_response(
             completion_stream,
+            http_request,
             request.session_id,
             str(saved_user_message_id) if saved_user_message_id is not None else None,
         )
@@ -927,7 +959,11 @@ class EditMessageRequest(BaseModel):
     new_text: str
 
 @router.post("/chat/edit", dependencies=[Depends(verify_api_key)])
-async def edit_message(request: EditMessageRequest, current_user: User = Depends(get_current_user)):
+async def edit_message(
+    request: EditMessageRequest,
+    http_request: Request,
+    current_user: User = Depends(get_current_user),
+):
     """
     Edit a user message: delete it and all subsequent messages, then re-process with new text.
     Strict RLS: only the session owner can edit.
@@ -1034,7 +1070,7 @@ async def edit_message(request: EditMessageRequest, current_user: User = Depends
             temperature=temperature,
             max_tokens=2048,
         )
-        return await _build_streaming_response(completion_stream, request.session_id)
+        return await _build_streaming_response(completion_stream, http_request, request.session_id)
 
     except HTTPException:
         raise
@@ -1043,7 +1079,11 @@ async def edit_message(request: EditMessageRequest, current_user: User = Depends
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/chat/{session_id}/regenerate", dependencies=[Depends(verify_api_key)])
-async def regenerate_response(session_id: str, current_user: User = Depends(get_current_user)):
+async def regenerate_response(
+    session_id: str,
+    http_request: Request,
+    current_user: User = Depends(get_current_user),
+):
     """
     Regenerate the last AI response.
     Deletes the last AI message and re-processes the preceding user message.
@@ -1152,7 +1192,7 @@ async def regenerate_response(session_id: str, current_user: User = Depends(get_
             temperature=temperature,
             max_tokens=2048,
         )
-        return await _build_streaming_response(completion_stream, session_id)
+        return await _build_streaming_response(completion_stream, http_request, session_id)
 
     except HTTPException:
         raise

@@ -12,6 +12,7 @@ interface UserRole {
     email: string;
     role: 'admin' | 'super_admin'; // Using string union for roles
     is_admin: boolean; // Keep for backward compatibility if needed, but rely on 'role'
+    user_id: string | null;
     created_at?: string;
 }
 
@@ -200,10 +201,17 @@ export default function UsersPage() {
                                             )}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
-                                            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-primary">
-                                                <div className="w-1.5 h-1.5 rounded-full bg-primary shadow-[0_0_8px_color-mix(in_srgb,var(--primary),transparent_50%)]" />
-                                                Active
-                                            </span>
+                                            {user.user_id ? (
+                                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium text-green-500 bg-green-500/10 border border-green-500/20">
+                                                    <div className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_8px_color-mix(in_srgb,#22c55e,transparent_50%)]" />
+                                                    Active
+                                                </span>
+                                            ) : (
+                                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium text-amber-500 bg-amber-500/10 border border-amber-500/20">
+                                                    <div className="w-1.5 h-1.5 rounded-full bg-amber-500 shadow-[0_0_8px_color-mix(in_srgb,#f59e0b,transparent_50%)]" />
+                                                    Pending Invite
+                                                </span>
+                                            )}
                                         </td>
                                         <td className="px-6 py-4 text-right whitespace-nowrap">
                                             {isSuperAdmin && user.role !== 'super_admin' ? (

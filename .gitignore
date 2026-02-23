@@ -87,3 +87,4 @@ lint_log.txt
 frontend/lint-report.json
 backend/service_account.json
 fast
+audit_report.md
