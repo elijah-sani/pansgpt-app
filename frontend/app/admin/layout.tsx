@@ -37,7 +37,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 .from('user_roles')
                 .select('role')
                 .eq('email', email)
-                .single();
+                .maybeSingle();
 
             if (error || !roleData) {
                 console.warn(`Unauthorized access attempt by: ${email}`);

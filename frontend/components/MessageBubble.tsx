@@ -120,7 +120,7 @@ export default function MessageBubble({
                 </div>
 
                 {/* Markdown Content */}
-                <div className="prose prose-zinc dark:prose-invert max-w-none prose-p:leading-relaxed prose-li:marker:text-primary/70 flex-1">
+                <div className="prose prose-zinc dark:prose-invert max-w-none prose-p:leading-relaxed prose-li:marker:text-primary/70 flex-1 text-black dark:text-inherit">
                     {useDirectTypingSpan ? (
                         <span ref={typingSpanRef} className="whitespace-pre-wrap" />
                     ) : (

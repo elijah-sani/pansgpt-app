@@ -3,6 +3,7 @@ Library Router: Document Management Endpoints
 Handles upload, list, delete, and update operations for documents.
 """
 from fastapi import APIRouter, HTTPException, Depends, File, UploadFile, Form, BackgroundTasks, Header
+from dependencies import get_current_user, User
 from fastapi.responses import JSONResponse
 from uuid import uuid4
 from pydantic import BaseModel
@@ -113,6 +114,11 @@ class DocumentUpdate(BaseModel):
     course_code: Optional[str] = None
     lecturer_name: Optional[str] = None
     topic: Optional[str] = None
+
+
+class ProgressUpsert(BaseModel):
+    current_page: int
+    total_pages: int
 
 # --- Google Vision Client (OpenAI Compatible) ---
 # Note: Using Synchronous Client for background threads
@@ -819,6 +825,87 @@ async def get_document_status(document_id: str):
     except Exception as e:
         logger.error(f"Status Check Error: {e}")
         raise HTTPException(status_code=500, detail=f"Status check failed: {e}")
+
+# --- Smart Resume: Reading Progress Endpoints ---
+
+@router.get("/documents/{document_id}/progress", dependencies=[Depends(verify_api_key)])
+async def get_reading_progress(
+    document_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Fetch the authenticated user's reading progress for a specific document.
+    Returns current_page=1 and total_pages=0 if no progress record exists yet.
+    Dual-protected: requires both x-api-key (gateway) and JWT (user identity).
+    """
+    if not supabase_client:
+        raise HTTPException(status_code=500, detail="Database connection not active")
+
+    try:
+        response = await _execute_with_retry_async(
+            lambda: supabase_client.table("document_progress")
+                .select("current_page, total_pages")
+                .eq("user_id", current_user.id)
+                .eq("document_id", document_id)
+                .execute(),
+            f"Fetch reading progress for user={current_user.id} doc={document_id}",
+        )
+
+        if not response.data:
+            # No record yet — return sensible defaults so frontend stays functional
+            return {"current_page": 1, "total_pages": 0}
+
+        record = response.data[0]
+        return {
+            "current_page": record.get("current_page", 1),
+            "total_pages": record.get("total_pages", 0),
+        }
+
+    except Exception as e:
+        logger.error(f"[ERROR] Failed to fetch reading progress: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch reading progress: {e}")
+
+
+@router.post("/documents/{document_id}/progress", dependencies=[Depends(verify_api_key)])
+async def upsert_reading_progress(
+    document_id: str,
+    body: ProgressUpsert,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Upsert the authenticated user's reading progress for a specific document.
+    Uses Supabase upsert with on_conflict targeting the unique (user_id, document_id) index.
+    Dual-protected: requires both x-api-key (gateway) and JWT (user identity).
+    """
+    if not supabase_client:
+        raise HTTPException(status_code=500, detail="Database connection not active")
+
+    if body.current_page < 1:
+        raise HTTPException(status_code=422, detail="current_page must be >= 1")
+    if body.total_pages < 1:
+        raise HTTPException(status_code=422, detail="total_pages must be >= 1")
+
+    try:
+        await _execute_with_retry_async(
+            lambda: supabase_client.table("document_progress")
+                .upsert(
+                    {
+                        "user_id": current_user.id,
+                        "document_id": document_id,
+                        "current_page": body.current_page,
+                        "total_pages": body.total_pages,
+                    },
+                    on_conflict="user_id,document_id",
+                )
+                .execute(),
+            f"Upsert reading progress for user={current_user.id} doc={document_id}",
+        )
+        return {"ok": True}
+
+    except Exception as e:
+        logger.error(f"[ERROR] Failed to upsert reading progress: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save reading progress: {e}")
+
 
 # Function to set dependencies (called from main api.py)
 def set_dependencies(drive_svc, supabase, api_key_verifier, folder_id):

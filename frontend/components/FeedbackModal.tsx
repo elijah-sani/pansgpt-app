@@ -96,8 +96,8 @@ export default function FeedbackModal({ isOpen, onClose, rating, onSubmit }: Fee
                                     key={tag}
                                     onClick={() => setSelectedCategory(tag)}
                                     className={`px-3 py-1.5 text-sm rounded-full border transition-all duration-200 ${selectedCategory === tag
-                                            ? 'bg-primary/20 border-primary text-primary shadow-sm'
-                                            : 'bg-white/5 border-white/10 text-muted-foreground hover:bg-white/10 hover:border-white/20'
+                                        ? 'bg-primary/20 border-primary text-primary shadow-sm'
+                                        : 'bg-white/5 border-white/10 text-muted-foreground hover:bg-white/10 hover:border-white/20'
                                         }`}
                                 >
                                     {tag}
@@ -133,8 +133,8 @@ export default function FeedbackModal({ isOpen, onClose, rating, onSubmit }: Fee
                         onClick={handleSubmit}
                         disabled={!selectedCategory || isSubmitting}
                         className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all ${!selectedCategory || isSubmitting
-                                ? 'bg-primary/50 text-primary-foreground/50 cursor-not-allowed'
-                                : 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-md hover:shadow-lg'
+                            ? 'bg-primary/50 text-primary-foreground/50 cursor-not-allowed'
+                            : 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-md hover:shadow-lg'
                             }`}
                     >
                         {isSubmitting ? (

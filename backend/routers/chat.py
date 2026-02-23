@@ -10,6 +10,7 @@ import logging
 import os
 import asyncio
 import tempfile
+import re
 import google.generativeai as genai
 from cachetools import TTLCache
 import time
@@ -45,6 +46,56 @@ GRACEFUL_ASSISTANT_ERROR_PAYLOAD = {
     "content": "I encountered an error doing what you asked. Could you try again?"
 }
 STOPPED_ASSISTANT_NOTE = "*[You stopped this response]*"
+
+
+def _clean_generated_title(raw_title: str) -> str:
+    """
+    Normalize model output into a single-line title.
+    """
+    title = (raw_title or "").strip().strip('"').strip("'")
+    title = re.sub(r"[\r\n\t]+", " ", title)
+    title = re.sub(r"\s{2,}", " ", title).strip()
+    return title
+
+
+def _is_generic_title(title: str) -> bool:
+    """
+    Heuristic guard to catch bland auto-titles.
+    """
+    cleaned = _clean_generated_title(title)
+    if not cleaned:
+        return True
+
+    lower = cleaned.lower()
+    generic_phrases = {
+        "new chat",
+        "chat",
+        "discussion",
+        "general help",
+        "help",
+        "question",
+        "questions",
+        "pharmacy question",
+        "study help",
+        "conversation",
+        "untitled",
+    }
+    if lower in generic_phrases:
+        return True
+
+    words = [w for w in re.split(r"\s+", lower) if w]
+    if len(words) < 3:
+        return True
+
+    weak_words = {
+        "chat", "discussion", "help", "question", "questions", "about",
+        "topic", "general", "new", "conversation", "session"
+    }
+    meaningful = [w for w in words if w not in weak_words]
+    if len(meaningful) < 2:
+        return True
+
+    return False
 
 async def _create_completion_with_failover(
     messages: list[dict],
@@ -139,16 +190,14 @@ async def _build_streaming_response(
                 except Exception as db_err:
                     logger.error(f"Failed to save streamed assistant message: {db_err}")
 
-            if disconnected or cancelled:
-                return
-
-            final_event = {
-                "done": True,
-                "message_id": saved_assistant_message_id,
-                "session_id": session_id
-            }
-            yield f"data: {json.dumps(final_event)}\n\n"
-            yield "data: [DONE]\n\n"
+            if not (disconnected or cancelled):
+                final_event = {
+                    "done": True,
+                    "message_id": saved_assistant_message_id,
+                    "session_id": session_id
+                }
+                yield f"data: {json.dumps(final_event)}\n\n"
+                yield "data: [DONE]\n\n"
 
     return StreamingResponse(
         stream_generator(),
@@ -615,7 +664,30 @@ async def chat(request: ChatRequest, http_request: Request):
                 if current_title == "New Chat":
                     logger.info(f"[INFO] Triggering AI Auto-Rename for session {request.session_id}...")
                     try:
-                        title_prompt = f"Create a short, professional title (maximum 4 words) for a chat that starts with this message: '{request.text}'. Return ONLY the title text, with no quotes, no punctuation, and no extra words."
+                        recent_messages: list[str] = []
+                        if request.messages:
+                            for m in request.messages[-6:]:
+                                role = (m.role or "").strip().lower()
+                                if role not in {"user", "assistant"}:
+                                    continue
+                                content = (m.content or "").strip()
+                                if not content:
+                                    continue
+                                recent_messages.append(f"{role}: {content[:180]}")
+
+                        conversation_excerpt = "\n".join(recent_messages) if recent_messages else "(no prior messages)"
+                        title_prompt = (
+                            "You generate high-quality chat session titles.\n"
+                            "Write ONE concise title that reflects the actual conversation topic.\n"
+                            "Requirements:\n"
+                            "- 3 to 8 words.\n"
+                            "- Specific and concrete, not generic.\n"
+                            "- Include the main subject, concept, or entity discussed.\n"
+                            "- Do not use filler phrases like 'Chat', 'Discussion', 'Help', or 'Question'.\n"
+                            "- Return only the title text.\n\n"
+                            f"Conversation excerpt:\n{conversation_excerpt}\n\n"
+                            f"Latest user message:\n{request.text.strip()}"
+                        )
                         if llm_engine.google_client is None:
                             logger.error("[ERROR] Google client not initialized for title generation")
                             raise RuntimeError("Google client not initialized")
@@ -623,15 +695,34 @@ async def chat(request: ChatRequest, http_request: Request):
                         title_completion = await llm_engine.google_client.chat.completions.create(
                             model=llm_engine.TEXT_FALLBACK,
                             messages=[{"role": "user", "content": title_prompt}],
-                            temperature=0.5,
-                            max_tokens=10,
+                            temperature=0.2,
+                            max_tokens=24,
                             stream=False
                         )
                         
                         if title_completion is None:
                             raise RuntimeError("Title generation failed on Google model")
 
-                        new_title = title_completion.choices[0].message.content.strip().strip('"')
+                        new_title = _clean_generated_title(title_completion.choices[0].message.content)
+                        if _is_generic_title(new_title):
+                            stricter_prompt = (
+                                f"{title_prompt}\n\n"
+                                "Your previous title was too generic. Regenerate a better one.\n"
+                                "Must include at least one concrete keyword from the conversation "
+                                "(for example: drug/class, disease, mechanism, course code, or named concept)."
+                            )
+                            retry_completion = await llm_engine.google_client.chat.completions.create(
+                                model=llm_engine.TEXT_FALLBACK,
+                                messages=[{"role": "user", "content": stricter_prompt}],
+                                temperature=0.1,
+                                max_tokens=24,
+                                stream=False
+                            )
+                            if retry_completion is not None:
+                                regenerated = _clean_generated_title(retry_completion.choices[0].message.content)
+                                if regenerated:
+                                    new_title = regenerated
+
                         if not new_title:
                             new_title = request.text[:30] + "..."
                         await chat_history.update_session_title(request.session_id, new_title)

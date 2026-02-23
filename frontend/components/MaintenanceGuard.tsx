@@ -28,7 +28,7 @@ export default function MaintenanceGuard({ children }: { children: React.ReactNo
                     .from('user_roles')
                     .select('role')
                     .eq('email', session.user.email)
-                    .single();
+                    .maybeSingle();
 
                 if (data) setIsAdmin(true);
             }

@@ -392,7 +392,7 @@ export default function SettingsPage() {
                     .from('user_roles')
                     .select('role')
                     .eq('email', email)
-                    .single();
+                    .maybeSingle();
 
                 const superAdmin = roleData?.role === 'super_admin';
                 setIsSuperAdmin(superAdmin);

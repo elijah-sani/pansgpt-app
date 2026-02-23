@@ -353,7 +353,7 @@ export default function ChatInterface({
                                             ) : (
                                                 /* Normal Display Mode */
                                                 <>
-                                                    <div className="max-w-[85%] bg-[#253920] text-white px-5 py-3 rounded-2xl rounded-tr-sm shadow-sm border border-[#253920] text-[15px] leading-relaxed">
+                                                    <div className="max-w-[85%] bg-primary/15 text-foreground dark:bg-[#253920] dark:text-white px-5 py-3 rounded-2xl rounded-tr-sm shadow-sm border border-primary/20 dark:border-[#253920] text-[15px] leading-relaxed">
                                                         {msg.content}
                                                     </div>
                                                     {/* Edit Button (below bubble) */}

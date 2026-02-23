@@ -57,7 +57,9 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     }, []);
 
     const [numPages, setNumPages] = useState(0);
+    const [currentPage, setCurrentPage] = useState(1); // Tracks the most-visible page for progress sync
     const [error, setError] = useState<string | null>(null);
+
 
     // Responsive State
     const [activeTab, setActiveTab] = useState<'document' | 'chat'>('document');
@@ -138,11 +140,16 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
     const [pendingAttachments, setPendingAttachments] = useState<string[]>([]); // Array of base64 images
     const selectionTimer = useRef<NodeJS.Timeout | null>(null);
+    const progressSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null); // Debounce ref for progress saves
+    const progressRestoredRef = useRef(false); // Guard: only auto-scroll once per document load
 
     useEffect(() => {
         return () => {
             if (streamIntervalRef.current !== null) {
                 window.clearInterval(streamIntervalRef.current);
+            }
+            if (progressSaveTimer.current) {
+                clearTimeout(progressSaveTimer.current);
             }
         };
     }, []);
@@ -307,6 +314,109 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     useEffect(() => {
         if (fileId) fetchHistory(fileId);
     }, [fileId, fetchHistory]);
+
+    // --- PAGE VISIBILITY TRACKING (IntersectionObserver) ---
+    // Observes each rendered page-container div and records which one is most visible in the viewport.
+    useEffect(() => {
+        if (!numPages) return;
+
+        const observers: IntersectionObserver[] = [];
+        const visibilityMap = new Map<number, number>(); // pageNum -> intersectionRatio
+
+        for (let i = 1; i <= numPages; i++) {
+            const el = document.getElementById(`page-container-${i}`);
+            if (!el) continue;
+
+            const observer = new IntersectionObserver(
+                (entries) => {
+                    entries.forEach(entry => {
+                        visibilityMap.set(i, entry.intersectionRatio);
+                    });
+                    // Track the page with the largest visible portion
+                    let maxRatio = 0;
+                    let mostVisiblePage = 1;
+                    visibilityMap.forEach((ratio, page) => {
+                        if (ratio > maxRatio) {
+                            maxRatio = ratio;
+                            mostVisiblePage = page;
+                        }
+                    });
+                    if (maxRatio > 0) {
+                        setCurrentPage(mostVisiblePage);
+                    }
+                },
+                { threshold: [0, 0.1, 0.25, 0.5, 0.75, 1.0] }
+            );
+
+            observer.observe(el);
+            observers.push(observer);
+        }
+
+        return () => observers.forEach(obs => obs.disconnect());
+    }, [numPages]);
+
+    // --- FETCH SAVED PROGRESS & AUTO-RESUME ---
+    // Once the PDF finishes loading (numPages > 0), fetch the user's last-saved page
+    // and smoothly scroll to it. The guard ref ensures this only runs once per document.
+    useEffect(() => {
+        if (!numPages || !fileId || progressRestoredRef.current) return;
+        progressRestoredRef.current = true;
+
+        const restoreProgress = async () => {
+            try {
+                const res = await api.fetch(`/admin/documents/${fileId}/progress`);
+                if (!res.ok) return; // Silently fail (e.g. unauthenticated)
+
+                const data = await res.json();
+                const savedPage: number = data?.current_page ?? 1;
+
+                if (savedPage > 1) {
+                    // Brief delay so react-pdf finishes painting pages before we scroll
+                    setTimeout(() => {
+                        const target = document.getElementById(`page-container-${savedPage}`);
+                        if (target) {
+                            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }
+                    }, 400);
+                }
+            } catch {
+                // Network failure — non-fatal, user starts at page 1
+            }
+        };
+
+        restoreProgress();
+    }, [numPages, fileId]);
+
+    // --- DEBOUNCED PROGRESS SAVE ---
+    // After the user stops scrolling for 2.5s, saves currentPage to the backend.
+    // Resets the timer on every page change to prevent flooding the database.
+    useEffect(() => {
+        if (!numPages || !fileId) return;
+
+        if (progressSaveTimer.current) {
+            clearTimeout(progressSaveTimer.current);
+        }
+
+        progressSaveTimer.current = setTimeout(async () => {
+            try {
+                await api.fetch(`/admin/documents/${fileId}/progress`, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        current_page: currentPage,
+                        total_pages: numPages,
+                    }),
+                });
+            } catch {
+                // Non-fatal — user simply loses this progress tick
+            }
+        }, 2500);
+
+        return () => {
+            if (progressSaveTimer.current) clearTimeout(progressSaveTimer.current);
+        };
+    }, [currentPage, numPages, fileId]);
+
+
 
     // --- CACHING & DOWNLOAD LOGIC ---
     const [pdfContent, setPdfContent] = useState<string | null>(null);
@@ -975,8 +1085,10 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
     function onDocumentLoadSuccess({ numPages }: { numPages: number }) {
         setNumPages(numPages);
+        progressRestoredRef.current = false; // Reset so auto-resume runs for this newly-loaded doc
         setError(null);
     }
+
 
     function onDocumentLoadError(err: Error) {
         console.error("PDF Load Error:", err);
@@ -1291,6 +1403,28 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                     </button>
                                 </div>
                             )}
+
+                            {/* ─── Reading Progress Bar ─────────────────────────────── */}
+                            {numPages > 0 && (
+                                <div
+                                    className="fixed bottom-0 left-0 right-0 z-50 group"
+                                    title={`Page ${currentPage} of ${numPages}`}
+                                >
+                                    {/* Tooltip — fades in on hover */}
+                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2.5 py-1 rounded-md bg-zinc-900/90 text-white text-xs font-medium whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none shadow-lg border border-white/10">
+                                        Page {currentPage} of {numPages}
+                                    </div>
+                                    {/* Track */}
+                                    <div className="w-full h-[3px] bg-border/50">
+                                        {/* Fill */}
+                                        <div
+                                            className="h-full bg-gradient-to-r from-primary via-green-400 to-emerald-400 transition-all duration-500 ease-out"
+                                            style={{ width: `${(currentPage / numPages) * 100}%` }}
+                                        />
+                                    </div>
+                                </div>
+                            )}
+
 
                             <div className="flex justify-center p-4 md:p-8">
                                 <div className="relative">

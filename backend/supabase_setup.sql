@@ -120,3 +120,66 @@ on public.system_settings for all
 to service_role
 using (true)
 with check (true);
+
+-- =============================================================
+-- 7. Smart Resume: document_progress table
+-- =============================================================
+create table if not exists public.document_progress (
+  id          uuid default gen_random_uuid() primary key,
+  user_id     uuid not null references auth.users(id) on delete cascade,
+  document_id text not null,
+  current_page integer not null default 1 check (current_page >= 1),
+  total_pages  integer not null default 1 check (total_pages >= 1),
+  updated_at   timestamp with time zone default timezone('utc'::text, now()) not null,
+
+  -- Unique constraint: one progress record per (user, document)
+  -- Enables clean upserts without duplicates
+  constraint document_progress_user_doc_unique unique (user_id, document_id)
+);
+
+-- Auto-update updated_at on every write
+create or replace function public.update_document_progress_timestamp()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  new.updated_at = timezone('utc'::text, now());
+  return new;
+end;
+$$;
+
+drop trigger if exists set_document_progress_updated_at on public.document_progress;
+create trigger set_document_progress_updated_at
+  before update on public.document_progress
+  for each row execute function public.update_document_progress_timestamp();
+
+-- Enable RLS
+alter table public.document_progress enable row level security;
+
+-- Users can only read their own progress
+create policy "document_progress_select_policy"
+on public.document_progress for select
+to authenticated
+using (user_id = auth.uid());
+
+-- Users can insert their own progress rows
+create policy "document_progress_insert_policy"
+on public.document_progress for insert
+to authenticated
+with check (user_id = auth.uid());
+
+-- Users can update their own progress rows
+create policy "document_progress_update_policy"
+on public.document_progress for update
+to authenticated
+using (user_id = auth.uid())
+with check (user_id = auth.uid());
+
+-- Users can delete their own progress (for data hygiene)
+create policy "document_progress_delete_policy"
+on public.document_progress for delete
+to authenticated
+using (user_id = auth.uid());
+

@@ -108,7 +108,7 @@ export default function HomeContent() {
                     .from('user_roles')
                     .select('role')
                     .eq('email', currentUser.email)
-                    .single();
+                    .maybeSingle();
 
                 if (data) {
                     setIsAdmin(true);

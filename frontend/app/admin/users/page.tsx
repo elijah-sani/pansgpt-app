@@ -38,7 +38,7 @@ export default function UsersPage() {
             .from('user_roles')
             .select('role')
             .eq('email', session.user.email)
-            .single();
+            .maybeSingle();
 
         if (data && !error) {
             setCurrentUserRole(data.role); // 'admin' or 'super_admin'
@@ -270,7 +270,7 @@ function InviteModal({ onClose, onSuccess }: { onClose: () => void, onSuccess: (
 
         try {
             // Check if user already exists
-            const { data: existing } = await supabase.from('user_roles').select('id').eq('email', email).single();
+            const { data: existing } = await supabase.from('user_roles').select('id').eq('email', email).maybeSingle();
             if (existing) {
                 throw new Error("User already exists in admin list.");
             }
