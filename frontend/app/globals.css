@@ -1,0 +1,153 @@
+@import url('https://fonts.cdnfonts.com/css/google-sans');
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+:root {
+  /* Stitch Color System - Light Mode */
+  --background: #f6f8f6;
+  --foreground: #1e293b;
+
+  --card: #ffffff;
+  --card-foreground: #1e293b;
+
+  --popover: #ffffff;
+  --popover-foreground: #1e293b;
+
+  --primary: #53d22d;
+  --primary-foreground: #ffffff;
+
+  --secondary: #e5e7eb;
+  --secondary-foreground: #1e293b;
+
+  --muted: #f1f5f9;
+  --muted-foreground: #6b7280;
+
+  --accent: #f9fafb;
+  --accent-foreground: #1e293b;
+
+  --destructive: #dc2626;
+  --destructive-foreground: #fef2f2;
+
+  --border: #e5e7eb;
+  --input: #e5e7eb;
+  --ring: #53d22d;
+
+  --radius: 1rem;
+}
+
+.dark {
+  /* Stitch Color System - Dark Mode */
+  --background: #152012;
+  --foreground: #ffffff;
+
+  --card: #1E2B19;
+  --card-foreground: #ffffff;
+
+  --popover: #1E2B19;
+  --popover-foreground: #ffffff;
+
+  --primary: #53d22d;
+  --primary-foreground: #0f160d;
+
+  --secondary: #2e4328;
+  --secondary-foreground: #ffffff;
+
+  --muted: #0f160d;
+  --muted-foreground: #9ca3af;
+
+  --accent: rgba(255, 255, 255, 0.05);
+  --accent-foreground: #ffffff;
+
+  --destructive: #7f1d1d;
+  --destructive-foreground: #f87171;
+
+  --border: #2A3628;
+  --input: #2A3628;
+  --ring: #2A3628;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+}
+
+body {
+  @apply bg-background text-foreground;
+  font-family: 'Product Sans', 'Google Sans', sans-serif;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* LOCK GLOBAL SCROLL - RESTORED for Mobile */
+html,
+body {
+  /* overflow: hidden !important; -- REMOVED */
+  /* height: 100vh; -- REMOVED */
+  margin: 0;
+  padding: 0;
+  /* overscroll-behavior: none; -- REMOVED */
+}
+
+/* Glassmorphism Utilities - Updated for Stitch palette */
+.glass {
+  @apply bg-white/70 dark:bg-[#0f160d]/70 backdrop-blur-md border border-white/20 dark:border-[#2A3628]/30 shadow-lg;
+}
+
+.glass-card {
+  @apply bg-white/80 dark:bg-[#1E2B19]/80 backdrop-blur-sm border border-gray-200/50 dark:border-[#2A3628]/50 shadow-sm transition-all duration-300;
+}
+
+.glass-panel {
+  @apply bg-white/90 dark:bg-[#0f160d]/90 backdrop-blur-xl border-l border-gray-200/50 dark:border-[#2A3628]/50;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-300 dark:bg-gray-700 rounded-full hover:bg-gray-400 dark:hover:bg-gray-600 transition-colors;
+}
+
+/* Admin Modal Inputs */
+.modal-input {
+  @apply w-full px-4 py-3 bg-background border-2 border-border rounded-xl outline-none text-foreground placeholder:text-muted-foreground focus:bg-background focus:border-primary/50 focus:ring-4 focus:ring-primary/10 transition-all shadow-inner;
+}
+
+/* Liquid Wave Animation */
+@keyframes wave-scroll {
+  0% {
+    transform: translateX(0);
+  }
+
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-wave {
+  animation: wave-scroll 2s linear infinite;
+}
