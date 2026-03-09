@@ -104,6 +104,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
     const [editingText, setEditingText] = useState('');
     const [isSavingEdit, setIsSavingEdit] = useState(false);
+    const [deletingNoteId, setDeletingNoteId] = useState<string | null>(null);
 
     const handleUpdateNote = async (noteId: string) => {
         const text = editingText.trim();
@@ -1325,11 +1326,14 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     };
 
     const handleDeleteNote = async (noteId: string) => {
+        setDeletingNoteId(noteId);
         try {
             await api.fetch(`/notes/${noteId}`, { method: 'DELETE' });
-            setNotes(prev => prev.filter(n => n.id !== noteId));
+            setNotes(prev => prev.filter(n => String(n.id) !== noteId));
         } catch {
             // Ignore silently for now.
+        } finally {
+            setDeletingNoteId(current => (current === noteId ? null : current));
         }
     };
 
@@ -1979,6 +1983,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
                         <PDFViewerNotesPanel
                             copiedNotes={copiedNotes}
+                            deletingNoteId={deletingNoteId}
                             editingNoteId={editingNoteId}
                             editingText={editingText}
                             expandedNotes={expandedNotes}
