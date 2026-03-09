@@ -3,6 +3,8 @@
 import { useParams, useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { Loader2 } from 'lucide-react';
+import { useEffect } from 'react';
+import { useReaderCache } from '@/lib/ReaderCacheContext';
 
 const PDFViewer = dynamic(() => import('@/components/PDFViewer'), {
     ssr: false,
@@ -18,6 +20,18 @@ export default function ReaderPage() {
     const searchParams = useSearchParams();
     const fileId = params.id as string;
     const fileSize = searchParams.get('size') || undefined;
+    const { documents, setLastOpenedDocument } = useReaderCache();
+
+    useEffect(() => {
+        if (!fileId || documents.length === 0) {
+            return;
+        }
+
+        const matchingDocument = documents.find((document) => document.drive_file_id === fileId);
+        if (matchingDocument) {
+            setLastOpenedDocument(matchingDocument);
+        }
+    }, [documents, fileId, setLastOpenedDocument]);
 
     if (!fileId) {
         return (

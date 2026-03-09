@@ -32,6 +32,7 @@ interface Document {
     embedding_progress: number;
     embedding_error?: string; // For partial success or failure details
     total_chunks: number;
+    target_levels?: string[];
 }
 
 interface AIBadgeConfig {
@@ -95,47 +96,80 @@ export default function LibraryPage() {
     }, [supabase]);
 
     // --- Data Fetching ---
-    const fetchDocuments = useCallback(async () => {
+    const fetchDocuments = useCallback(async (isSilent = false) => {
         if (!userEmail) return;
-        setIsLoadingData(true);
+        if (!isSilent) setIsLoadingData(true);
         try {
-            const { data, error } = await supabase
-                .from('pans_library')
-                .select('*')
-                .order('created_at', { ascending: false });
+            const response = await api.get('/admin/documents');
+            if (!response.ok) throw new Error('Failed to fetch documents');
+            const payload = await response.json();
+            const data = payload?.documents || payload?.data || [];
 
-            if (error) throw error;
-
-            const formattedDocs: Document[] = (data || []).map(row => ({
-                id: row.id,
-                drive_file_id: row.drive_file_id,
-                course_code: row.course_code,
-                title: row.title,
-                topic: row.topic,
-                lecturer: row.lecturer_name, // Map DB column
-                date: new Date(row.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-                file_size: row.file_size || 0,
-                uploaded_by: {
-                    name: (row.uploaded_by_email || 'System').slice(0, 2).toUpperCase(),
-                    email: row.uploaded_by_email || 'System'
-                },
-                embedding_status: row.embedding_status || 'pending',
-                embedding_progress: row.embedding_progress || 0,
-                embedding_error: row.embedding_error,
-                total_chunks: row.total_chunks || 0
-            }));
+            const formattedDocs: Document[] = (data || []).map((row: {
+                id: string;
+                drive_file_id: string;
+                course_code: string;
+                title: string;
+                topic: string;
+                lecturer_name: string;
+                created_at: string;
+                file_size?: number;
+                uploaded_by_email?: string;
+                embedding_status?: 'pending' | 'processing' | 'completed' | 'failed';
+                embedding_progress?: number;
+                embedding_error?: string;
+                total_chunks?: number;
+                target_levels?: string[];
+            }) => {
+                const status = row.embedding_status || 'pending';
+                const progress = status === 'completed' ? 100 : (Number(row.embedding_progress) || 0);
+                return {
+                    id: row.id,
+                    drive_file_id: row.drive_file_id,
+                    course_code: row.course_code,
+                    title: row.title,
+                    topic: row.topic,
+                    lecturer: row.lecturer_name, // Map DB column
+                    date: new Date(row.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+                    file_size: row.file_size || 0,
+                    uploaded_by: {
+                        name: (row.uploaded_by_email || 'System').slice(0, 2).toUpperCase(),
+                        email: row.uploaded_by_email || 'System'
+                    },
+                    embedding_status: status,
+                    embedding_progress: progress,
+                    embedding_error: row.embedding_error,
+                    total_chunks: Number(row.total_chunks) || 0,
+                    target_levels: row.target_levels || []
+                };
+            });
 
             setDocuments(formattedDocs);
         } catch (err) {
             console.error("Failed to fetch documents:", err);
         } finally {
-            setIsLoadingData(false);
+            if (!isSilent) setIsLoadingData(false);
         }
-    }, [supabase, userEmail]);
+    }, [userEmail]);
 
     useEffect(() => {
         if (userEmail) fetchDocuments();
     }, [userEmail, fetchDocuments]);
+
+    // --- Background Polling for Processing Documents ---
+    useEffect(() => {
+        const hasProcessingDocs = documents.some(
+            doc => doc.embedding_status === 'pending' || doc.embedding_status === 'processing'
+        );
+
+        if (!hasProcessingDocs) return;
+
+        const intervalId = setInterval(() => {
+            fetchDocuments(true);
+        }, 3000); // Check every 3 seconds for smoother updates
+
+        return () => clearInterval(intervalId);
+    }, [documents, fetchDocuments]);
 
     // --- Computed Stats ---
     const totalDocs = documents.length;
@@ -150,6 +184,7 @@ export default function LibraryPage() {
 
     // --- Actions ---
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [isRepairingProgress, setIsRepairingProgress] = useState(false);
 
     // Filtered Docs for Select All
     const filteredDocs = documents
@@ -242,6 +277,28 @@ export default function LibraryPage() {
         }
     };
 
+    const handleRepairProgress = async () => {
+        setIsRepairingProgress(true);
+        try {
+            const response = await api.fetch('/admin/documents/repair-progress', { method: 'POST' });
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => null);
+                throw new Error(errorData?.detail || 'Failed to repair progress');
+            }
+
+            const result = await response.json();
+            await fetchDocuments(true);
+            alert(result.repaired > 0
+                ? `Repaired ${result.repaired} completed document(s).`
+                : 'No completed documents needed repair.');
+        } catch (err) {
+            console.error("Repair progress failed:", err);
+            alert('Failed to repair progress. Check console.');
+        } finally {
+            setIsRepairingProgress(false);
+        }
+    };
+
     if (!userEmail) return null; // Wait for session fetch
 
     return (
@@ -305,6 +362,18 @@ export default function LibraryPage() {
                             <ChevronRight className="w-4 h-4 text-muted-foreground absolute right-3 top-3 pointer-events-none rotate-90" />
                         </div>
                         <button
+                            onClick={handleRepairProgress}
+                            disabled={isRepairingProgress}
+                            className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-card border border-border hover:border-primary/40 hover:bg-muted text-foreground rounded-xl text-sm font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                            {isRepairingProgress ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                                <AlertCircle className="w-4 h-4" />
+                            )}
+                            <span>{isRepairingProgress ? 'Repairing...' : 'Repair Progress'}</span>
+                        </button>
+                        <button
                             onClick={() => setIsUploadModalOpen(true)}
                             className="flex-1 md:flex-none flex items-center justify-center gap-2 px-6 py-2.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-bold shadow-lg shadow-primary/20 transition-all hover:scale-[1.02] active:scale-[0.98]"
                         >
@@ -337,6 +406,7 @@ export default function LibraryPage() {
                                 <th className="px-6 py-4 whitespace-nowrap">Topic</th>
                                 <th className="px-6 py-4 whitespace-nowrap">Lecturer</th>
                                 <th className="px-6 py-4 whitespace-nowrap">Date</th>
+                                <th className="px-6 py-4 whitespace-nowrap">Levels</th>
                                 <th className="px-6 py-4 text-center whitespace-nowrap">Uploaded By</th>
                                 <th className="px-6 py-4 text-right whitespace-nowrap">Action</th>
                             </tr>
@@ -384,7 +454,6 @@ export default function LibraryPage() {
                                                 <AIBadge
                                                     status={doc.embedding_status}
                                                     progress={doc.embedding_progress}
-                                                    total={doc.total_chunks}
                                                     error={doc.embedding_error}
                                                 />
                                             </div>
@@ -392,6 +461,19 @@ export default function LibraryPage() {
                                         <td className="px-6 py-4 text-muted-foreground whitespace-nowrap">{doc.lecturer}</td>
 
                                         <td className="px-6 py-4 text-muted-foreground whitespace-nowrap">{doc.date}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            {doc.target_levels && doc.target_levels.length > 0 ? (
+                                                <div className="flex flex-wrap gap-1">
+                                                    {doc.target_levels.map(lvl => (
+                                                        <span key={lvl} className="px-2 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-[10px] font-bold">
+                                                            {lvl}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <span className="text-[10px] font-medium text-muted-foreground/60 uppercase">All</span>
+                                            )}
+                                        </td>
                                         <td className="px-6 py-4 flex justify-center whitespace-nowrap">
                                             <div className="w-8 h-8 rounded-full bg-muted border border-border flex items-center justify-center text-xs font-bold text-muted-foreground cursor-help" title={doc.uploaded_by.email}>
                                                 {doc.uploaded_by.name}
@@ -493,7 +575,7 @@ export default function LibraryPage() {
 
 // --- Sub-Components ---
 
-function AIBadge({ status, progress, total, error }: { status: string, progress: number, total: number, error?: string }) {
+function AIBadge({ status, progress, error }: { status: string, progress: number, error?: string }) {
     // 1. Determine State
     let state = status;
     if (status === 'completed' && error) {
@@ -510,7 +592,7 @@ function AIBadge({ status, progress, total, error }: { status: string, progress:
     }
 
     if (state === 'processing') {
-        const percentage = Math.round((progress / (total || 1)) * 100);
+        const percentage = Math.max(0, Math.min(100, Math.round(Number(progress) || 0)));
         return (
             <div className="flex items-center gap-1 bg-blue-50 text-blue-600 border border-blue-200 px-2 py-0.5 rounded-full" title={`Training: ${percentage}%`}>
                 <Loader2 className="w-3 h-3 animate-spin" />
@@ -615,6 +697,14 @@ function UploadModal({ onClose, userEmail, onSuccess }: { isOpen: boolean, onClo
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [fileName, setFileName] = useState('');
     const [formData, setFormData] = useState({ title: '', course_code: '', lecturer: '', topic: '' });
+    const [selectedLevels, setSelectedLevels] = useState<string[]>([]);
+    const LEVEL_CHOICES = ['100lvl', '200lvl', '300lvl', '400lvl', '500lvl', '600lvl'];
+
+    const toggleLevel = (level: string) => {
+        setSelectedLevels(prev =>
+            prev.includes(level) ? prev.filter(l => l !== level) : [...prev, level]
+        );
+    };
 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -647,6 +737,7 @@ function UploadModal({ onClose, userEmail, onSuccess }: { isOpen: boolean, onClo
             data.append('lecturer', formData.lecturer);
             data.append('topic', formData.topic);
             if (userEmail) data.append('uploaded_by', userEmail);
+            if (selectedLevels.length > 0) data.append('target_levels', JSON.stringify(selectedLevels));
 
             // Step 1: Upload File
             const response = await api.post('/admin/upload', data);
@@ -654,7 +745,7 @@ function UploadModal({ onClose, userEmail, onSuccess }: { isOpen: boolean, onClo
             if (!response.ok) throw new Error('Upload failed');
 
             const result = await response.json();
-            const documentId = result.supabase_record?.[0]?.id;
+            const documentId = result.document_id ?? result.supabase_record?.[0]?.id;
 
             if (documentId) {
                 // Step 2: Switch to Training Mode
@@ -687,11 +778,11 @@ function UploadModal({ onClose, userEmail, onSuccess }: { isOpen: boolean, onClo
                             // Double check after await
                             if (isLocalComplete) return;
 
-                            // Calculate Percentage
-                            let percentage = 0;
-                            if (statusData.total > 0) {
-                                percentage = Math.round((statusData.progress / statusData.total) * 100);
-                            }
+                            // Backend sends embedding_progress as percentage (0-100).
+                            const percentage = Math.max(
+                                0,
+                                Math.min(100, Math.round(Number(statusData.progress) || 0))
+                            );
 
                             // Visual Smoothing: Don't jump backwards
                             setTrainingProgress(prev => Math.max(prev, percentage));
@@ -754,6 +845,7 @@ function UploadModal({ onClose, userEmail, onSuccess }: { isOpen: boolean, onClo
                 setFormData({ title: '', course_code: '', lecturer: '', topic: '' });
                 setFileName('');
                 setTrainingProgress(0);
+                setSelectedLevels([]);
             }, 300);
         }, 1500);
     };
@@ -767,6 +859,21 @@ function UploadModal({ onClose, userEmail, onSuccess }: { isOpen: boolean, onClo
                 initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
                 className="w-full max-w-lg bg-background border border-border rounded-2xl shadow-2xl overflow-hidden relative"
             >
+                {isTraining && (
+                    <button
+                        type="button"
+                        onClick={() => {
+                            onSuccess();
+                            onClose();
+                        }}
+                        title="Minimize"
+                        aria-label="Minimize"
+                        className="absolute top-3 right-3 z-20 h-8 w-8 rounded-md border border-border bg-background/90 text-lg leading-none font-bold text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                    >
+                        -
+                    </button>
+                )}
+
                 {/* Header - Only hide if success/training to focus properly */}
                 {!isSuccess && !isTraining && (
                     <div className="flex justify-between items-center px-5 py-4 border-b border-border bg-muted/30">
@@ -791,6 +898,27 @@ function UploadModal({ onClose, userEmail, onSuccess }: { isOpen: boolean, onClo
                                 <FormInput label="Course Title" name="title" placeholder="e.g. Intro to AI" value={formData.title} onChange={handleInputChange} />
                                 <FormInput label="Lecturer" name="lecturer" placeholder="e.g. Dr. Vance" value={formData.lecturer} onChange={handleInputChange} />
                                 <FormInput label="Topic" name="topic" placeholder="e.g. Neural Nets" value={formData.topic} onChange={handleInputChange} />
+                            </div>
+
+                            {/* Target Level Selector */}
+                            <div>
+                                <label className="block text-xs font-bold text-muted-foreground mb-2 uppercase tracking-wider">Target Academic Levels</label>
+                                <p className="text-[10px] text-muted-foreground/70 mb-2">Leave all unchecked for universal access</p>
+                                <div className="flex flex-wrap gap-2">
+                                    {LEVEL_CHOICES.map(level => (
+                                        <button
+                                            key={level}
+                                            type="button"
+                                            onClick={() => toggleLevel(level)}
+                                            className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${selectedLevels.includes(level)
+                                                ? 'bg-primary text-primary-foreground border-primary shadow-md shadow-primary/20'
+                                                : 'bg-card text-muted-foreground border-border hover:border-primary/40 hover:text-foreground'
+                                                }`}
+                                        >
+                                            {level}
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
 
                             {/* Drop Zone */}
@@ -1008,25 +1136,25 @@ function EditDocumentModal({ onClose, doc, onUpdate }: { isOpen: boolean, onClos
         topic: doc.topic || '',
         lecturer: doc.lecturer || ''
     });
+    const [editLevels, setEditLevels] = useState<string[]>(doc.target_levels || []);
+    const LEVEL_CHOICES = ['100lvl', '200lvl', '300lvl', '400lvl', '500lvl', '600lvl'];
+
+    const toggleEditLevel = (level: string) => {
+        setEditLevels(prev =>
+            prev.includes(level) ? prev.filter(l => l !== level) : [...prev, level]
+        );
+    };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setIsLoading(true);
         try {
-            // NEW: Use Backend API to bypass RLS issues
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/documents/${doc.id}`, {
-                method: 'PATCH',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'x-api-key': process.env.NEXT_PUBLIC_API_KEY || '',
-                    // 'x-user-email': userEmail // Not needed for auth, but good for logging if expanded
-                },
-                body: JSON.stringify({
-                    title: formData.title,
-                    course_code: formData.course_code,
-                    topic: formData.topic,
-                    lecturer_name: formData.lecturer
-                })
+            const response = await api.patch(`/admin/documents/${doc.id}`, {
+                title: formData.title,
+                course_code: formData.course_code,
+                topic: formData.topic,
+                lecturer_name: formData.lecturer,
+                target_levels: editLevels
             });
 
             if (!response.ok) {
@@ -1044,7 +1172,8 @@ function EditDocumentModal({ onClose, doc, onUpdate }: { isOpen: boolean, onClos
                     lecturer_name: formData.lecturer
                 },
                 lecturer: formData.lecturer, // Fix frontend mapping
-                course_code: formData.course_code
+                course_code: formData.course_code,
+                target_levels: editLevels
             });
 
             // Optional: Success Toast could go here if we had a toaster context
@@ -1081,6 +1210,26 @@ function EditDocumentModal({ onClose, doc, onUpdate }: { isOpen: boolean, onClos
                         </div>
                         <FormInput label="Course Title" name="title" value={formData.title} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, title: e.target.value })} />
                         <FormInput label="Lecturer" name="lecturer" value={formData.lecturer} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, lecturer: e.target.value })} />
+                        {/* Target Level Selector */}
+                        <div>
+                            <label className="block text-xs font-bold text-muted-foreground mb-2 uppercase tracking-wider">Target Academic Levels</label>
+                            <p className="text-[10px] text-muted-foreground/70 mb-2">Leave all unchecked for universal access</p>
+                            <div className="flex flex-wrap gap-2">
+                                {LEVEL_CHOICES.map(level => (
+                                    <button
+                                        key={level}
+                                        type="button"
+                                        onClick={() => toggleEditLevel(level)}
+                                        className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${editLevels.includes(level)
+                                            ? 'bg-primary text-primary-foreground border-primary shadow-md shadow-primary/20'
+                                            : 'bg-card text-muted-foreground border-border hover:border-primary/40 hover:text-foreground'
+                                            }`}
+                                    >
+                                        {level}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
                     </div>
                     <div className="flex justify-end gap-3 pt-4 border-t border-border mt-4">
                         <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg text-sm font-medium text-muted-foreground hover:bg-muted">Cancel</button>

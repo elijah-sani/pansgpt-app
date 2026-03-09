@@ -1,14 +1,16 @@
 "use client";
 
 import { useEffect, useState, useMemo } from 'react';
-import { BookOpen, ChevronRight, File, Library, FolderOpen, ArrowLeft, User, LogOut, LogIn, LayoutDashboard } from 'lucide-react';
+import { BookOpen, ChevronRight, File, Library, FolderOpen, ArrowLeft, User, LogOut, LogIn, LayoutDashboard, PanelLeft } from 'lucide-react';
 import Link from 'next/link';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
 import { User as SupabaseUser } from '@supabase/supabase-js';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useSidebarTrigger } from '@/app/(app)/layout';
 
 import { api } from '@/lib/api';
+import { useReaderCache, type ReaderDocument } from '@/lib/ReaderCacheContext';
 
 interface PDFDocument {
     id: number;
@@ -23,7 +25,15 @@ interface PDFDocument {
 }
 
 export default function HomeContent() {
-    const [docs, setDocs] = useState<PDFDocument[]>([]);
+    const openSidebar = useSidebarTrigger();
+    const {
+        documents,
+        setDocuments,
+        hasLoadedDocuments,
+        setHasLoadedDocuments,
+        setLastOpenedDocument,
+    } = useReaderCache();
+    const [docs, setDocs] = useState<PDFDocument[]>(documents as PDFDocument[]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [, setMaintenanceMode] = useState(false);
@@ -62,6 +72,12 @@ export default function HomeContent() {
 
     // Fetch documents from backend
     const fetchDocs = async () => {
+        if (hasLoadedDocuments && documents.length > 0) {
+            setDocs(documents as PDFDocument[]);
+            setLoading(false);
+            return;
+        }
+
         setLoading(true);
         setError(null);
         const startTime = performance.now();
@@ -83,6 +99,8 @@ export default function HomeContent() {
             console.log(`⏱️ Documents Fetched in ${(endTime - startTime).toFixed(2)}ms`);
 
             setDocs(data || []);
+            setDocuments((data || []) as ReaderDocument[]);
+            setHasLoadedDocuments(true);
         } catch (err) {
             console.error('Fetch error:', err);
             setError(err instanceof Error ? err.message : 'Failed to connect to backend.');
@@ -92,8 +110,14 @@ export default function HomeContent() {
     };
 
     useEffect(() => {
-        fetchDocs();
-    }, []);
+        if (hasLoadedDocuments && documents.length > 0) {
+            setDocs(documents as PDFDocument[]);
+            setLoading(false);
+            return;
+        }
+
+        void fetchDocs();
+    }, [documents, hasLoadedDocuments]);
 
     // Auth Check with DB Role
     useEffect(() => {
@@ -103,15 +127,12 @@ export default function HomeContent() {
             setUser(currentUser);
 
             if (currentUser?.email) {
-                // Check DB for Admin Role
-                const { data } = await supabase
-                    .from('user_roles')
-                    .select('role')
-                    .eq('email', currentUser.email)
-                    .single();
-
-                if (data) {
-                    setIsAdmin(true);
+                const response = await api.get('/me/bootstrap');
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data?.is_admin) {
+                        setIsAdmin(true);
+                    }
                 }
             }
             setAuthLoading(false);
@@ -123,7 +144,7 @@ export default function HomeContent() {
         await supabase.auth.signOut();
         setUser(null);
         setIsAdmin(false);
-        router.refresh();
+        window.location.replace('/login');
     };
 
     // Grouping Logic
@@ -152,7 +173,18 @@ export default function HomeContent() {
     };
 
     return (
-        <div className="min-h-screen bg-background text-foreground transition-colors duration-500">
+        <div className="h-full overflow-y-auto bg-background text-foreground transition-colors duration-500">
+
+            {/* Mobile header with sidebar toggle */}
+            <div className="md:hidden flex items-center px-4 py-3 border-b border-border bg-card sticky top-0 z-10">
+                <button
+                    onClick={openSidebar}
+                    className="p-2 text-foreground hover:bg-accent rounded-lg transition-colors mr-2"
+                >
+                    <PanelLeft size={20} />
+                </button>
+                <span className="text-sm font-semibold text-foreground">My Library</span>
+            </div>
 
             {/* Background Decor */}
             <div className="fixed inset-0 overflow-hidden pointer-events-none">
@@ -160,74 +192,6 @@ export default function HomeContent() {
                 <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-primary/10 rounded-full blur-3xl translate-y-1/2" />
             </div>
 
-            {/* Header */}
-            <header className="sticky top-0 z-50 bg-card border-b border-border backdrop-blur-md">
-                <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-                    <div className="flex items-center gap-3">
-                        <div className="relative group">
-                            <div className="absolute -inset-1 bg-gradient-to-r from-primary to-primary/80 rounded-lg blur opacity-25 group-hover:opacity-100 transition duration-1000 group-hover:duration-200" />
-                            <div className="relative rounded-lg bg-gradient-to-tr from-primary to-primary/90 p-2 shadow-lg">
-                                <BookOpen className="h-6 w-6 text-primary-foreground" />
-                            </div>
-                        </div>
-                        <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-foreground to-muted-foreground">
-                            PansGPT Reader
-                        </span>
-                    </div>
-
-                    <div className="flex items-center gap-4">
-                        <ThemeToggle />
-
-                        {/* Auth Section */}
-                        {authLoading ? (
-                            <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-800 animate-pulse" />
-                        ) : user ? (
-                            <div className="flex items-center gap-3 pl-3 border-l border-gray-200 dark:border-gray-800">
-
-                                {/* Admin Dashboard Button */}
-                                {isAdmin && (
-                                    <Link
-                                        href="/admin"
-                                        className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary/10 text-primary text-xs font-semibold hover:bg-primary/20 transition-colors mr-2 border border-primary/20"
-                                    >
-                                        <LayoutDashboard className="w-3.5 h-3.5" />
-                                        <span>Admin Dashboard</span>
-                                    </Link>
-                                )}
-
-                                <div className="flex items-center gap-2">
-                                    {user.user_metadata.avatar_url ? (
-                                        <img src={user.user_metadata.avatar_url} alt="Profile" className="w-8 h-8 rounded-full border border-gray-200 dark:border-gray-700" />
-                                    ) : (
-                                        <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center text-indigo-600 dark:text-indigo-400 font-bold text-xs border border-indigo-200 dark:border-indigo-800">
-                                            {user.email?.charAt(0).toUpperCase()}
-                                        </div>
-                                    )}
-                                    <div className="hidden sm:block text-right">
-                                        <p className="text-sm font-medium text-foreground leading-none">{user.user_metadata.full_name || 'User'}</p>
-                                        <p className="text-[10px] text-muted-foreground">{user.email}</p>
-                                    </div>
-                                </div>
-                                <button
-                                    onClick={handleLogout}
-                                    className="p-2 text-gray-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-                                    title="Log Out"
-                                >
-                                    <LogOut className="w-4 h-4" />
-                                </button>
-                            </div>
-                        ) : (
-                            <Link
-                                href="/login"
-                                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-medium shadow-lg shadow-primary/20 transition-all hover:-translate-y-0.5"
-                            >
-                                <LogIn className="w-4 h-4" />
-                                <span>Sign In</span>
-                            </Link>
-                        )}
-                    </div>
-                </div>
-            </header>
 
             <main className="relative mx-auto max-w-7xl px-6 py-12">
 
@@ -235,7 +199,7 @@ export default function HomeContent() {
                 <div className="mb-8">
                     {viewMode === 'list' && (
                         <button
-                            onClick={() => router.push('/')}
+                            onClick={() => router.push('/reader')}
                             className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-primary transition-colors mb-4"
                         >
                             <ArrowLeft className="w-4 h-4" />
@@ -245,7 +209,7 @@ export default function HomeContent() {
 
                     <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
                         <div>
-                            <h2 className="text-4xl font-extrabold tracking-tight text-foreground sm:text-5xl">
+                            <h2 className={`text-4xl font-extrabold tracking-tight text-foreground sm:text-5xl ${viewMode === 'groups' ? 'hidden md:block' : ''}`}>
                                 {viewMode === 'groups' ? 'My Library' : `${selectedCourse}`}
                             </h2>
                             <p className="mt-4 text-lg text-muted-foreground max-w-2xl">
@@ -306,7 +270,7 @@ export default function HomeContent() {
                                     return (
                                         <button
                                             key={code}
-                                            onClick={() => router.push(`/?course=${code}`)}
+                                            onClick={() => router.push(`/reader?course=${code}`)}
                                             className="group relative text-left w-full"
                                             style={{ animationDelay: `${idx * 50}ms` }}
                                         >
@@ -348,6 +312,7 @@ export default function HomeContent() {
                                     <Link
                                         href={`/reader/${doc.drive_file_id}?size=${doc.file_size || ''}&course=${selectedCourse}`}
                                         key={doc.id}
+                                        onClick={() => setLastOpenedDocument(doc as ReaderDocument)}
                                         className="group relative"
                                         style={{ animationDelay: `${idx * 50}ms` }}
                                     >

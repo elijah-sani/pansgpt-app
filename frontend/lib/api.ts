@@ -78,6 +78,15 @@ export const api = {
         });
     },
 
+    patch: (endpoint: string, body: unknown, options: FetchOptions = {}) => {
+        const isFormData = body instanceof FormData;
+        return api.fetch(endpoint, {
+            ...options,
+            method: 'PATCH',
+            body: isFormData ? body : JSON.stringify(body),
+        });
+    },
+
     delete: (endpoint: string, options: FetchOptions = {}) => {
         return api.fetch(endpoint, { ...options, method: 'DELETE' });
     }

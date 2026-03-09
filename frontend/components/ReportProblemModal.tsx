@@ -2,6 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import { X, AlertCircle, Loader2, Check } from 'lucide-react';
 import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
+import MobileBottomSheet from '@/components/MobileBottomSheet';
+import { api } from '@/lib/api';
 
 interface ReportProblemModalProps {
     isOpen: boolean;
@@ -32,8 +34,95 @@ export default function ReportProblemModal({ isOpen, onClose }: ReportProblemMod
     }, [isOpen]);
 
     if (!isOpen) return null;
+    const modalContent = (
+        <>
+            <div className="flex items-center justify-between border-b border-border px-6 py-4">
+                <div className="flex items-center gap-2 text-foreground">
+                    <AlertCircle className="h-5 w-5 text-primary" />
+                    <h3 className="font-semibold text-lg">Report a Problem</h3>
+                </div>
+                <button
+                    onClick={onClose}
+                    className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                    <X className="w-5 h-5" />
+                </button>
+            </div>
 
-    const handleSubmit = async () => {
+            <div className="p-6 space-y-6">
+                <div className="space-y-3">
+                    <label className="text-sm font-medium text-muted-foreground block">
+                        What type of issue is this?
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                        {CATEGORIES.map(category => (
+                            <button
+                                key={category}
+                                onClick={() => setSelectedCategory(category)}
+                                className={`rounded-full border px-4 py-2 text-sm font-medium transition-all duration-200 ${selectedCategory === category
+                                    ? 'border-primary bg-primary/10 text-primary shadow-sm'
+                                    : 'border-border bg-muted/30 text-muted-foreground hover:border-primary/30 hover:bg-muted'
+                                    }`}
+                            >
+                                {category}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="space-y-3">
+                    <label className="text-sm font-medium text-muted-foreground block">
+                        Describe the issue...
+                    </label>
+                    <textarea
+                        value={description}
+                        onChange={(e) => setDescription(e.target.value)}
+                        placeholder="Please provide details so we can fix it..."
+                        className="h-32 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/40"
+                    />
+                </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 border-t border-border bg-muted/30 px-6 py-4">
+                <button
+                    onClick={onClose}
+                    className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+                >
+                    Cancel
+                </button>
+                <button
+                    onClick={handleSubmit}
+                    disabled={!selectedCategory || isSubmitting}
+                    className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all ${!selectedCategory || isSubmitting
+                        ? 'cursor-not-allowed bg-primary/50 text-primary-foreground/60'
+                        : 'bg-primary text-primary-foreground shadow-md hover:bg-primary/90 hover:shadow-lg'
+                        }`}
+                >
+                    {isSubmitting ? (
+                        <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Submitting...
+                        </>
+                    ) : (
+                        <>
+                            <Check className="w-4 h-4" />
+                            Submit Report
+                        </>
+                    )}
+                </button>
+            </div>
+
+            {showToast && (
+                <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-[100] animate-in fade-in slide-in-from-bottom-5 duration-300 pointer-events-none">
+                    <div className="min-w-[300px] rounded-lg border border-border bg-card px-6 py-3 text-center text-sm font-medium text-foreground shadow-lg">
+                        Report submitted. Thank you for your feedback!
+                    </div>
+                </div>
+            )}
+        </>
+    );
+
+    async function handleSubmit() {
         if (!selectedCategory) return;
 
         setIsSubmitting(true);
@@ -57,16 +146,15 @@ export default function ReportProblemModal({ isOpen, onClose }: ReportProblemMod
                 return;
             }
 
-            // 3. Insert report
-            const { error } = await supabase.from('message_feedback').insert({
-                user_id: userId,
-                rating: 'report', // Flags it as a general issue
+            const response = await api.post('/feedback', {
+                rating: 'report',
                 category: selectedCategory,
-                comments: description
-                // message_id and session_id are intentionally null
+                comments: description,
             });
-
-            if (error) throw error;
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.detail || 'Failed to submit report');
+            }
             console.log("Report submitted successfully!");
 
             // Show Success Toast
@@ -82,106 +170,26 @@ export default function ReportProblemModal({ isOpen, onClose }: ReportProblemMod
         } finally {
             setIsSubmitting(false);
         }
-    };
+    }
 
     return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-            <div
-                className="w-full max-w-md bg-[#1a1a1a]/90 border border-white/10 rounded-2xl shadow-xl backdrop-blur-md overflow-hidden animate-in zoom-in-95 duration-200 relative"
-                onClick={(e) => e.stopPropagation()}
-            >
-                {/* Header */}
-                <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
-                    <div className="flex items-center gap-2 text-foreground/90">
-                        <AlertCircle className="w-5 h-5 text-amber-500" />
-                        <h3 className="font-semibold text-lg">Report a Problem</h3>
-                    </div>
-                    <button
-                        onClick={onClose}
-                        className="p-1 text-muted-foreground hover:text-foreground rounded-full hover:bg-white/5 transition-colors"
-                    >
-                        <X className="w-5 h-5" />
-                    </button>
+        <>
+            <MobileBottomSheet isOpen={isOpen} onClose={onClose}>
+                <div className="relative flex max-h-[90vh] flex-col bg-card">
+                    {modalContent}
                 </div>
+            </MobileBottomSheet>
 
-                {/* Body */}
-                <div className="p-6 space-y-6">
-
-                    {/* Categories */}
-                    <div className="space-y-3">
-                        <label className="text-sm font-medium text-muted-foreground block">
-                            What type of issue is this?
-                        </label>
-                        <div className="flex flex-wrap gap-2">
-                            {CATEGORIES.map(category => (
-                                <button
-                                    key={category}
-                                    onClick={() => setSelectedCategory(category)}
-                                    className={`px-3 py-1.5 text-sm rounded-full border transition-all duration-200 ${selectedCategory === category
-                                        ? 'bg-amber-500/20 border-amber-500 text-amber-500 shadow-sm'
-                                        : 'bg-white/5 border-white/10 text-muted-foreground hover:bg-white/10 hover:border-white/20'
-                                        }`}
-                                >
-                                    {category}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
-                    {/* Text Area */}
-                    <div className="space-y-3">
-                        <label className="text-sm font-medium text-muted-foreground block">
-                            Describe the issue...
-                        </label>
-                        <textarea
-                            value={description}
-                            onChange={(e) => setDescription(e.target.value)}
-                            placeholder="Please provide details so we can fix it..."
-                            className="w-full h-32 px-3 py-2 bg-black/20 border border-white/10 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500/50 text-sm resize-none placeholder:text-muted-foreground/50"
-                        />
-                    </div>
-
-                </div>
-
-                {/* Footer */}
-                <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/10 bg-white/5">
-                    <button
-                        onClick={onClose}
-                        className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+            <div className="hidden md:block">
+                <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div
+                        className="relative w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card shadow-xl animate-in zoom-in-95 duration-200"
+                        onClick={(e) => e.stopPropagation()}
                     >
-                        Cancel
-                    </button>
-                    <button
-                        onClick={handleSubmit}
-                        disabled={!selectedCategory || isSubmitting}
-                        className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all ${!selectedCategory || isSubmitting
-                            ? 'bg-amber-500/50 text-white/50 cursor-not-allowed'
-                            : 'bg-amber-600 text-white hover:bg-amber-700 shadow-md hover:shadow-lg'
-                            }`}
-                    >
-                        {isSubmitting ? (
-                            <>
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                                Submitting...
-                            </>
-                        ) : (
-                            <>
-                                <Check className="w-4 h-4" />
-                                Submit Report
-                            </>
-                        )}
-                    </button>
-                </div>
-
-                {/* Success Toast Overlay (Inside Modal for simplicity, but fixed to screen) */}
-                {showToast && (
-                    <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-[100] animate-in fade-in slide-in-from-bottom-5 duration-300 pointer-events-none">
-                        <div className="bg-[#e3e3e3] text-[#444746] px-6 py-3 rounded-lg shadow-sm text-sm font-medium min-w-[300px] text-center">
-                            Report submitted. Thank you for your feedback!
-                        </div>
+                        {modalContent}
                     </div>
-                )}
+                </div>
             </div>
-        </div>
+        </>
     );
 }

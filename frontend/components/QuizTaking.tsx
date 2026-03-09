@@ -53,7 +53,7 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
   useEffect(() => {
     async function fetchQuiz() {
       try {
-        const response = await api.get(`/quiz/${quizId}`);
+        const response = await api.get(`/api/quiz/${quizId}`);
         if (!response.ok) {
           throw new Error('Quiz not found');
         }
@@ -124,7 +124,7 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
     try {
       const timeTaken = Math.floor((new Date().getTime() - startTime.getTime()) / 1000);
 
-      const response = await api.post('/quiz/submit', {
+      const response = await api.post('/api/quiz/submit', {
         quizId: quiz.id,
         userId: userId || "",
         answers: userAnswers.map(a => ({

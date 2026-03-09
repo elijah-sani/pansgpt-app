@@ -5,10 +5,14 @@ from typing import Any, AsyncIterator, Optional
 
 logger = logging.getLogger("PansGPT")
 
-TEXT_PRIMARY = "qwen/qwen3-next-80b-a3b-instruct:free"
-TEXT_FALLBACK = "gemma-3-27b-it"
-VISION_PRIMARY = "qwen/qwen3-vl-235b-a22b-thinking"
-VISION_FALLBACK = "gemma-3-27b-it"
+TEXT_PRIMARY = "gemma-3-27b-it"           # Google AI Studio
+TEXT_SECONDARY = "gemma-3-12b-it"         # Google AI Studio fallback
+TEXT_TERTIARY = "qwen/qwen3-vl-235b-a22b-thinking"  # OpenRouter last resort
+# Compatibility alias for callers still referencing TEXT_FALLBACK.
+TEXT_FALLBACK = TEXT_PRIMARY
+
+VISION_PRIMARY = "qwen/qwen3-vl-235b-a22b-thinking"  # OpenRouter vision primary
+VISION_FALLBACK = "gemma-3-27b-it"         # Google AI Studio vision fallback
 
 openrouter_client = None
 google_client = None
@@ -64,54 +68,92 @@ async def generate_completion_with_failover(
     stream: bool = False,
     force_google: bool = False,
 ) -> Optional[Any]:
-    primary_model = VISION_PRIMARY if has_images else TEXT_PRIMARY
-    fallback_model = VISION_FALLBACK if has_images else TEXT_FALLBACK
-
     if force_google:
         if google_client is None:
             raise RuntimeError("Google fallback client not initialized.")
-        logger.info(f"[INFO] Forcing generation with Google model: {fallback_model}")
+        forced_model = VISION_FALLBACK if has_images else TEXT_PRIMARY
+        logger.info(f"[INFO] Forcing generation with Google model: {forced_model}")
         return await google_client.chat.completions.create(
-            model=fallback_model,
+            model=forced_model,
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
             stream=stream,
         )
 
-    for attempt in range(1, 4):
+    # --- Vision path (unchanged logic, just updated model names) ---
+    if has_images:
+        # Try OpenRouter vision primary first
         try:
             if openrouter_client is None:
                 raise RuntimeError("OpenRouter client not initialized")
             return await openrouter_client.chat.completions.create(
-                model=primary_model,
+                model=VISION_PRIMARY,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 stream=stream,
             )
         except Exception as exc:
-            logger.warning(
-                f"[WARNING] Primary model failed ({primary_model}) attempt {attempt}/3: {exc}"
-            )
-            if attempt < 3:
-                await asyncio.sleep(2)
+            logger.warning(f"Vision primary failed ({VISION_PRIMARY}), falling back to Google: {exc}")
 
-    if google_client is None:
-        logger.error("[ERROR] Google fallback client not initialized.")
+        # Fallback to Google for vision
+        if google_client is None:
+            raise RuntimeError("Google fallback client not initialized.")
+        return await google_client.chat.completions.create(
+            model=VISION_FALLBACK,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=stream,
+        )
+
+    # --- Text path: Google 27B -> Google 12B -> OpenRouter Qwen ---
+
+    # Step 1: Try Google Gemma 3 27B
+    if google_client is not None:
+        try:
+            logger.info(f"Attempting text generation with primary: {TEXT_PRIMARY}")
+            return await google_client.chat.completions.create(
+                model=TEXT_PRIMARY,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=stream,
+            )
+        except Exception as exc:
+            logger.warning(f"Primary model failed ({TEXT_PRIMARY}), trying secondary: {exc}")
+
+    # Step 2: Try Google Gemma 3 12B
+    if google_client is not None:
+        try:
+            logger.info(f"Attempting text generation with secondary: {TEXT_SECONDARY}")
+            return await google_client.chat.completions.create(
+                model=TEXT_SECONDARY,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=stream,
+            )
+        except Exception as exc:
+            logger.warning(f"Secondary model failed ({TEXT_SECONDARY}), trying tertiary: {exc}")
+
+    # Step 3: Last resort -> OpenRouter Qwen
+    if openrouter_client is None:
+        logger.error("All models failed and OpenRouter client is not initialized.")
         return None
 
     try:
-        logger.warning(f"[WARNING] Failing over to Google model: {fallback_model}")
-        return await google_client.chat.completions.create(
-            model=fallback_model,
+        logger.warning(f"Falling back to last resort: {TEXT_TERTIARY}")
+        return await openrouter_client.chat.completions.create(
+            model=TEXT_TERTIARY,
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
             stream=stream,
         )
     except Exception as exc:
-        logger.error(f"[ERROR] Google fallback model failed ({fallback_model}): {exc}")
+        logger.error(f"All models failed. Last resort ({TEXT_TERTIARY}) error: {exc}")
         raise exc
 
 

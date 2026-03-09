@@ -1,7 +1,8 @@
 """
 Quiz router – Generate, submit, and retrieve quizzes.
 """
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends, Header
+from dependencies import get_current_user, User
 from pydantic import BaseModel
 from typing import Optional, List
 import json
@@ -14,19 +15,29 @@ logger = logging.getLogger("PansGPT")
 router = APIRouter(prefix="/api/quiz", tags=["quiz"])
 
 _supabase = None
-_verify_api_key = None
+_supabase_service = None
+_verify_api_key_fn = None
 
 
-def set_dependencies(supabase_client, verify_api_key_fn):
-    global _supabase, _verify_api_key
+def set_dependencies(supabase_client, verify_api_key_fn, supabase_service_client=None):
+    global _supabase, _supabase_service, _verify_api_key_fn
     _supabase = supabase_client
-    _verify_api_key = verify_api_key_fn
+    _supabase_service = supabase_service_client
+    _verify_api_key_fn = verify_api_key_fn
 
 
 def _get_supabase():
-    if _supabase is None:
-        raise HTTPException(status_code=500, detail="Database not configured")
-    return _supabase
+    """Return service role client for DB writes (bypasses RLS), fall back to anon client."""
+    client = _supabase_service or _supabase
+    if client is None:
+        raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
+    return client
+
+
+async def _verify_api_key(x_api_key: str = Header(...)):
+    if _verify_api_key_fn is None:
+        raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
+    return await _verify_api_key_fn(x_api_key)
 
 
 # ---------- Models ----------
@@ -39,7 +50,6 @@ class QuizGenerateRequest(BaseModel):
     numQuestions: int = 10
     timeLimit: Optional[int] = None
     questionType: str = "OBJECTIVE"
-    userId: str
 
 
 class AnswerItem(BaseModel):
@@ -49,15 +59,14 @@ class AnswerItem(BaseModel):
 
 class QuizSubmitRequest(BaseModel):
     quizId: str
-    userId: str
     answers: List[AnswerItem]
     timeTaken: Optional[int] = None
 
 
 # ---------- Routes ----------
 
-@router.post("/generate")
-async def generate_quiz(body: QuizGenerateRequest):
+@router.post("/generate", dependencies=[Depends(_verify_api_key)])
+async def generate_quiz(body: QuizGenerateRequest, current_user: User = Depends(get_current_user)):
     """Generate quiz questions using LLM and save to database."""
     sb = _get_supabase()
 
@@ -122,7 +131,7 @@ Do NOT include any markdown, code fences, or extra text. Return ONLY the JSON ar
             questions = json.loads(cleaned)
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON from LLM: {cleaned[:200]}...")
-            raise HTTPException(status_code=500, detail=f"LLM returned invalid JSON format: {e}")
+            raise HTTPException(status_code=500, detail="Unable to generate quiz questions. Please try again.")
 
         if not isinstance(questions, list):
             raise HTTPException(status_code=500, detail="LLM returned JSON but it wasn't an array")
@@ -130,7 +139,7 @@ Do NOT include any markdown, code fences, or extra text. Return ONLY the JSON ar
         try:
             # Save quiz to database
             quiz_res = sb.table("quizzes").insert({
-                "user_id": body.userId,
+                "user_id": current_user.id,
                 "title": f"{body.courseTitle} - {body.topic or 'General'} Quiz",
                 "course_code": body.courseCode,
                 "course_title": body.courseTitle,
@@ -160,28 +169,28 @@ Do NOT include any markdown, code fences, or extra text. Return ONLY the JSON ar
             sb.table("quiz_questions").insert(questions_to_insert).execute()
         except Exception as db_err:
             logger.error(f"[ERROR] Quiz DB Insertion Failed: {db_err}")
-            raise HTTPException(status_code=500, detail=f"Database error while saving quiz: {db_err}")
+            raise HTTPException(status_code=500, detail="Quiz was generated but could not be saved. Please try again.")
 
         # Return the created quiz
-        return await get_quiz(quiz_id)
+        return await get_quiz(quiz_id, current_user)
 
     except json.JSONDecodeError as e:
         logger.error(f"Quiz generation: JSON parse error: {e}")
         raise HTTPException(status_code=500, detail="Failed to parse AI response into quiz questions")
     except Exception as e:
         logger.error(f"Quiz generation error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Unable to generate quiz. Please try again.")
 
 
-@router.get("/history")
-async def quiz_history(userId: str, limit: int = 50):
+@router.get("/history", dependencies=[Depends(_verify_api_key)])
+async def quiz_history(limit: int = 50, current_user: User = Depends(get_current_user)):
     """Get user's quiz history with results."""
     sb = _get_supabase()
     try:
         # Fetch quizzes
         quiz_res = sb.table("quizzes") \
             .select("*") \
-            .eq("user_id", userId) \
+            .eq("user_id", current_user.id) \
             .order("created_at", desc=True) \
             .limit(limit) \
             .execute()
@@ -192,7 +201,7 @@ async def quiz_history(userId: str, limit: int = 50):
             result_res = sb.table("quiz_results") \
                 .select("*") \
                 .eq("quiz_id", quiz["id"]) \
-                .eq("user_id", userId) \
+                .eq("user_id", current_user.id) \
                 .order("completed_at", desc=True) \
                 .limit(1) \
                 .execute()
@@ -207,11 +216,11 @@ async def quiz_history(userId: str, limit: int = 50):
 
     except Exception as e:
         logger.error(f"Quiz history error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Unable to load your quiz history. Please try again.")
 
 
-@router.get("/{quiz_id}")
-async def get_quiz(quiz_id: str):
+@router.get("/{quiz_id}", dependencies=[Depends(_verify_api_key)])
+async def get_quiz(quiz_id: str, current_user: User = Depends(get_current_user)):
     """Get a quiz with its questions."""
     sb = _get_supabase()
     try:
@@ -241,11 +250,11 @@ async def get_quiz(quiz_id: str):
         raise
     except Exception as e:
         logger.error(f"Get quiz error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Unable to load this quiz. Please try again.")
 
 
-@router.post("/submit")
-async def submit_quiz(body: QuizSubmitRequest):
+@router.post("/submit", dependencies=[Depends(_verify_api_key)])
+async def submit_quiz(body: QuizSubmitRequest, current_user: User = Depends(get_current_user)):
     """Submit quiz answers, calculate score, save result."""
     sb = _get_supabase()
     try:
@@ -287,7 +296,7 @@ async def submit_quiz(body: QuizSubmitRequest):
         # Save result
         result_res = sb.table("quiz_results").insert({
             "quiz_id": body.quizId,
-            "user_id": body.userId,
+            "user_id": current_user.id,
             "answers": [a.dict() for a in body.answers],
             "score": score,
             "max_score": max_score,
@@ -306,11 +315,11 @@ async def submit_quiz(body: QuizSubmitRequest):
 
     except Exception as e:
         logger.error(f"Quiz submit error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Unable to submit your answers. Please try again.")
 
 
-@router.get("/results/{result_id}")
-async def get_quiz_result(result_id: str):
+@router.get("/results/{result_id}", dependencies=[Depends(_verify_api_key)])
+async def get_quiz_result(result_id: str, current_user: User = Depends(get_current_user)):
     """Get a specific quiz result."""
     sb = _get_supabase()
     try:
@@ -339,7 +348,7 @@ async def get_quiz_result(result_id: str):
         raise
     except Exception as e:
         logger.error(f"Get quiz result error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Unable to load this result. Please try again.")
 
 
 @router.get("/share/{quiz_id}")
@@ -347,8 +356,21 @@ async def share_quiz(quiz_id: str):
     """Get shareable quiz data (public, no auth required)."""
     sb = _get_supabase()
     try:
-        quiz_data = await get_quiz(quiz_id)
-        
+        quiz_res = sb.table("quizzes") \
+            .select("*") \
+            .eq("id", quiz_id) \
+            .single() \
+            .execute()
+
+        if not quiz_res.data:
+            raise HTTPException(status_code=404, detail="Quiz not found")
+
+        questions_res = sb.table("quiz_questions") \
+            .select("*") \
+            .eq("quiz_id", quiz_id) \
+            .order("question_order", desc=False) \
+            .execute()
+
         # Get the best result for this quiz
         result_res = sb.table("quiz_results") \
             .select("*") \
@@ -358,10 +380,13 @@ async def share_quiz(quiz_id: str):
             .execute()
 
         return {
-            "quiz": quiz_data["quiz"],
+            "quiz": {
+                **quiz_res.data,
+                "questions": questions_res.data or [],
+            },
             "bestResult": result_res.data[0] if result_res.data else None,
         }
 
     except Exception as e:
         logger.error(f"Share quiz error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Unable to load this quiz. Please try again.")

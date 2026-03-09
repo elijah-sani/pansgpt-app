@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { api } from '@/lib/api';
 import { useRouter } from 'next/navigation';
 import QuizLoadingModal from './QuizLoadingModal';
+import { useQuizCache } from '@/lib/QuizCacheContext';
 import {
   AcademicCapIcon,
   BookOpenIcon,
@@ -31,12 +32,6 @@ interface QuizFormData {
   timeLimit?: number;
 }
 
-interface Course {
-  courseCode: string;
-  courseTitle: string;
-  level: string;
-}
-
 export default function QuizSelectionForm() {
   const [session, setSession] = useState<any>(null);
   useEffect(() => { supabase.auth.getSession().then(({ data: { session: s } }) => setSession(s)); }, []);
@@ -47,7 +42,6 @@ export default function QuizSelectionForm() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
-  const [availableCourses, setAvailableCourses] = useState<Course[]>([]);
   const [formData, setFormData] = useState<QuizFormData>({
     courseCode: '',
     courseTitle: '',
@@ -60,89 +54,62 @@ export default function QuizSelectionForm() {
   });
   const [topicOptions, setTopicOptions] = useState<string[]>([]);
   const [filteredTopics, setFilteredTopics] = useState<string[]>([]);
-  const [isLoadingTopics, setIsLoadingTopics] = useState(false);
   const [showAllTopics, setShowAllTopics] = useState(false);
+  const {
+    courses,
+    documents,
+    documentsLoaded,
+    documentsLoading,
+    userLevel,
+    userLevelLoaded,
+    fetchDocuments,
+    fetchUserLevel,
+  } = useQuizCache();
 
   useEffect(() => {
-    async function fetchUserLevel() {
+    async function loadUserLevel() {
       if (!formData.level && session?.user) {
         try {
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('level')
-            .eq('id', session.user.id)
-            .single();
-          if (profile?.level) {
-            setFormData(prev => ({ ...prev, level: profile.level }));
+          if (!userLevelLoaded && !userLevel) {
+            await fetchUserLevel();
+          }
+
+          if (userLevel) {
+            setFormData(prev => ({ ...prev, level: userLevel }));
           }
         } catch { }
       }
     }
-    fetchUserLevel();
-  }, [session]);
+    void loadUserLevel();
+  }, [fetchUserLevel, formData.level, session, userLevel, userLevelLoaded]);
 
   useEffect(() => {
-    async function fetchAvailableCourses() {
-      try {
-        // Query courses from pans_library table (where uploaded docs live)
-        const { data, error } = await supabase
-          .from('pans_library')
-          .select('course_code, title, topic');
-
-        if (!error && data) {
-          // Deduplicate by course_code
-          const seen = new Set<string>();
-          const courses: Course[] = [];
-          for (const doc of data) {
-            if (doc.course_code && !seen.has(doc.course_code)) {
-              seen.add(doc.course_code);
-              courses.push({
-                courseCode: doc.course_code,
-                courseTitle: doc.title || doc.course_code,
-                level: '',
-              });
-            }
-          }
-          setAvailableCourses(courses);
-        }
-      } catch (error) {
-        console.error('Failed to fetch courses:', error);
-      }
+    if (documentsLoaded || documents.length > 0) {
+      return;
     }
-    fetchAvailableCourses();
-  }, []);
 
-  // Fetch topics for suggestions
+    void fetchDocuments().catch((error) => {
+      console.error('Failed to fetch courses:', error);
+    });
+  }, [documents.length, documentsLoaded, fetchDocuments]);
+
   useEffect(() => {
-    async function fetchTopics() {
-      setIsLoadingTopics(true);
-      try {
-        // Query distinct topics from pans_library in Supabase
-        let query = supabase.from('pans_library').select('topic');
-        if (formData.courseCode) {
-          query = query.eq('course_code', formData.courseCode);
-        }
-        const { data, error } = await query;
-
-        if (!error && data) {
-          const topics = [...new Set(
-            data
-              .map((d: any) => d.topic)
-              .filter((t: string | null) => t && t.trim())
-          )] as string[];
-          setTopicOptions(topics);
-          console.log("Fetched topics for course:", formData.courseCode, topics);
-        } else if (error) {
-          console.error('Failed to fetch topics:', error);
-        }
-      } catch (err) {
-        console.error('Exception fetching topics:', err);
-      } finally {
-        setIsLoadingTopics(false);
-      }
+    if (!documentsLoaded && documents.length === 0) {
+      return;
     }
-    fetchTopics();
-  }, [formData.courseCode]); // Re-fetch when course changes
+
+    const relevantDocuments = formData.courseCode
+      ? documents.filter((doc) => doc.course_code === formData.courseCode)
+      : documents;
+
+    const topics = [...new Set(
+      relevantDocuments
+        .map((document) => document.topic)
+        .filter((topic): topic is string => Boolean(topic && topic.trim()))
+    )];
+
+    setTopicOptions(topics);
+  }, [documents, documentsLoaded, formData.courseCode]);
 
   // Filter topics as user types
   useEffect(() => {
@@ -176,13 +143,13 @@ export default function QuizSelectionForm() {
       return;
     }
 
-    const course = availableCourses.find(c => c.courseCode === courseCode);
+    const course = courses.find(c => c.courseCode === courseCode);
     if (course) {
       setFormData(prev => ({
         ...prev,
         courseCode: course.courseCode,
         courseTitle: course.courseTitle,
-        level: course.level,
+        level: course.level || prev.level,
         topic: '' // Clear topic when course changes
       }));
     }
@@ -210,7 +177,7 @@ export default function QuizSelectionForm() {
     setInfo(null);
 
     try {
-      const response = await api.post('/quiz/generate', {
+      const response = await api.post('/api/quiz/generate', {
         courseCode: formData.courseCode,
         courseTitle: formData.courseTitle,
         topic: formData.topic,
@@ -303,7 +270,7 @@ export default function QuizSelectionForm() {
               className="w-full border rounded-xl px-4 py-3 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-white/50 focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] focus:border-transparent transition-all duration-200 bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
             >
               <option value="" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">Choose a course</option>
-              {availableCourses.map((course) => (
+              {courses.map((course) => (
                 <option key={course.courseCode} value={course.courseCode} className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">
                   {course.courseCode} - {course.courseTitle} (Level {course.level})
                 </option>
@@ -343,7 +310,7 @@ export default function QuizSelectionForm() {
                     </svg>
                   </Combobox.Button>
                 </div>
-                {isLoadingTopics ? (
+                {documentsLoading && !documentsLoaded ? (
                   <div className="absolute inset-y-0 right-0 flex items-center pr-3">
                     <svg className="animate-spin h-5 w-5 text-gray-400 dark:text-white/50" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -364,7 +331,7 @@ export default function QuizSelectionForm() {
                       </Combobox.Option>
                     ))}
                   </Combobox.Options>
-                ) : formData.courseCode && !isLoadingTopics ? (
+                ) : formData.courseCode && !(documentsLoading && !documentsLoaded) ? (
                   <div className="absolute z-10 mt-1 w-full rounded-xl py-2 px-3 text-sm border bg-white dark:[background-color:#2D3A2D] border-gray-200 dark:border-white/10 text-gray-600 dark:text-white/60">
                     No topics found for this course
                   </div>

@@ -1,5 +1,5 @@
 """
-Email service – ported from PAnsGPT's TypeScript nodemailer to Python smtplib.
+Email service â€“ ported from PAnsGPT's TypeScript nodemailer to Python smtplib.
 Uses Zoho Mail SMTP for transactional emails.
 """
 import smtplib
@@ -27,10 +27,10 @@ def _get_smtp_connection(use_updates: bool = False) -> smtplib.SMTP_SSL:
 
     if use_updates:
         user = os.getenv("ZOHO_UPDATES_EMAIL", EMAIL_ADDRESSES["UPDATES"])
-        password = os.getenv("ZOHO_UPDATES_APP_PASSWORD", "")
+        password = os.getenv("ZOHO_UPDATES_PASSWORD", "")
     else:
         user = os.getenv("ZOHO_EMAIL", EMAIL_ADDRESSES["HELLO"])
-        password = os.getenv("ZOHO_APP_PASSWORD", "")
+        password = os.getenv("ZOHO_PASSWORD", "")
 
     if not password:
         raise ValueError("SMTP password not configured")
@@ -79,71 +79,91 @@ def send_email(
 
 
 def send_welcome_email(student_name: str, student_email: str, login_url: str) -> dict:
-    """Send personalized welcome email after signup."""
-    subject = f"Welcome to PansGPT, {student_name}! 🎓"
+    """Send personalized founder-style welcome email after signup."""
+
+    subject = "Welcome to PansGPT! 🎓"
 
     text = f"""Hi {student_name},
 
-Welcome to PansGPT — your AI-powered pharmacy study assistant!
+We just saw you signed up and wanted to personally welcome you to the Pharmily.
 
-We built PansGPT to help pharmacy students like you study smarter. Here's what you can do:
+We built PansGPT together because we know exactly how crazy pharmacy school can get  between the pharmacology notes, the bulky PDFs, and the endless reading, we knew there had to be a smarter way to study.
 
-• Ask questions about any pharmacy course
-• Generate quizzes to test your knowledge
-• Access study materials and lecture notes
-• Track your progress with personalized analytics
+We have one quick question for you:
+What is the one topic or course giving you the biggest headache right now?
 
-Get started now: {login_url}
+Hit reply and let us know. We read every email that comes in, and your answer actually helps us decide what features or study guides to build next.
 
-If you have questions, just reply to this email!
+Happy studying,
 
-Best,
-The PansGPT Team
-"""
+Co-founders, PansGPT
+
+---
+
+Ready to get started? Log in here: {login_url}"""
 
     html = f"""
-    <div style="font-family: 'Montserrat', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-        <div style="text-align: center; margin-bottom: 30px;">
-            <h1 style="color: #00A400; font-size: 28px; margin: 0;">Welcome to PansGPT! 🎓</h1>
-        </div>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Welcome to PansGPT</title>
+</head>
+<body style="margin: 0; padding: 0; width: 100%; -webkit-font-smoothing: antialiased; background-color: #f5f5f5;">
+  <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f5f5f5;">
+    <tr>
+      <td align="center" style="padding: 40px 20px;">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600" style="max-width: 600px; width: 100%; background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+          <tr>
+            <td style="padding: 40px 40px 20px 40px; text-align: center; border-radius: 8px 8px 0 0;">
+              <h1 style="margin: 0; color: #10b981; font-size: 28px; font-weight: 600; line-height: 1.2; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;">Welcome to the Pharmily!</h1>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 0 40px 30px 40px;">
+              <p style="margin: 0 0 16px 0; color: #333; font-size: 16px; line-height: 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;">Hi {student_name},</p>
+              <p style="margin: 0 0 24px 0; color: #333; font-size: 16px; line-height: 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;">We just saw you signed up and wanted to personally welcome you to the Pharmily.</p>
+              <p style="margin: 0 0 24px 0; color: #333; font-size: 16px; line-height: 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;">We built PansGPT together because we know exactly how crazy pharmacy school can get  between the pharmacology notes, the bulky PDFs, and the endless reading, we knew there had to be a smarter way to study.</p>
+              <p style="margin: 0 0 16px 0; color: #333; font-size: 16px; line-height: 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;">We have one quick question for you:</p>
+              <p style="margin: 0 0 24px 0; color: #333; font-size: 16px; line-height: 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; font-weight: 600;">What is the one topic or course giving you the biggest headache right now?</p>
+              <p style="margin: 0 0 24px 0; color: #333; font-size: 16px; line-height: 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;">Hit reply and let us know. We read every email that comes in, and your answer actually helps us decide what features or study guides to build next.</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 20px 40px; background-color: #f0fdf4; border-top: 1px solid #dcfce7;">
+              <p style="margin: 0 0 12px 0; color: #166534; font-size: 14px; font-weight: 600; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;">Ready to Get Started?</p>
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto;">
+                <tr>
+                  <td align="center" style="background-color: #10b981; border-radius: 6px;">
+                    <a href="{login_url}" style="display: inline-block; padding: 12px 24px; color: #ffffff; text-decoration: none; font-size: 14px; font-weight: 600; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;">Log In to PansGPT</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 30px 40px; border-top: 1px solid #eee; background-color: #fafafa; border-radius: 0 0 8px 8px;">
+              <p style="margin: 0 0 8px 0; color: #333; font-size: 16px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;">Happy studying,</p>
+              <p style="margin: 0; color: #333; font-size: 16px; font-weight: 600; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;">Co-founders, PansGPT</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
 
-        <p style="color: #333; font-size: 16px; line-height: 1.6;">
-            Hi <strong>{student_name}</strong>,
-        </p>
-
-        <p style="color: #555; font-size: 15px; line-height: 1.6;">
-            We're excited to have you! PansGPT is your AI-powered pharmacy study assistant.
-            Here's what you can do:
-        </p>
-
-        <div style="background: #f8f9fa; border-radius: 12px; padding: 20px; margin: 20px 0;">
-            <ul style="color: #333; font-size: 14px; line-height: 2; padding-left: 20px;">
-                <li>📚 Ask questions about any pharmacy course</li>
-                <li>📝 Generate quizzes to test your knowledge</li>
-                <li>📄 Access study materials and lecture notes</li>
-                <li>📊 Track your progress with personalized analytics</li>
-            </ul>
-        </div>
-
-        <div style="text-align: center; margin: 30px 0;">
-            <a href="{login_url}"
-               style="display: inline-block; background: #00A400; color: white; text-decoration: none;
-                      padding: 14px 32px; border-radius: 8px; font-size: 16px; font-weight: 600;">
-                Start Studying →
-            </a>
-        </div>
-
-        <p style="color: #888; font-size: 13px; text-align: center; margin-top: 40px; border-top: 1px solid #eee; padding-top: 20px;">
-            Questions? Reply to this email or reach us at support@pansgpt.site
-        </p>
-    </div>
-    """
+    from_addr = f"The Founders <{os.getenv('ZOHO_UPDATES_EMAIL', EMAIL_ADDRESSES['UPDATES'])}>"
 
     return send_email(
         to=student_email,
         subject=subject,
         text=text,
         html=html,
+        from_addr=from_addr,
+        reply_to=EMAIL_ADDRESSES["HELLO"],
         use_updates_account=True,
     )
 
@@ -158,3 +178,24 @@ def verify_email_config() -> bool:
     except Exception as e:
         logger.error(f"Email config verification failed: {e}")
         return False
+
+
+async def send_welcome_email_delayed(
+    student_name: str, student_email: str, login_url: str
+) -> None:
+    """
+    Background task: waits 10 minutes then sends the welcome email.
+    Failure is non-fatal â€” logged but never raises.
+    """
+    import asyncio
+    try:
+        await asyncio.sleep(600)  # 10 minutes
+        result = send_welcome_email(student_name, student_email, login_url)
+        if result.get("success"):
+            logger.info(f"Welcome email sent to {student_email}")
+        else:
+            logger.warning(f"Welcome email failed for {student_email}: {result.get('error')}")
+    except Exception as e:
+        logger.error(f"Welcome email background task error for {student_email}: {e}")
+
+

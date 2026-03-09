@@ -6,6 +6,7 @@ import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
 import MaintenanceScreen from './MaintenanceScreen';
 import { useSystemStatus } from '@/hooks/useSystemStatus';
 import { Loader2 } from 'lucide-react';
+import { api } from '@/lib/api';
 
 export default function MaintenanceGuard({ children }: { children: React.ReactNode }) {
     const pathname = usePathname();
@@ -23,14 +24,11 @@ export default function MaintenanceGuard({ children }: { children: React.ReactNo
         const checkAuth = async () => {
             const { data: { session } } = await supabase.auth.getSession();
             if (session?.user?.email) {
-                // Determine if admin
-                const { data } = await supabase
-                    .from('user_roles')
-                    .select('role')
-                    .eq('email', session.user.email)
-                    .single();
-
-                if (data) setIsAdmin(true);
+                const response = await api.get('/me/bootstrap');
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data?.is_admin) setIsAdmin(true);
+                }
             }
             setAuthLoading(false);
         };

@@ -2,11 +2,12 @@
 
 import React, { useEffect, useState, use } from 'react';
 import type { ComponentPropsWithoutRef } from 'react';
-import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
 import { ArrowLeft, User, Calendar, Clock, SquarePen, AlertTriangle, ThumbsUp, ThumbsDown } from 'lucide-react';
 import Link from 'next/link';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
+import { api } from '@/lib/api';
 
 interface Message {
     id: number;
@@ -19,8 +20,11 @@ interface Message {
 interface ChatSession {
     title: string;
     created_at: string;
+    user_id: string | null;
+    display_name: string;
     profiles: {
         first_name: string | null;
+        other_names: string | null;
         university: string | null;
         level: string | null;
     } | null;
@@ -29,8 +33,15 @@ interface ChatSession {
 interface RawSessionData {
     title: string;
     created_at: string;
-    profiles?: Array<{
+    user_id: string | null;
+    profiles?: {
         first_name: string | null;
+        other_names: string | null;
+        university: string | null;
+        level: string | null;
+    } | Array<{
+        first_name: string | null;
+        other_names: string | null;
         university: string | null;
         level: string | null;
     }> | null;
@@ -68,43 +79,35 @@ export default function AdminChatViewerPage({
     const [messages, setMessages] = useState<Message[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
-    const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
-
     useEffect(() => {
         const fetchData = async () => {
             setIsLoading(true);
             try {
-                // 1. Fetch Session Details
-                const { data: sessionData, error: sessionError } = await supabase
-                    .from('chat_sessions')
-                    .select('title, created_at, profiles (first_name, university, level)')
-                    .eq('id', id)
-                    .single();
-
-                if (sessionError) throw sessionError;
+                const response = await api.get(`/admin/chat/${id}`);
+                if (!response.ok) throw new Error('Failed to fetch chat session');
+                const payload = await response.json();
+                const sessionData = payload.session as RawSessionData | null;
                 if (sessionData) {
                     const raw = sessionData as RawSessionData;
+                    const resolvedProfile = Array.isArray(raw.profiles)
+                        ? (raw.profiles[0] ?? null)
+                        : (raw.profiles ?? null);
+                    const firstName = resolvedProfile?.first_name?.trim() || '';
+                    const otherNames = resolvedProfile?.other_names?.trim() || '';
+                    const displayName = [firstName, otherNames].filter(Boolean).join(' ').trim()
+                        || (raw.user_id ? `User ${raw.user_id.slice(0, 8)}` : 'Anonymous User');
                     setSession({
                         title: raw.title,
                         created_at: raw.created_at,
-                        profiles: raw.profiles?.[0] ?? null,
+                        user_id: raw.user_id,
+                        display_name: displayName,
+                        profiles: resolvedProfile,
                     });
                 } else {
                     setSession(null);
                 }
 
-                // 2. Fetch Messages
-                const { data: messagesData, error: messagesError } = await supabase
-                    .from('chat_messages')
-                    .select('*')
-                    .eq('session_id', id)
-                    .order('created_at', { ascending: true });
-
-                if (messagesError) throw messagesError;
-                setMessages((messagesData as Message[]) ?? []);
+                setMessages((payload.messages as Message[]) ?? []);
 
             } catch (err) {
                 console.error("Error loading chat:", err);
@@ -116,7 +119,7 @@ export default function AdminChatViewerPage({
         if (id) {
             fetchData();
         }
-    }, [id, supabase]);
+    }, [id]);
 
     // Auto-scroll to target message
     useEffect(() => {
@@ -230,7 +233,7 @@ export default function AdminChatViewerPage({
                             </div>
                             <div>
                                 <div className="font-medium text-sm">
-                                    {session.profiles?.first_name || 'Anonymous User'}
+                                    {session.display_name}
                                 </div>
                                 {(session.profiles?.university || session.profiles?.level) && (
                                     <div className="text-xs text-muted-foreground mt-0.5">
@@ -297,6 +300,7 @@ export default function AdminChatViewerPage({
                                     <div className="prose prose-sm dark:prose-invert max-w-none break-words">
                                         <ReactMarkdown
                                             remarkPlugins={[remarkGfm]}
+                                            rehypePlugins={[rehypeRaw]}
                                             components={{
                                                 // Customize link rendering to open in new tab
                                                 a: ({ ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline" />,

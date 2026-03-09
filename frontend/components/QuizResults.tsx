@@ -57,7 +57,7 @@ export default function QuizResults({ quizId }: { quizId: string }) {
           throw new Error('Result ID not found');
         }
 
-        const response = await api.get(`/quiz/results/${resultId}`);
+        const response = await api.get(`/api/quiz/results/${resultId}`);
         if (!response.ok) {
           throw new Error('Result not found');
         }
@@ -333,19 +333,12 @@ export default function QuizResults({ quizId }: { quizId: string }) {
         </div>
 
         {/* Action Buttons */}
-        <div className="flex flex-col sm:flex-row gap-4 justify-center">
+        <div className="flex justify-center pb-8">
           <button
             onClick={() => router.push('/quiz')}
             className="px-6 py-3 text-white rounded-lg font-medium transition-colors bg-green-600 dark:bg-[#00A400] hover:bg-green-700 dark:hover:bg-[#008300]"
           >
             Take Another Quiz
-          </button>
-
-          <button
-            onClick={() => router.push('/quiz/history')}
-            className="px-6 py-3 border rounded-lg font-medium transition-colors text-gray-900 dark:text-white border-gray-300 dark:border-white/20 bg-white dark:bg-transparent hover:bg-gray-50 dark:hover:bg-white/5"
-          >
-            View Quiz History
           </button>
         </div>
       </div>

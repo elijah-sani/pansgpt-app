@@ -12,6 +12,7 @@ interface UserRole {
     email: string;
     role: 'admin' | 'super_admin'; // Using string union for roles
     is_admin: boolean; // Keep for backward compatibility if needed, but rely on 'role'
+    user_id: string | null;
     created_at?: string;
 }
 
@@ -30,36 +31,27 @@ export default function UsersPage() {
     );
 
     const fetchCurrentUserRole = useCallback(async () => {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.user?.email) return;
-
-        const { data, error } = await supabase
-            .from('user_roles')
-            .select('role')
-            .eq('email', session.user.email)
-            .single();
-
-        if (data && !error) {
-            setCurrentUserRole(data.role); // 'admin' or 'super_admin'
+        const response = await api.get('/me/bootstrap');
+        if (!response.ok) return;
+        const data = await response.json();
+        if (data?.role) {
+            setCurrentUserRole(data.role);
         }
     }, [supabase]);
 
     const fetchUsers = useCallback(async () => {
         setIsLoading(true);
         try {
-            const { data, error } = await supabase
-                .from('user_roles')
-                .select('*')
-                .order('created_at', { ascending: false });
-
-            if (error) throw error;
-            setUsers(data || []);
+            const response = await api.get('/admin/users');
+            if (!response.ok) throw new Error('Failed to fetch users');
+            const payload = await response.json();
+            setUsers(payload.data || []);
         } catch (error) {
             console.error('Failed to fetch users:', error);
         } finally {
             setIsLoading(false);
         }
-    }, [supabase]);
+    }, []);
 
     useEffect(() => {
         const init = async () => {
@@ -78,13 +70,7 @@ export default function UsersPage() {
             // Let's use the backend endpoint since we just built it to be secure,
             // BUT we need the current user's email to pass as 'requester_email'.
 
-            const { data: { session } } = await supabase.auth.getSession();
-            const requesterEmail = session?.user?.email;
-
-            if (!requesterEmail) return;
-
-            // Use centralized API client
-            const response = await api.delete(`/admin/users?requester_email=${requesterEmail}&target_email=${targetEmail}`);
+            const response = await api.delete(`/admin/users?target_email=${encodeURIComponent(targetEmail)}`);
 
             if (!response.ok) {
                 const err = await response.json();
@@ -200,10 +186,17 @@ export default function UsersPage() {
                                             )}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
-                                            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-primary">
-                                                <div className="w-1.5 h-1.5 rounded-full bg-primary shadow-[0_0_8px_color-mix(in_srgb,var(--primary),transparent_50%)]" />
-                                                Active
-                                            </span>
+                                            {user.user_id ? (
+                                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium text-green-500 bg-green-500/10 border border-green-500/20">
+                                                    <div className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_8px_color-mix(in_srgb,#22c55e,transparent_50%)]" />
+                                                    Active
+                                                </span>
+                                            ) : (
+                                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium text-amber-500 bg-amber-500/10 border border-amber-500/20">
+                                                    <div className="w-1.5 h-1.5 rounded-full bg-amber-500 shadow-[0_0_8px_color-mix(in_srgb,#f59e0b,transparent_50%)]" />
+                                                    Pending Invite
+                                                </span>
+                                            )}
                                         </td>
                                         <td className="px-6 py-4 text-right whitespace-nowrap">
                                             {isSuperAdmin && user.role !== 'super_admin' ? (
@@ -250,33 +243,17 @@ function InviteModal({ onClose, onSuccess }: { onClose: () => void, onSuccess: (
     const [status, setStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
     const [errorMsg, setErrorMsg] = useState('');
 
-    const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
-
     const handleInvite = async (e: React.FormEvent) => {
         e.preventDefault();
         setStatus('sending');
         setErrorMsg('');
 
         try {
-            // Check if user already exists
-            const { data: existing } = await supabase.from('user_roles').select('id').eq('email', email).single();
-            if (existing) {
-                throw new Error("User already exists in admin list.");
+            const response = await api.post('/admin/users', { email, role });
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.detail || 'Failed to add user.');
             }
-
-            // Insert new user
-            const { error } = await supabase.from('user_roles').insert([
-                {
-                    email,
-                    role,
-                    is_admin: true
-                }
-            ]);
-
-            if (error) throw error;
 
             setStatus('success');
             setTimeout(() => {

@@ -5,16 +5,15 @@ interface InlineWaveformProps {
 }
 
 export function InlineWaveform({ volume }: InlineWaveformProps) {
-    // varied lengths to make it look more natural even at rest
-    const bars = Array.from({ length: 24 }, (_, i) => i);
+    // Increase bar count to span wider screens (e.g., desktop chat input)
+    const bars = Array.from({ length: 72 }, (_, i) => i);
 
     return (
-        <div className="flex items-center justify-center gap-[2px] h-6 w-full max-w-[200px] overflow-hidden">
+        <div className="flex items-center justify-center gap-1 sm:gap-1.5 h-6 w-full max-w-2xl overflow-hidden px-4">
             {bars.map((index) => {
-                // Simpler approach: Map volume to height, modified by index position
-                // Center bars are taller, edge bars are shorter
-                const centerDist = Math.abs(index - 12);
-                const shapeFactor = 1 - (centerDist / 12) * 0.5; // 1.0 at center, 0.5 at edges
+                // Adjust shape factor center calculation for 72 bars
+                const centerDist = Math.abs(index - 36);
+                const shapeFactor = 1 - (centerDist / 36) * 0.5; // 1.0 at center, 0.5 at edges
 
                 // Let's stick to the requested prompt formula idea roughly:
                 // scaleY( 1 + (volume/100) * Math.abs(Math.sin(index)) )
@@ -36,11 +35,11 @@ export function InlineWaveform({ volume }: InlineWaveformProps) {
                 return (
                     <div
                         key={index}
-                        className="w-1 bg-primary rounded-full transition-transform duration-75 ease-linear will-change-transform"
+                        className="w-[3px] min-w-[3px] flex-shrink-0 bg-primary rounded-full transition-transform duration-75 ease-linear will-change-transform"
                         style={{
-                            height: '100%',
+                            height: '24px',
                             transform: `scaleY(${scale})`,
-                            opacity: 0.8 + (volume / 100) * 0.2 // Slightly brighter when loud
+                            opacity: 0.8 + (volume / 100) * 0.2
                         }}
                     />
                 );

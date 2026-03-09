@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
 import {
     ThumbsUp,
     ThumbsDown,
@@ -13,6 +12,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import Link from 'next/link';
+import { api } from '@/lib/api';
 
 // --- Types ---
 interface FeedbackItem {
@@ -26,10 +26,12 @@ interface FeedbackItem {
     user_id: string;
     profiles: {
         first_name: string | null;
+        other_names: string | null;
         university: string | null;
         level: string | null;
         email?: string;
     } | null;
+    display_name: string;
 }
 
 interface RawFeedbackItem {
@@ -41,8 +43,16 @@ interface RawFeedbackItem {
     session_id: string;
     message_id: string;
     user_id: string;
-    profiles?: Array<{
+    display_name?: string;
+    profiles?: {
         first_name: string | null;
+        other_names: string | null;
+        university: string | null;
+        level: string | null;
+        email?: string;
+    } | Array<{
+        first_name: string | null;
+        other_names: string | null;
         university: string | null;
         level: string | null;
         email?: string;
@@ -55,40 +65,31 @@ export default function AdminFeedbackPage() {
     const [searchQuery, setSearchQuery] = useState('');
     const [filterRating, setFilterRating] = useState<'all' | 'up' | 'down' | 'report'>('all');
 
-    const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
-
     // --- Fetch Data ---
     useEffect(() => {
         const fetchFeedback = async () => {
             setIsLoading(true);
             try {
-                const { data, error } = await supabase
-                    .from('message_feedback')
-                    .select(`
-                        id,
-                        rating,
-                        category,
-                        comments,
-                        created_at,
-                        session_id,
-                        message_id, 
-                        user_id,
-                        profiles ( first_name, university, level )
-                    `)
-                    .order('created_at', { ascending: false });
-
-                if (error) {
-                    console.error("Error fetching feedback:", error);
-                } else {
-                    const normalized = ((data || []) as RawFeedbackItem[]).map((item) => ({
-                        ...item,
-                        profiles: item.profiles?.[0] ?? null,
-                    }));
-                    setFeedback(normalized);
+                const res = await api.get('/admin/feedback');
+                if (!res.ok) {
+                    throw new Error(`Failed to fetch admin feedback: ${res.status}`);
                 }
+                const payload = await res.json();
+                const data = (payload?.data || []) as RawFeedbackItem[];
+                const normalized = data.map((item) => {
+                    const resolvedProfile = Array.isArray(item.profiles)
+                        ? (item.profiles[0] ?? null)
+                        : (item.profiles ?? null);
+                    const firstName = resolvedProfile?.first_name?.trim() || '';
+                    const otherNames = resolvedProfile?.other_names?.trim() || '';
+                    const localDisplayName = [firstName, otherNames].filter(Boolean).join(' ').trim();
+                    return {
+                        ...item,
+                        profiles: resolvedProfile,
+                        display_name: item.display_name || localDisplayName || `User ${item.user_id?.slice(0, 8) || 'Unknown'}`,
+                    };
+                });
+                setFeedback(normalized);
             } catch (err) {
                 console.error("Failed to fetch:", err);
             } finally {
@@ -97,7 +98,7 @@ export default function AdminFeedbackPage() {
         };
 
         fetchFeedback();
-    }, [supabase]);
+    }, []);
 
     // --- Stats Calculation ---
     const totalFeedback = feedback.length;
@@ -110,7 +111,7 @@ export default function AdminFeedbackPage() {
         const matchesSearch =
             (item.comments?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
             (item.category?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
-            (item.profiles?.first_name?.toLowerCase() || '').includes(searchQuery.toLowerCase());
+            (item.display_name?.toLowerCase() || '').includes(searchQuery.toLowerCase());
 
         const matchesFilter = filterRating === 'all' || item.rating === filterRating;
 
@@ -309,7 +310,7 @@ export default function AdminFeedbackPage() {
                                         <td className="px-6 py-4">
                                             <div className="flex flex-col">
                                                 <span className="font-medium text-foreground">
-                                                    {item.profiles?.first_name || 'Anonymous'}
+                                                    {item.display_name}
                                                 </span>
                                                 {(item.profiles?.university || item.profiles?.level) && (
                                                     <span className="text-[10px] uppercase tracking-wide text-muted-foreground mt-0.5">

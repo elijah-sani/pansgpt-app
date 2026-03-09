@@ -2,8 +2,9 @@
 
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { api } from '@/lib/api';
 import { useRouter } from 'next/navigation';
+import { RefreshCw } from 'lucide-react';
+import { useQuizCache } from '@/lib/QuizCacheContext';
 
 interface QuizResult {
   id: string;
@@ -55,49 +56,46 @@ export default function QuizHistory() {
   const [session, setSession] = useState<any>(null);
   useEffect(() => { supabase.auth.getSession().then(({ data: { session: s } }) => setSession(s)); }, []);
   const router = useRouter();
+  const { quizHistory, quizHistoryLoaded, quizHistoryLoading, fetchQuizHistory } = useQuizCache();
   const [results, setResults] = useState<QuizResult[]>([]);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [pagination, setPagination] = useState<Pagination | null>(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [filters, setFilters] = useState({
     courseCode: '',
     level: ''
   });
+  const loading = quizHistoryLoading && !quizHistoryLoaded;
 
   useEffect(() => {
-    fetchQuizHistory();
-  }, [currentPage, filters, session]);
-
-  const fetchQuizHistory = async () => {
     if (!session?.user?.id) return;
-    try {
-      setLoading(true);
-      const params = new URLSearchParams({
-        page: currentPage.toString(),
-        limit: '10',
-        userId: session?.user?.id!,
-      });
-
-      if (filters.courseCode) params.append('courseCode', filters.courseCode);
-      if (filters.level) params.append('level', filters.level);
-
-      const response = await api.get(`/quiz/history?${params}`);
-      if (!response.ok) {
-        throw new Error('Failed to fetch quiz history');
-      }
-
-      const data = await response.json();
-      setResults(data.data?.results || data.quizzes || []);
-      setAnalytics(data.data?.analytics || null);
-      setPagination(data.data?.pagination || null);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
+    if (quizHistoryLoaded || quizHistory.results.length > 0) {
+      return;
     }
-  };
+    void fetchQuizHistory().catch((err: Error) => setError(err.message));
+  }, [fetchQuizHistory, quizHistory.results.length, quizHistoryLoaded, session]);
+
+  useEffect(() => {
+    let filteredResults = [...(quizHistory.results as QuizResult[])];
+
+    if (filters.courseCode) {
+      filteredResults = filteredResults.filter((item: any) =>
+        item.course_code?.toLowerCase().includes(filters.courseCode.toLowerCase()) ||
+        item.quiz?.courseCode?.toLowerCase().includes(filters.courseCode.toLowerCase())
+      );
+    }
+
+    if (filters.level) {
+      filteredResults = filteredResults.filter((item: any) =>
+        item.level === filters.level || item.quiz?.level === filters.level
+      );
+    }
+
+    setResults(filteredResults);
+    setAnalytics(quizHistory.analytics);
+    setPagination(quizHistory.pagination);
+  }, [filters, quizHistory.analytics, quizHistory.pagination, quizHistory.results]);
 
   const handleFilterChange = (key: string, value: string) => {
     setFilters(prev => ({ ...prev, [key]: value }));
@@ -145,6 +143,16 @@ export default function QuizHistory() {
           <p className="text-gray-600 dark:text-gray-900 dark:text-white/70">Track your performance and progress over time</p>
         </div>
         <div className="flex gap-3 mt-4 md:mt-0">
+          <button
+            onClick={() => {
+              setError(null);
+              void fetchQuizHistory(true).catch((err: Error) => setError(err.message));
+            }}
+            className="inline-flex items-center gap-2 px-4 py-2 border text-sm font-medium rounded-lg text-gray-900 dark:text-white transition-all bg-white dark:[background-color:#2D3A2D] border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5"
+          >
+            <RefreshCw className={`h-4 w-4 ${quizHistoryLoading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
           <button
             onClick={() => router.push('/main')}
             className="inline-flex items-center px-4 py-2 border text-sm font-medium rounded-lg text-gray-900 dark:text-white transition-all bg-white dark:[background-color:#2D3A2D] border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5"

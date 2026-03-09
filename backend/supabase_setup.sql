@@ -86,7 +86,7 @@ using (public.is_super_admin());
 insert into public.user_roles (user_id, email, role, is_admin)
 select au.id, au.email, 'super_admin', true
 from auth.users au
-where lower(au.email) in ('elijahsani1@gmail.com', 'hello@pansgpt.site', 'elijahsani.creative@gmail.com')
+where lower(au.email) in ('elijahsani.creative@gmail.com')
 on conflict (email) do update
 set user_id = excluded.user_id,
     role = excluded.role,
@@ -120,3 +120,125 @@ on public.system_settings for all
 to service_role
 using (true)
 with check (true);
+
+-- =============================================================
+-- 7. Smart Resume: document_progress table
+-- =============================================================
+create table if not exists public.document_progress (
+  id          uuid default gen_random_uuid() primary key,
+  user_id     uuid not null references auth.users(id) on delete cascade,
+  document_id text not null,
+  current_page integer not null default 1 check (current_page >= 1),
+  total_pages  integer not null default 1 check (total_pages >= 1),
+  updated_at   timestamp with time zone default timezone('utc'::text, now()) not null,
+
+  -- Unique constraint: one progress record per (user, document)
+  -- Enables clean upserts without duplicates
+  constraint document_progress_user_doc_unique unique (user_id, document_id)
+);
+
+-- Auto-update updated_at on every write
+create or replace function public.update_document_progress_timestamp()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  new.updated_at = timezone('utc'::text, now());
+  return new;
+end;
+$$;
+
+drop trigger if exists set_document_progress_updated_at on public.document_progress;
+create trigger set_document_progress_updated_at
+  before update on public.document_progress
+  for each row execute function public.update_document_progress_timestamp();
+
+-- Enable RLS
+alter table public.document_progress enable row level security;
+
+-- Users can only read their own progress
+create policy "document_progress_select_policy"
+on public.document_progress for select
+to authenticated
+using (user_id = auth.uid());
+
+-- Users can insert their own progress rows
+create policy "document_progress_insert_policy"
+on public.document_progress for insert
+to authenticated
+with check (user_id = auth.uid());
+
+-- Users can update their own progress rows
+create policy "document_progress_update_policy"
+on public.document_progress for update
+to authenticated
+using (user_id = auth.uid())
+with check (user_id = auth.uid());
+
+-- Users can delete their own progress (for data hygiene)
+create policy "document_progress_delete_policy"
+on public.document_progress for delete
+to authenticated
+using (user_id = auth.uid());
+
+-- =============================================================
+-- 8. Web search daily usage table
+-- =============================================================
+create table if not exists public.web_search_usage (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  date date not null,
+  count integer not null default 0 check (count >= 0),
+  primary key (user_id, date)
+);
+
+create or replace function public.increment_web_search_usage(p_user_id uuid, p_date date)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  new_count integer;
+begin
+  insert into public.web_search_usage as wsu (user_id, date, count)
+  values (p_user_id, p_date, 1)
+  on conflict (user_id, date)
+  do update set count = wsu.count + 1
+  returning count into new_count;
+
+  return new_count;
+end;
+$$;
+
+revoke all on function public.increment_web_search_usage(uuid, date) from public;
+grant execute on function public.increment_web_search_usage(uuid, date) to service_role;
+
+alter table public.web_search_usage enable row level security;
+
+drop policy if exists "web_search_usage_select_own" on public.web_search_usage;
+drop policy if exists "web_search_usage_service_role_insert" on public.web_search_usage;
+drop policy if exists "web_search_usage_service_role_update" on public.web_search_usage;
+drop policy if exists "web_search_usage_service_role_delete" on public.web_search_usage;
+
+create policy "web_search_usage_select_own"
+on public.web_search_usage for select
+to authenticated
+using (user_id = auth.uid());
+
+create policy "web_search_usage_service_role_insert"
+on public.web_search_usage for insert
+to service_role
+with check (true);
+
+create policy "web_search_usage_service_role_update"
+on public.web_search_usage for update
+to service_role
+using (true)
+with check (true);
+
+create policy "web_search_usage_service_role_delete"
+on public.web_search_usage for delete
+to service_role
+using (true);

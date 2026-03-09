@@ -3,10 +3,12 @@ Library Router: Document Management Endpoints
 Handles upload, list, delete, and update operations for documents.
 """
 from fastapi import APIRouter, HTTPException, Depends, File, UploadFile, Form, BackgroundTasks, Header
+from dependencies import get_current_user, User
 from fastapi.responses import JSONResponse
 from uuid import uuid4
 from pydantic import BaseModel
 from typing import Optional
+import json
 import os
 import logging
 import io
@@ -30,6 +32,7 @@ router = APIRouter(prefix="/admin", tags=["library"])
 # These will be injected from main api.py
 drive_service = None
 supabase_client = None
+supabase_service_client = None
 verify_api_key_handler = None
 GOOGLE_DRIVE_FOLDER_ID = None
 
@@ -38,8 +41,15 @@ async def verify_api_key(x_api_key: str = Header(...)):
     Direct API key dependency used by all protected admin library endpoints.
     """
     if verify_api_key_handler is None:
-        raise HTTPException(status_code=500, detail="API key verifier not configured")
+        raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
     return await verify_api_key_handler(x_api_key)
+
+def _db_client():
+    """
+    Prefer service-role client for admin/background operations so RLS does not block writes.
+    Falls back to regular client if service-role is unavailable.
+    """
+    return supabase_service_client or supabase_client
 
 def _is_retryable_network_error(exc: Exception) -> bool:
     """
@@ -113,6 +123,12 @@ class DocumentUpdate(BaseModel):
     course_code: Optional[str] = None
     lecturer_name: Optional[str] = None
     topic: Optional[str] = None
+    target_levels: Optional[list[str]] = None
+
+
+class ProgressUpsert(BaseModel):
+    current_page: int
+    total_pages: int
 
 # --- Google Vision Client (OpenAI Compatible) ---
 # Note: Using Synchronous Client for background threads
@@ -182,11 +198,12 @@ async def _mark_document_failed(document_id: str, reason: str) -> None:
     """
     Mark a document as failed in Supabase.
     """
-    if not supabase_client:
+    db = _db_client()
+    if not db:
         return
     try:
         await _execute_with_retry_async(
-            lambda: supabase_client.table("pans_library").update({
+            lambda: db.table("pans_library").update({
                 "embedding_status": "failed",
                 "embedding_error": reason
             }).eq("id", document_id).execute(),
@@ -296,6 +313,9 @@ def _update_progress(doc_id: str, current_step: int, total_steps: int = 100):
     Updates Supabase progress with throttling (only saves every 5%) and retry logic.
     """
     try:
+        db = _db_client()
+        if not db:
+            return
         # 1. Calculate Percentage
         if total_steps == 0: return
         # Support both (id, 42) where 42 is % and (id, 5, 10) where 5/10 is 50%
@@ -315,7 +335,7 @@ def _update_progress(doc_id: str, current_step: int, total_steps: int = 100):
         # 3. Retry Logic for Supabase
         try:
             _execute_with_retry_sync(
-                lambda: supabase_client.table('pans_library').update({
+                lambda: db.table('pans_library').update({
                     'embedding_progress': new_progress
                 }).eq('id', doc_id).execute(),
                 f"Update embedding progress for {doc_id}",
@@ -335,7 +355,6 @@ def extract_hybrid_content(file_content: bytes, document_id: str):
     Main ingestion: Text via fitz + Vision via Llama for images.
     Updates progress in real-time as work completes.
     Extraction phase occupies 0%  40% of total progress.
-    Images are processed SEQUENTIALLY with a 2.1s throttle to stay under Groq's 30 RPM limit.
     """
     doc = fitz.open(stream=file_content, filetype="pdf")
     total_pages = len(doc)
@@ -383,6 +402,9 @@ async def process_and_embed(file_content: bytes, document_id: str, file_name: st
     Critical: Uses asyncio.to_thread to avoid blocking the main event loop.
     """
     try:
+        db = _db_client()
+        if not db:
+            raise RuntimeError("Database client is not configured")
         logger.info(f"[INFO] WORKER STARTED: Processing document {document_id}")
         
         # 1. Setup: Status is already set to 'processing' by the upload endpoint.
@@ -456,7 +478,7 @@ async def process_and_embed(file_content: bytes, document_id: str, file_name: st
                 # Insert into Supabase - Sync I/O
                 # Wrap Supabase insert
                 await _execute_with_retry_async(
-                    lambda: supabase_client.table('document_embeddings').insert({
+                    lambda: db.table('document_embeddings').insert({
                         'document_id': document_id,
                         'content': chunk_text,
                         'embedding': embedding
@@ -491,10 +513,10 @@ async def process_and_embed(file_content: bytes, document_id: str, file_name: st
         
         # Wrap final update
         await _execute_with_retry_async(
-            lambda: supabase_client.table('pans_library').update({
+            lambda: db.table('pans_library').update({
                 'embedding_status': final_status,
                 'embedding_progress': 100,  # 100% done
-                'total_chunks': 100,
+                'total_chunks': len(chunks),
                 'embedding_error': final_error
             }).eq('id', document_id).execute(),
             f"Finalize ingestion status for {document_id}",
@@ -508,7 +530,7 @@ async def process_and_embed(file_content: bytes, document_id: str, file_name: st
             error_msg = str(e)
             # Wrap error update
             await _execute_with_retry_async(
-                lambda: supabase_client.table('pans_library').update({
+                lambda: db.table('pans_library').update({
                     'embedding_status': 'failed',
                     'embedding_error': f"Critical failures: {error_msg}"
                 }).eq('id', document_id).execute(),
@@ -542,7 +564,8 @@ async def admin_upload_document(
     course_code: str = Form(...),
     lecturer: str = Form(...),
     topic: str = Form(...),
-    uploaded_by: Optional[str] = Form(None)
+    uploaded_by: Optional[str] = Form(None),
+    target_levels: Optional[str] = Form(None),  # JSON-encoded list e.g. '["400lvl","500lvl"]'
 ):
     """
     Admin Endpoint: Upload PDF to Drive, save metadata to Supabase, and trigger RAG ingestion.
@@ -551,10 +574,11 @@ async def admin_upload_document(
     logger.info(f"[INFO] Upload Request: {title} by {uploaded_by}")
 
     if not drive_service:
-        raise HTTPException(status_code=500, detail="Drive service not configured")
+        raise HTTPException(status_code=503, detail="The file service is temporarily unavailable. Please try again in a moment.")
     
-    if not supabase_client:
-        raise HTTPException(status_code=500, detail="Database connection not active")
+    db = _db_client()
+    if not db:
+        raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
 
     # 1. Prepare File for Streaming (Don't read into memory yet)
     try:
@@ -563,7 +587,7 @@ async def admin_upload_document(
         file_size = file.file.tell()
         file.file.seek(0)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to process file stream: {e}")
+        raise HTTPException(status_code=400, detail="Unable to process the file. Please try again.")
 
     # 2. Upload to Google Drive (Streaming Mode)
     try:
@@ -583,17 +607,28 @@ async def admin_upload_document(
         )
     except Exception as e:
         if "scope" in str(e).lower():
-            raise HTTPException(status_code=500, detail="Backend Permission Error: Drive Upload Scope missing.")
-        raise HTTPException(status_code=500, detail=f"Drive Upload failed via Stream: {e}")
+            raise HTTPException(status_code=500, detail="Unable to upload file. Please contact support.")
+        raise HTTPException(status_code=500, detail="File upload failed. Please try again.")
 
     # 3. Read Content for background processing.
     try:
         file.file.seek(0)
         content = await file.read()
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to read file content: {e}")
+        raise HTTPException(status_code=400, detail="Unable to read the file. Please try again.")
 
-    # 4. Insert into Supabase
+    # 4. Parse target_levels from JSON string
+    levels_list = []
+    if target_levels:
+        try:
+            levels_list = json.loads(target_levels)
+            if not isinstance(levels_list, list):
+                levels_list = []
+        except (json.JSONDecodeError, TypeError):
+            logger.warning(f"Invalid target_levels JSON: {target_levels}")
+            levels_list = []
+
+    # 5. Insert into Supabase
     try:
         data = {
             "title": title,
@@ -604,6 +639,7 @@ async def admin_upload_document(
             "file_name": file.filename, # Store ORIGINAL name for display
             "file_size": file_size,
             "uploaded_by_email": uploaded_by,
+            "target_levels": levels_list,
             # Initialize status immediately
             "embedding_status": "processing",
             "embedding_progress": 0,
@@ -612,7 +648,7 @@ async def admin_upload_document(
         }
 
         response = await _execute_with_retry_async(
-            lambda: supabase_client.table("pans_library").insert([data]).execute(),
+            lambda: db.table("pans_library").insert([data]).execute(),
             "Insert uploaded document metadata",
         )
         document_id = response.data[0]['id'] if response.data else None
@@ -644,25 +680,79 @@ async def admin_upload_document(
 
     except Exception as e:
         logger.error(f"Supabase Error: {e}")
-        raise HTTPException(status_code=500, detail=f"Database insert failed: {e}")
+        raise HTTPException(status_code=500, detail="Unable to save the document. Please try again.")
 
 @router.get("/documents", dependencies=[Depends(verify_api_key)])
 async def admin_list_documents():
     """
     Admin Endpoint: List all documents from Supabase.
     """
-    if not supabase_client:
-        raise HTTPException(status_code=500, detail="Database connection not active")
+    db = _db_client()
+    if not db:
+        raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
     
     try:
         response = await _execute_with_retry_async(
-            lambda: supabase_client.table("pans_library").select("*").order("created_at", desc=True).execute(),
+            lambda: db.table("pans_library").select("*").order("created_at", desc=True).execute(),
             "List documents",
         )
         return {"documents": response.data}
     except Exception as e:
         logger.error(f"List Error: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to list documents: {e}")
+        raise HTTPException(status_code=500, detail="Unable to load documents. Please try again.")
+
+@router.post("/documents/repair-progress", dependencies=[Depends(verify_api_key)])
+async def admin_repair_document_progress():
+    """
+    Admin utility: force embedding_progress=100 for rows already marked as completed.
+    Useful for repairing stale progress values from earlier runs.
+    """
+    db = _db_client()
+    if not db:
+        raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
+
+    try:
+        response = await _execute_with_retry_async(
+            lambda: db.table("pans_library")
+                .select("id, embedding_status, embedding_progress")
+                .eq("embedding_status", "completed")
+                .execute(),
+            "Fetch completed documents for progress repair",
+        )
+        rows = response.data or []
+
+        stale_ids = []
+        for row in rows:
+            raw_progress = row.get("embedding_progress", 0)
+            try:
+                normalized_progress = int(float(raw_progress))
+            except (TypeError, ValueError):
+                normalized_progress = 0
+
+            if normalized_progress < 100:
+                stale_ids.append(row.get("id"))
+
+        repaired = 0
+        for doc_id in stale_ids:
+            if not doc_id:
+                continue
+            await _execute_with_retry_async(
+                lambda doc_id=doc_id: db.table("pans_library").update({
+                    "embedding_progress": 100
+                }).eq("id", doc_id).execute(),
+                f"Repair embedding progress for {doc_id}",
+            )
+            repaired += 1
+
+        return {
+            "status": "ok",
+            "scanned": len(rows),
+            "repaired": repaired,
+            "document_ids": [doc_id for doc_id in stale_ids if doc_id],
+        }
+    except Exception as e:
+        logger.error(f"Repair Progress Error: {e}")
+        raise HTTPException(status_code=500, detail="Unable to repair document progress. Please try again.")
 
 @router.delete("/documents/{doc_id}", dependencies=[Depends(verify_api_key)])
 async def admin_delete_document(doc_id: str):
@@ -670,15 +760,16 @@ async def admin_delete_document(doc_id: str):
     Admin Endpoint: Delete document from Google Drive and Supabase.
     """
     if not drive_service:
-        raise HTTPException(status_code=500, detail="Drive service not configured")
+        raise HTTPException(status_code=503, detail="The file service is temporarily unavailable. Please try again in a moment.")
     
-    if not supabase_client:
-        raise HTTPException(status_code=500, detail="Database connection not active")
+    db = _db_client()
+    if not db:
+        raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
         
     try:
         # 1. Fetch drive_file_id from Supabase
         response = await _execute_with_retry_async(
-            lambda: supabase_client.table("pans_library").select("drive_file_id").eq("id", doc_id).execute(),
+            lambda: db.table("pans_library").select("drive_file_id").eq("id", doc_id).execute(),
             f"Fetch drive file id for document {doc_id}",
         )
         
@@ -714,7 +805,7 @@ async def admin_delete_document(doc_id: str):
         # 3. Delete embeddings from Supabase (Best Effort)
         try:
             await _execute_with_retry_async(
-                lambda: supabase_client.table("document_embeddings").delete().eq("document_id", doc_id).execute(),
+                lambda: db.table("document_embeddings").delete().eq("document_id", doc_id).execute(),
                 f"Delete embeddings for document {doc_id}",
             )
         except Exception as e:
@@ -723,12 +814,12 @@ async def admin_delete_document(doc_id: str):
         # 4. Delete from Supabase (Always proceed)
         try:
             await _execute_with_retry_async(
-                lambda: supabase_client.table("pans_library").delete().eq("id", doc_id).execute(),
+                lambda: db.table("pans_library").delete().eq("id", doc_id).execute(),
                 f"Delete pans_library row for {doc_id}",
             )
         except Exception as e:
             logger.error(f"[ERROR] Database Delete Failed: {e}")
-            raise HTTPException(status_code=500, detail=f"Database delete failed: {e}")
+            raise HTTPException(status_code=500, detail="Unable to delete the document. Please try again.")
 
         if not drive_deletion_success:
              return {"message": "Document removed from database, but Drive file may require manual cleanup.", "warning": drive_error_msg}
@@ -741,15 +832,16 @@ async def admin_delete_document(doc_id: str):
         raise
     except Exception as e:
         logger.error(f"Delete Operation Failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Delete operation failed: {e}")
+        raise HTTPException(status_code=500, detail="Unable to complete the delete operation. Please try again.")
 
 @router.patch("/documents/{doc_id}", dependencies=[Depends(verify_api_key)])
 async def admin_update_document(doc_id: str, updates: DocumentUpdate):
     """
     Admin Endpoint: Update document metadata in Supabase.
     """
-    if not supabase_client:
-        raise HTTPException(status_code=500, detail="Database connection not active")
+    db = _db_client()
+    if not db:
+        raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
 
     try:
         update_data = {k: v for k, v in updates.dict().items() if v is not None}
@@ -760,7 +852,7 @@ async def admin_update_document(doc_id: str, updates: DocumentUpdate):
         logger.info(f"[INFO] Updating document {doc_id}: {update_data}")
         
         response = await _execute_with_retry_async(
-            lambda: supabase_client.table("pans_library").update(update_data).eq("id", doc_id).execute(),
+            lambda: db.table("pans_library").update(update_data).eq("id", doc_id).execute(),
             f"Update document metadata for {doc_id}",
         )
         
@@ -771,7 +863,7 @@ async def admin_update_document(doc_id: str, updates: DocumentUpdate):
 
     except Exception as e:
         logger.error(f"Update Error: {e}")
-        raise HTTPException(status_code=500, detail=f"Update failed: {e}")
+        raise HTTPException(status_code=500, detail="Unable to update the document. Please try again.")
 
 @router.get("/documents/{document_id}/status", dependencies=[Depends(verify_api_key)])
 async def get_document_status(document_id: str):
@@ -779,13 +871,14 @@ async def get_document_status(document_id: str):
     Get the real-time embedding status of a document.
     Frontend polls this to update progress bars.
     """
-    if not supabase_client:
-        raise HTTPException(status_code=500, detail="Database connection not active")
+    db = _db_client()
+    if not db:
+        raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
     
     try:
         # Lightweight query for status fields only
         response = await _execute_with_retry_async(
-            lambda: supabase_client.table("pans_library")
+            lambda: db.table("pans_library")
             .select("embedding_status, embedding_progress, total_chunks, embedding_error")
             .eq("id", document_id)
             .execute(),
@@ -796,9 +889,14 @@ async def get_document_status(document_id: str):
             raise HTTPException(status_code=404, detail="Document not found")
             
         data = response.data[0]
+        status_value = data.get("embedding_status", "pending")
+        progress_value = data.get("embedding_progress", 0)
+        if status_value == "completed":
+            progress_value = 100
+
         return {
-            "status": data.get("embedding_status", "pending"),
-            "progress": data.get("embedding_progress", 0),
+            "status": status_value,
+            "progress": progress_value,
             "total": data.get("total_chunks", 0),
             "error": data.get("embedding_error")
         }
@@ -807,15 +905,101 @@ async def get_document_status(document_id: str):
         raise
     except Exception as e:
         logger.error(f"Status Check Error: {e}")
-        raise HTTPException(status_code=500, detail=f"Status check failed: {e}")
+        raise HTTPException(status_code=500, detail="Unable to check upload status. Please try again.")
+
+# --- Smart Resume: Reading Progress Endpoints ---
+
+@router.get("/documents/{document_id}/progress", dependencies=[Depends(verify_api_key)])
+async def get_reading_progress(
+    document_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Fetch the authenticated user's reading progress for a specific document.
+    Returns current_page=1 and total_pages=0 if no progress record exists yet.
+    Dual-protected: requires both x-api-key (gateway) and JWT (user identity).
+    """
+    if not supabase_service_client:
+        raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
+
+    try:
+        response = await _execute_with_retry_async(
+            lambda: supabase_service_client.table("document_progress")
+                .select("current_page, total_pages")
+                .eq("user_id", current_user.id)
+                .eq("document_id", document_id)
+                .execute(),
+            f"Fetch reading progress for user={current_user.id} doc={document_id}",
+        )
+
+        if not response.data:
+            # No record yet — return sensible defaults so frontend stays functional
+            return {"current_page": 1, "total_pages": 0}
+
+        record = response.data[0]
+        return {
+            "current_page": record.get("current_page", 1),
+            "total_pages": record.get("total_pages", 0),
+        }
+
+    except Exception as e:
+        logger.error(f"[ERROR] Failed to fetch reading progress: {e}")
+        raise HTTPException(status_code=500, detail="Unable to load your reading progress. Please try again.")
+
+
+@router.post("/documents/{document_id}/progress", dependencies=[Depends(verify_api_key)])
+async def upsert_reading_progress(
+    document_id: str,
+    body: ProgressUpsert,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Upsert the authenticated user's reading progress for a specific document.
+    Uses Supabase upsert with on_conflict targeting the unique (user_id, document_id) index.
+    Dual-protected: requires both x-api-key (gateway) and JWT (user identity).
+    """
+    if not supabase_service_client:
+        raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
+
+    if body.current_page < 1:
+        raise HTTPException(status_code=422, detail="current_page must be >= 1")
+    if body.total_pages < 1:
+        raise HTTPException(status_code=422, detail="total_pages must be >= 1")
+
+    try:
+        await _execute_with_retry_async(
+            lambda: supabase_service_client.table("document_progress")
+                .upsert(
+                    {
+                        "user_id": current_user.id,
+                        "document_id": document_id,
+                        "current_page": body.current_page,
+                        "total_pages": body.total_pages,
+                    },
+                    on_conflict="user_id,document_id",
+                )
+                .execute(),
+            f"Upsert reading progress for user={current_user.id} doc={document_id}",
+        )
+        return {"ok": True}
+
+    except Exception as e:
+        logger.error(f"[ERROR] Failed to upsert reading progress: {e}")
+        raise HTTPException(status_code=500, detail="Unable to save your reading progress. Please try again.")
+
 
 # Function to set dependencies (called from main api.py)
-def set_dependencies(drive_svc, supabase, api_key_verifier, folder_id):
-    global drive_service, supabase_client, verify_api_key_handler, GOOGLE_DRIVE_FOLDER_ID
+def set_dependencies(drive_svc, supabase, api_key_verifier, folder_id, supabase_service=None):
+    global drive_service, supabase_client, verify_api_key_handler, GOOGLE_DRIVE_FOLDER_ID, supabase_service_client
     drive_service = drive_svc
     supabase_client = supabase
     verify_api_key_handler = api_key_verifier
     GOOGLE_DRIVE_FOLDER_ID = folder_id
+    supabase_service_client = supabase_service
+    if supabase_service_client:
+        logger.info("[INFO] Library router using service-role Supabase client for admin/background operations.")
+    else:
+        logger.warning("[WARNING] Library router running without service-role Supabase client; RLS may block some writes.")
 
 
 

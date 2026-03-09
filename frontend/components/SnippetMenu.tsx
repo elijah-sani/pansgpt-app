@@ -1,18 +1,24 @@
 import React from 'react';
-import { Sparkles, MessageSquarePlus, X } from 'lucide-react';
+import { Sparkles, MessageSquarePlus, X, Loader2, BookmarkPlus } from 'lucide-react';
 
 interface SnippetMenuProps {
     imageBlob: Blob | string; // Can be base64 string
+    isLoading?: boolean;
+    isSaving?: boolean;
     onClose: () => void;
     onSend: (data: { text: string; attachments: string[]; systemInstruction?: string }) => void;
     onAddToInput: (image: string) => void;
+    onSaveNote: (image: string) => void;
 }
 
 const SnippetMenu: React.FC<SnippetMenuProps> = ({
     imageBlob,
+    isLoading,
+    isSaving,
     onClose,
     onSend,
-    onAddToInput
+    onAddToInput,
+    onSaveNote
 }) => {
 
     // 🟢 LOGIC: The "Fast Lane"
@@ -69,12 +75,18 @@ const SnippetMenu: React.FC<SnippetMenuProps> = ({
             {/* --- BUTTON 1: ASK AI (Auto-Send) --- */}
             <button
                 onClick={handleAskAI}
-                className="flex items-center gap-2 px-4 py-2 rounded-full transition-all group hover:bg-zinc-800 active:scale-95"
+                disabled={isLoading}
+                className={`flex items-center gap-2 px-4 py-2 rounded-full transition-all group active:scale-95 ${isLoading ? 'opacity-50 cursor-not-allowed bg-zinc-800' : 'hover:bg-zinc-800'
+                    }`}
             >
                 {/* Brand Green Icon - using explicit hex for neon green */}
-                <Sparkles className="w-4 h-4 text-[#53d22d] transition-colors" />
-                <span className="text-sm font-medium text-zinc-100 group-hover:text-white whitespace-nowrap">
-                    Ask AI
+                {isLoading ? (
+                    <Loader2 className="w-4 h-4 text-zinc-400 animate-spin" />
+                ) : (
+                    <Sparkles className="w-4 h-4 text-[#53d22d] transition-colors" />
+                )}
+                <span className={`text-sm font-medium whitespace-nowrap ${isLoading ? 'text-zinc-400' : 'text-zinc-100 group-hover:text-white'}`}>
+                    {isLoading ? 'Thinking...' : 'Ask AI'}
                 </span>
             </button>
 
@@ -92,6 +104,31 @@ const SnippetMenu: React.FC<SnippetMenuProps> = ({
                 {/* Simple CSS Tooltip */}
                 <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-black text-xs text-white rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none shadow-lg border border-zinc-800">
                     Add to chat
+                </span>
+            </button>
+
+            {/* Divider */}
+            <div className="w-px h-5 bg-zinc-700 mx-1" />
+
+            {/* Save to Notes — icon only with tooltip */}
+            <button
+                onClick={() => {
+                    const attachment = typeof imageBlob === 'string' ? imageBlob : '';
+                    if (attachment) onSaveNote(attachment);
+                    onClose();
+                }}
+                disabled={isSaving}
+                className="relative group p-2 aspect-square rounded-full text-zinc-400 hover:text-emerald-400 hover:bg-zinc-800 transition-all flex items-center justify-center active:scale-95 disabled:opacity-60"
+                title="Add to notes"
+            >
+                {isSaving ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                    <BookmarkPlus className="w-4 h-4" />
+                )}
+                {/* Tooltip */}
+                <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-black text-xs text-white rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none shadow-lg border border-zinc-800">
+                    Add to notes
                 </span>
             </button>
 

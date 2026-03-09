@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
 import {
     Users, FileText, Brain, Zap,
     Activity,
@@ -10,6 +9,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { SystemStatusBadge } from '../../components/SystemStatusBadge';
+import { api } from '@/lib/api';
 
 // --- Types ---
 interface ActivityItem {
@@ -19,6 +19,19 @@ interface ActivityItem {
     subtitle: string; // "By Admin" or "admin@example.com"
     timestamp: Date;
     avatar?: string;
+}
+
+interface DashboardUser {
+    email: string;
+    created_at?: string;
+}
+
+interface DashboardDoc {
+    id: string;
+    file_size?: number;
+    created_at: string;
+    title: string;
+    uploaded_by_email?: string;
 }
 
 interface DashboardStats {
@@ -43,11 +56,6 @@ interface StatCardProps {
 }
 
 export default function MissionControlPage() {
-    const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
-
     const [stats, setStats] = useState({
         userCount: 0,
         docCount: 0,
@@ -64,53 +72,14 @@ export default function MissionControlPage() {
         const fetchDashboardData = async () => {
             setIsLoading(true);
             try {
-                // 1. Fetch User Count
-                const { count: userCount, error: userError } = await supabase
-                    .from('user_roles')
-                    .select('*', { count: 'exact', head: true });
+                const response = await api.get('/admin/dashboard');
+                if (!response.ok) throw new Error('Failed to fetch dashboard');
+                const payload = await response.json();
+                const dashboardStats = payload.stats;
+                const recentUsers: DashboardUser[] = payload.recentUsers || [];
+                const recentDocs: DashboardDoc[] = payload.recentDocs || [];
 
-                // 2. Fetch Docs & Storage
-                const { data: docs, error: docError } = await supabase
-                    .from('pans_library')
-                    .select('id, file_size, created_at, title, uploaded_by_email')
-                    .order('created_at', { ascending: false }); // Get all for stats, limit later for feed? Better to limit in query if dataset was huge, but this is fine for now.
-
-                if (userError) throw userError;
-                if (docError) throw docError;
-
-                const docCount = docs?.length || 0;
-                const totalBytes = docs?.reduce((acc, d) => acc + (d.file_size || 0), 0) || 0;
-                const storageGB = (totalBytes / (1024 * 1024 * 1024)).toFixed(2);
-                const storagePercentage = (totalBytes / (1024 * 1024 * 1024 * 15)) * 100; // 15GB Limit
-
-                // 3. Fetch System Status
-                const { data: sysSettings } = await supabase
-                    .from('system_settings')
-                    .select('maintenance_mode, total_api_calls')
-                    .eq('id', 1)
-                    .single();
-
-                const aiStatus = sysSettings?.maintenance_mode ? 'Maintenance' : 'Optimal';
-
-                setStats({
-                    userCount: userCount || 0,
-                    docCount,
-                    storageUsed: storageGB,
-                    storagePercentage,
-                    aiStatus,
-                    apiCalls: sysSettings?.total_api_calls?.toLocaleString() || '0'
-                });
-
-                // 4. Build Activity Feed
-                // Recent Users
-                const { data: recentUsers } = await supabase
-                    .from('user_roles')
-                    .select('email, created_at')
-                    .order('created_at', { ascending: false })
-                    .limit(5);
-
-                // Recent Docs (already fetched sorted)
-                const recentDocs = docs?.slice(0, 5) || [];
+                setStats(dashboardStats);
 
                 const activities: ActivityItem[] = [];
 
@@ -147,7 +116,7 @@ export default function MissionControlPage() {
         };
 
         fetchDashboardData();
-    }, [supabase]);
+    }, []);
 
     return (
         <div className="space-y-8 pb-12">

@@ -1,7 +1,16 @@
 from typing import Any, Awaitable, Callable, Optional
+import logging
 
 supabase_client = None
 execute_with_retry = None
+logger = logging.getLogger("PansGPT")
+
+
+def _is_missing_citations_column_error(err: Exception) -> bool:
+    text = str(err).lower()
+    return "citations" in text and "chat_messages" in text and (
+        "schema cache" in text or "column" in text
+    )
 
 
 def set_dependencies(supabase, retry_executor: Optional[Callable[..., Awaitable[Any]]] = None) -> None:
@@ -23,6 +32,14 @@ async def _run(execute_fn, operation_name: str):
 
 
 async def save_user_message(session_id: str, content: str, image_data: Optional[str] = None) -> Optional[int]:
+    # Update the parent session timestamp
+    await _run(
+        lambda: supabase_client.table("chat_sessions").update(
+            {"updated_at": "now()"}
+        ).eq("id", session_id).execute(),
+        "Update session timestamp",
+    )
+
     response = await _run(
         lambda: supabase_client.table("chat_messages").insert(
             {
@@ -39,17 +56,49 @@ async def save_user_message(session_id: str, content: str, image_data: Optional[
     return None
 
 
-async def save_assistant_message(session_id: str, content: str) -> Optional[int]:
-    response = await _run(
-        lambda: supabase_client.table("chat_messages").insert(
-            {
+async def save_assistant_message(
+    session_id: str,
+    content: str,
+    citations: Optional[list[dict[str, Any]]] = None,
+) -> Optional[int]:
+    # Update the parent session timestamp
+    await _run(
+        lambda: supabase_client.table("chat_sessions").update(
+            {"updated_at": "now()"}
+        ).eq("id", session_id).execute(),
+        "Update session timestamp",
+    )
+
+    payload = {
+        "session_id": session_id,
+        "role": "ai",
+        "content": content,
+    }
+    if citations is not None:
+        payload["citations"] = citations
+
+    try:
+        response = await _run(
+            lambda: supabase_client.table("chat_messages").insert(payload).execute(),
+            "Save streamed assistant message",
+        )
+    except Exception as e:
+        if citations is not None and _is_missing_citations_column_error(e):
+            logger.warning(
+                "[WARNING] chat_messages.citations column missing; retrying assistant save without citations"
+            )
+            fallback_payload = {
                 "session_id": session_id,
                 "role": "ai",
                 "content": content,
             }
-        ).execute(),
-        "Save streamed assistant message",
-    )
+            response = await _run(
+                lambda: supabase_client.table("chat_messages").insert(fallback_payload).execute(),
+                "Save streamed assistant message (fallback without citations)",
+            )
+        else:
+            raise
+
     if response.data and len(response.data) > 0:
         return response.data[0].get("id")
     return None

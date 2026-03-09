@@ -8,18 +8,17 @@ import {
     LogOut,
     AlertTriangle,
     Moon,
+    Globe,
     Cpu,
     CheckCircle2,
     Shield,
     ChevronRight,
-    User,
     Cloud,
     Wrench,
     X,
     LayoutGrid,
     RefreshCw,
-    Check,
-    Loader2
+    Check
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -144,50 +143,9 @@ const AvatarSelectionModal = ({ isOpen, onClose, onConfirm }: AvatarSelectionMod
     );
 };
 
-interface ProfileEditorProps {
-    profileData: { displayName: string; avatarUrl: string };
-    setProfileData: (data: { displayName: string; avatarUrl: string }) => void;
-    userEmail: string | null;
-    onSave: () => void;
-    isSaving: boolean;
-}
-
-const ProfileEditor = ({ profileData, setProfileData, userEmail, onSave, isSaving }: ProfileEditorProps) => (
-    <div className="space-y-6">
-        <div className="space-y-4">
-            <label className="block text-xs font-bold text-muted-foreground uppercase tracking-widest">Display Name</label>
-            <input
-                type="text"
-                value={profileData.displayName}
-                onChange={(e) => setProfileData({ ...profileData, displayName: e.target.value })}
-                className="w-full bg-background border border-border rounded-xl px-4 py-3 text-foreground focus:border-primary/50 text-sm outline-none transition-all"
-            />
-        </div>
-        <div className="space-y-4">
-            <label className="block text-xs font-bold text-muted-foreground uppercase tracking-widest">Email Address</label>
-            <input
-                type="text"
-                value={userEmail || ''}
-                disabled
-                className="w-full bg-muted/50 border border-border rounded-xl px-4 py-3 text-muted-foreground text-sm cursor-not-allowed"
-            />
-        </div>
-        <div className="pt-4">
-            <button
-                onClick={onSave}
-                disabled={isSaving}
-                className="w-full md:w-auto px-6 py-3 bg-primary hover:bg-primary/90 text-primary-foreground font-bold rounded-xl transition-all shadow-lg shadow-primary/20 disabled:opacity-70 flex items-center justify-center gap-2"
-            >
-                {isSaving && <Loader2 className="w-4 h-4 animate-spin" />}
-                {isSaving ? 'Saving...' : 'Save Changes'}
-            </button>
-        </div>
-    </div>
-);
-
 interface AIEditorProps {
-    systemConfig: { system_prompt: string; temperature: number; maintenance_mode: boolean };
-    setSystemConfig: (data: { system_prompt: string; temperature: number; maintenance_mode: boolean }) => void;
+    systemConfig: { system_prompt: string; temperature: number; maintenance_mode: boolean; web_search_enabled: boolean };
+    setSystemConfig: (data: { system_prompt: string; temperature: number; maintenance_mode: boolean; web_search_enabled: boolean }) => void;
     userEmail: string | null;
 }
 
@@ -332,22 +290,23 @@ export default function SettingsPage() {
     const [loading, setLoading] = useState(true);
     const [userEmail, setUserEmail] = useState<string | null>(null);
     const [isSuperAdmin, setIsSuperAdmin] = useState(false);
-    const [isSavingProfile, setIsSavingProfile] = useState(false); // Add Loading State
     const [fileCount, setFileCount] = useState(0);
 
     // Mobile States
-    const [mobileSection, setMobileSection] = useState<'profile' | 'ai' | null>(null);
+    const [mobileSection, setMobileSection] = useState<'ai' | null>(null);
 
     // Form States
     const [profileData, setProfileData] = useState({ displayName: '', avatarUrl: '' });
     const [systemConfig, setSystemConfig] = useState({
         system_prompt: '',
         temperature: 0.7,
-        maintenance_mode: false
+        maintenance_mode: false,
+        web_search_enabled: true
     });
 
     // Avatar Modal
     const [isAvatarModalOpen, setIsAvatarModalOpen] = useState(false);
+    const [showWebSearchConfirm, setShowWebSearchConfirm] = useState(false);
 
     // Ensure hydration match for theme
     useEffect(() => {
@@ -362,17 +321,16 @@ export default function SettingsPage() {
             if (session?.user) {
                 const { email, id, user_metadata } = session.user;
                 setUserEmail(email || null);
-
-                // 1. Attempt to fetch from profiles table
+                const bootstrapResponse = await api.get('/me/bootstrap');
+                const bootstrap = bootstrapResponse.ok ? await bootstrapResponse.json() : null;
+                const profile = bootstrap?.profile;
                 let dbDisplayName = '';
-                const { data: profile } = await supabase
-                    .from('profiles')
-                    .select('full_name, avatar_url')
-                    .eq('id', id)
-                    .single();
 
-                if (profile?.full_name) {
-                    dbDisplayName = profile.full_name;
+                const firstName = profile?.first_name?.trim() || '';
+                const otherNames = profile?.other_names?.trim() || '';
+                const profileDisplayName = [firstName, otherNames].filter(Boolean).join(' ').trim();
+                if (profileDisplayName) {
+                    dbDisplayName = profileDisplayName;
                 }
 
                 // 2. Fallback to Metadata if DB is empty
@@ -383,24 +341,9 @@ export default function SettingsPage() {
                     displayName: finalDisplayName,
                     avatarUrl: finalAvatarUrl
                 });
-
-                // Fetch Role
-                const { data: roleData } = await supabase
-                    .from('user_roles')
-                    .select('role')
-                    .eq('email', email)
-                    .single();
-
-                const superAdmin = roleData?.role === 'super_admin';
+                const superAdmin = bootstrap?.is_super_admin === true;
                 setIsSuperAdmin(superAdmin);
-
-                // Fetch File Count
-                const { count: docsCount } = await supabase
-                    .from('pans_library')
-                    .select('*', { count: 'exact', head: true })
-                    .eq('uploaded_by_email', email);
-
-                setFileCount(docsCount || 0);
+                setFileCount(bootstrap?.file_count || 0);
 
                 // If super admin, fetch system config
                 if (superAdmin) {
@@ -418,9 +361,10 @@ export default function SettingsPage() {
             if (res.ok) {
                 const data = await res.json();
                 setSystemConfig({
-                    system_prompt: data.system_prompt || '',
-                    temperature: data.temperature || 0.7,
-                    maintenance_mode: data.maintenance_mode || false
+                    system_prompt: data.system_prompt ?? '',
+                    temperature: data.temperature ?? 0.7,
+                    maintenance_mode: data.maintenance_mode ?? false,
+                    web_search_enabled: data.web_search_enabled ?? true
                 });
             }
         } catch (err) {
@@ -429,41 +373,6 @@ export default function SettingsPage() {
     };
 
     // --- Handlers ---
-
-    // NEW: Handle Profile Save (Dual Update)
-    const handleSaveProfile = async () => {
-        setIsSavingProfile(true);
-        try {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session?.user) return;
-
-            const newName = profileData.displayName;
-            const uid = session.user.id;
-
-            // Update 1: Auth Metadata
-            const authUpdate = supabase.auth.updateUser({
-                data: { full_name: newName }
-            });
-
-            // Update 2: Profiles Table
-            // Check if profile exists first, or use upsert
-            const profileUpdate = supabase
-                .from('profiles')
-                .upsert({ id: uid, full_name: newName, updated_at: new Date() });
-
-            // Run in parallel
-            await Promise.all([authUpdate, profileUpdate]);
-
-            // Visual feedback could go here
-            // alert("Profile saved!"); 
-
-        } catch (error) {
-            console.error("Failed to save profile:", error);
-            alert("Failed to save profile. Please try again.");
-        } finally {
-            setIsSavingProfile(false);
-        }
-    };
 
     const handleUpdateAvatar = async (url: string) => {
         setIsAvatarModalOpen(false);
@@ -475,7 +384,7 @@ export default function SettingsPage() {
         if (session?.user) {
             await Promise.all([
                 supabase.auth.updateUser({ data: { avatar_url: url } }),
-                supabase.from('profiles').upsert({ id: session.user.id, avatar_url: url, updated_at: new Date() })
+                api.patch('/me/profile', { avatar_url: url })
             ]);
         }
     };
@@ -503,9 +412,25 @@ export default function SettingsPage() {
         }
     };
 
+    const handleWebSearchToggle = async (checked: boolean) => {
+        setSystemConfig(prev => ({ ...prev, web_search_enabled: checked }));
+        try {
+            const res = await api.post('/admin/config/update', {
+                web_search_enabled: checked
+            }, {
+                headers: { 'x-user-email': userEmail || '' }
+            });
+            if (!res.ok) throw new Error('Failed');
+        } catch (err) {
+            console.error(err);
+            setSystemConfig(prev => ({ ...prev, web_search_enabled: !checked }));
+            alert("Failed to update web search setting.");
+        }
+    };
+
     const handleSignOut = async () => {
         await supabase.auth.signOut();
-        router.push('/login');
+        window.location.replace('/login');
     };
 
     if (loading) return <div className="p-8 text-muted-foreground flex justify-center">Loading settings...</div>;
@@ -638,21 +563,6 @@ export default function SettingsPage() {
 
                 {/* RIGHT COL: Content (Visible on Desktop, hidden on Mobile - replaced by list items) */}
                 <div className="md:col-span-8 lg:col-span-9 space-y-8 hidden md:block">
-                    {/* Edit Profile Section */}
-                    <div className="bg-card border border-border rounded-2xl p-8">
-                        <div className="flex items-center gap-3 mb-6 pb-6 border-b border-border">
-                            <User className="w-6 h-6 text-primary" />
-                            <h2 className="text-xl font-bold text-foreground">Edit Profile</h2>
-                        </div>
-                        <ProfileEditor
-                            profileData={profileData}
-                            setProfileData={setProfileData}
-                            userEmail={userEmail}
-                            onSave={handleSaveProfile}
-                            isSaving={isSavingProfile}
-                        />
-                    </div>
-
                     {/* System Intelligence Section */}
                     {isSuperAdmin && (
                         <div className="bg-card border border-border rounded-2xl p-8">
@@ -707,6 +617,34 @@ export default function SettingsPage() {
                                 <div className="w-14 h-7 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-amber-500"></div>
                             </label>
                         </div>
+
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                                <div className="p-3 bg-muted rounded-xl text-foreground">
+                                    <Globe className="w-6 h-6" />
+                                </div>
+                                <div>
+                                    <h3 className="font-bold text-foreground">Web Search</h3>
+                                    <p className="text-sm text-muted-foreground">Allow AI to search the web for live results</p>
+                                </div>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    className="sr-only peer"
+                                    checked={systemConfig.web_search_enabled}
+                                    onChange={(e) => {
+                                        if (!e.target.checked) {
+                                            setShowWebSearchConfirm(true);
+                                        } else {
+                                            handleWebSearchToggle(true);
+                                        }
+                                    }}
+                                    disabled={!isSuperAdmin}
+                                />
+                                <div className="w-14 h-7 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-primary"></div>
+                            </label>
+                        </div>
                     </div>
 
                     <div className="bg-red-500/5 border border-red-500/20 rounded-2xl p-8 flex items-center justify-between">
@@ -736,10 +674,6 @@ export default function SettingsPage() {
                         </div>
                     </SettingsGroup>
 
-                    <SettingsGroup title="Account Settings">
-                        <SettingsRow icon={User} label="Edit Profile" onClick={() => setMobileSection('profile')} />
-                    </SettingsGroup>
-
                     {isSuperAdmin && (
                         <SettingsGroup title="AI Configuration">
                             <SettingsRow icon={Cpu} label="Model Parameters" onClick={() => setMobileSection('ai')} />
@@ -763,6 +697,30 @@ export default function SettingsPage() {
                                 <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500"></div>
                             </label>
                         </div>
+                        <div className="flex items-center justify-between p-4">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-primary/10 text-primary rounded-lg">
+                                    <Globe className="w-5 h-5" />
+                                </div>
+                                <span className="font-medium text-foreground">Web Search</span>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    className="sr-only peer"
+                                    checked={systemConfig.web_search_enabled}
+                                    onChange={(e) => {
+                                        if (!e.target.checked) {
+                                            setShowWebSearchConfirm(true);
+                                        } else {
+                                            handleWebSearchToggle(true);
+                                        }
+                                    }}
+                                    disabled={!isSuperAdmin}
+                                />
+                                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                            </label>
+                        </div>
                     </SettingsGroup>
 
                     <SettingsGroup title="Danger Zone">
@@ -773,16 +731,6 @@ export default function SettingsPage() {
             </div>
 
             {/* MOBILE DRAWERS */}
-            <MobileDrawer title="Edit Profile" isOpen={mobileSection === 'profile'} onClose={() => setMobileSection(null)}>
-                <ProfileEditor
-                    profileData={profileData}
-                    setProfileData={setProfileData}
-                    userEmail={userEmail}
-                    onSave={handleSaveProfile}
-                    isSaving={isSavingProfile}
-                />
-            </MobileDrawer>
-
             <MobileDrawer title="Model Parameters" isOpen={mobileSection === 'ai'} onClose={() => setMobileSection(null)}>
                 <AIEditor
                     systemConfig={systemConfig}
@@ -796,6 +744,36 @@ export default function SettingsPage() {
                 onClose={() => setIsAvatarModalOpen(false)}
                 onConfirm={handleUpdateAvatar}
             />
+            {showWebSearchConfirm && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                    <div className="bg-background border border-border rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+                        <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center mb-4">
+                            <Globe className="w-6 h-6 text-red-500" />
+                        </div>
+                        <h3 className="text-lg font-bold text-foreground mb-2">Disable Web Search?</h3>
+                        <p className="text-sm text-muted-foreground mb-6">
+                            Students will no longer be able to search the web from the chat. This takes effect immediately for all users.
+                        </p>
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => setShowWebSearchConfirm(false)}
+                                className="flex-1 py-2.5 rounded-xl border border-border text-foreground font-semibold text-sm hover:bg-muted transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={() => {
+                                    handleWebSearchToggle(false);
+                                    setShowWebSearchConfirm(false);
+                                }}
+                                className="flex-1 py-2.5 rounded-xl bg-red-500 hover:bg-red-600 text-white font-semibold text-sm transition-colors"
+                            >
+                                Disable
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

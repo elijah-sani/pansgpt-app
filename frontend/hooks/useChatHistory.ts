@@ -13,39 +13,60 @@ export interface Message {
     content: string;
     image_data?: string;
     images?: string[];
+    citations?: Array<{ title?: string; course?: string; lecturer?: string }>;
 }
 
 export const useChatHistory = () => {
     const [sessions, setSessions] = useState<ChatSession[]>([]);
     const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+    const [hasLoadedHistory, setHasLoadedHistory] = useState(false);
 
-    const fetchHistory = useCallback(async (contextId?: string) => {
+    const fetchHistory = useCallback(async (contextId?: string, force = false) => {
+        if (hasLoadedHistory && !contextId && !force) {
+            return;
+        }
         setIsLoadingHistory(true);
         try {
             const endpoint = contextId
                 ? `/history?context_id=${contextId}`
-                : `/history`;
+                : `/history?is_main=true`;
 
             const res = await api.fetch(endpoint);
             if (res.ok) {
                 const data = await res.json();
                 setSessions(data);
+                if (!contextId) {
+                    setHasLoadedHistory(true);
+                }
             }
         } catch (error) {
             console.error("Failed to fetch history:", error);
         } finally {
             setIsLoadingHistory(false);
         }
-    }, []);
+    }, [hasLoadedHistory]);
 
-    const loadSession = useCallback(async (id: string): Promise<Message[]> => {
+    const loadSession = useCallback(async (id: string, limit?: number): Promise<Message[]> => {
         try {
-            const res = await api.fetch(`/history/${id}`);
+            const params = limit ? `?limit=${limit}` : '';
+            const res = await api.fetch(`/history/${id}${params}`);
             if (res.ok) {
                 return await res.json();
             }
         } catch (error) {
             console.error("Failed to load session:", error);
+        }
+        return [];
+    }, []);
+
+    const loadOlderMessages = useCallback(async (id: string, beforeTimestamp: string, limit: number = 30): Promise<Message[]> => {
+        try {
+            const res = await api.fetch(`/history/${id}?limit=${limit}&before=${encodeURIComponent(beforeTimestamp)}`);
+            if (res.ok) {
+                return await res.json();
+            }
+        } catch (error) {
+            console.error("Failed to load older messages:", error);
         }
         return [];
     }, []);
@@ -78,6 +99,7 @@ export const useChatHistory = () => {
             const res = await api.delete('/history');
             if (res.ok) {
                 setSessions([]);
+                setHasLoadedHistory(true);
             }
         } catch (error) {
             console.error("Failed to clear history:", error);
@@ -91,7 +113,7 @@ export const useChatHistory = () => {
     const deleteSession = useCallback(async (sessionId: string) => {
         setDeletingId(sessionId);
         try {
-            const res = await api.delete(`/session/${sessionId}`);
+            const res = await api.delete(`/history/${sessionId}`);
             if (res.ok) {
                 setSessions(prev => prev.filter(s => s.id !== sessionId));
             } else {
@@ -106,14 +128,24 @@ export const useChatHistory = () => {
         }
     }, []);
 
+    const updateSessionTitle = useCallback((sessionId: string, newTitle: string) => {
+        setSessions(prev => prev.map(s =>
+            s.id === sessionId ? { ...s, title: newTitle } : s
+        ));
+    }, []);
+
     return {
         sessions,
+        setSessions,
         isLoadingHistory,
+        hasLoadedHistory,
         fetchHistory,
         loadSession,
+        loadOlderMessages,
         createSession,
         clearHistory,
         deleteSession,
-        deletingId
+        deletingId,
+        updateSessionTitle
     };
 };
