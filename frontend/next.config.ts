@@ -18,6 +18,7 @@ const withPWAConfig = withPWA({
 });
 
 const nextConfig: NextConfig = {
+  turbopack: {},
   typescript: {
     ignoreBuildErrors: false,
   },

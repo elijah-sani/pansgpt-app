@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { Loader2, Pencil, Trash2, X } from "lucide-react";
 import AppSidebar from "@/components/AppSidebar";
 import PersonalInformationModal from "@/components/PersonalInformationModal";
+import PWAInstallBanner from "@/components/PWAInstallBanner";
 import ReportProblemModal from "@/components/ReportProblemModal";
 import SearchChatsModal from "@/components/SearchChatsModal";
 import SettingsModal from "@/components/SettingsModal";
@@ -342,6 +343,7 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                 isOpen={isReportProblemOpen}
                 onClose={() => setIsReportProblemOpen(false)}
             />
+            <PWAInstallBanner />
         </SidebarTriggerContext.Provider>
     );
 }

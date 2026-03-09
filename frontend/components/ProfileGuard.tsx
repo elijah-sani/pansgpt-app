@@ -57,6 +57,15 @@ function isProfileComplete(profile: ProfileResponse | null): boolean {
     return Boolean(fullName && university && level);
 }
 
+function isGuardUserComplete(user: GuardUser): boolean {
+    const fullName = (user.name || '').trim()
+        || [user.firstName, user.otherNames].filter(Boolean).join(' ').trim();
+    const university = (user.university || '').trim();
+    const level = (user.level || '').trim();
+
+    return Boolean(fullName && university && level);
+}
+
 function buildGuardUser(profile: ProfileResponse | null, metadata: Record<string, unknown> | undefined): GuardUser {
     const readString = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
 
@@ -117,7 +126,8 @@ export default function ProfileGuard({ children }: { children: React.ReactNode }
 
                 const profile = (await response.json()) as ProfileResponse | null;
                 const nextUser = buildGuardUser(profile, session.user.user_metadata);
-                const complete = isProfileComplete(profile);
+                // Treat signup metadata as sufficient on first login while the profile row catches up.
+                const complete = isProfileComplete(profile) || isGuardUserComplete(nextUser);
 
                 if (!cancelled) {
                     setGuardUser(nextUser);
