@@ -113,7 +113,7 @@ export function useAuthPage() {
       }
 
       router.push('/main');
-      router.refresh();
+
     } catch (error: unknown) {
       setMessage({
         type: 'error',
