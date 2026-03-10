@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
+import { supabase } from '@/lib/supabase';
 import { Search, Plus, Shield, Trash2, Check, X, Mail, Lock, ShieldAlert } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { api } from '@/lib/api';
@@ -24,11 +24,6 @@ export default function UsersPage() {
 
     // Permission State
     const [currentUserRole, setCurrentUserRole] = useState<'admin' | 'super_admin' | null>(null);
-
-    const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
 
     const fetchCurrentUserRole = useCallback(async () => {
         const response = await api.get('/me/bootstrap');

@@ -3,16 +3,12 @@
 import React, { useState, useEffect } from 'react';
 import { LayoutDashboard, Library, Users, Settings, ArrowRight, MessageSquareWarning, GraduationCap, CalendarDays } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
+import { supabase } from '@/lib/supabase';
 import { api } from '@/lib/api';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
-    const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
     const router = useRouter();
     const pathname = usePathname();
     const [userEmail, setUserEmail] = useState<string | null>(null);

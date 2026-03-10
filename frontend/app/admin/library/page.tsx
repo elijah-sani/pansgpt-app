@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
+import { supabase } from '@/lib/supabase';
 import { SystemStatusBadge } from '../../../components/SystemStatusBadge';
 import { api } from '@/lib/api';
 
@@ -74,12 +74,6 @@ export default function LibraryPage() {
 
     const LEVEL_OPTIONS = ['All', '100', '200', '300', '400', '500'];
     const SORT_OPTIONS = ['Newest', 'Oldest'];
-
-    // Auth is handled in layout.tsx, but we still need client for fetching
-    const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
 
     // We can get user from session here if needed for upload attribution, 
     // or pass it down via context. For now, let's fetch session quickly to get email.
