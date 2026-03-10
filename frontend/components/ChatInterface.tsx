@@ -446,7 +446,7 @@ export default function ChatInterface({
                                                     <textarea
                                                         value={editDraft}
                                                         onChange={(e) => setEditDraft(e.target.value)}
-                                                        className="w-full bg-muted border border-border rounded-xl px-4 py-3 text-[15px] leading-relaxed text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none min-h-[80px]"
+                                                        className="w-full bg-muted border border-border rounded-xl px-4 py-3 text-base md:text-[15px] leading-relaxed text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none min-h-[80px]"
                                                         autoFocus
                                                     />
                                                     <div className="flex gap-2 justify-end">

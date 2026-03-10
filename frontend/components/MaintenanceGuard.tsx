@@ -2,22 +2,17 @@
 
 import React, { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
 import MaintenanceScreen from './MaintenanceScreen';
 import { useSystemStatus } from '@/hooks/useSystemStatus';
 import { Loader2 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { supabase } from '@/lib/supabase';
 
 export default function MaintenanceGuard({ children }: { children: React.ReactNode }) {
     const pathname = usePathname();
     const { maintenanceMode, loading: statusLoading } = useSystemStatus();
     const [isAdmin, setIsAdmin] = useState(false);
     const [authLoading, setAuthLoading] = useState(true);
-
-    const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
 
     // Initial Auth Check
     useEffect(() => {

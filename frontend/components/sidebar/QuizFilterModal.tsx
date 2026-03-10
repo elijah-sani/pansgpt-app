@@ -58,7 +58,7 @@ export function QuizFilterModal({
             value={draftFilters.courseCode}
             onChange={(event) => setDraftFilters((previous) => ({ ...previous, courseCode: event.target.value }))}
             placeholder="e.g. CSC 301"
-            className="w-full px-3 py-2.5 text-sm bg-background border border-border rounded-xl text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 transition-all"
+            className="w-full px-3 py-2.5 text-base md:text-sm bg-background border border-border rounded-xl text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 transition-all"
           />
         </div>
 

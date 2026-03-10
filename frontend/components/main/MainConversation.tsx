@@ -272,7 +272,7 @@ export function MainConversation({
                               <textarea
                                 value={editDraft}
                                 onChange={(event) => setEditDraft(event.target.value)}
-                                className="w-full bg-accent border border-border rounded-xl px-4 py-3 text-[15px] leading-relaxed text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none min-h-[80px]"
+                                className="w-full bg-accent border border-border rounded-xl px-4 py-3 text-base md:text-[15px] leading-relaxed text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none min-h-[80px]"
                                 autoFocus
                               />
                               <div className="flex gap-2 justify-end">

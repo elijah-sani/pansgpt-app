@@ -267,7 +267,7 @@ export default function QuizSelectionForm() {
               required
               value={formData.courseCode}
               onChange={(e) => handleCourseSelect(e.target.value)}
-              className="w-full border rounded-xl px-4 py-3 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-white/50 focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] focus:border-transparent transition-all duration-200 bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
+              className="w-full border rounded-xl px-4 py-3 text-base md:text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-white/50 focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] focus:border-transparent transition-all duration-200 bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
             >
               <option value="" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">Choose a course</option>
               {courses.map((course) => (
@@ -291,7 +291,7 @@ export default function QuizSelectionForm() {
               <div className="relative">
                 <div className="flex w-full items-center justify-between border rounded-xl px-4 py-3 bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20 focus-within:ring-2 focus-within:ring-green-600 dark:focus-within:ring-[#00A400] transition-all duration-200">
                   <Combobox.Input
-                    className="w-full bg-transparent border-none p-0 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-white/50 focus:ring-0 outline-none"
+                    className="w-full bg-transparent border-none p-0 text-base md:text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-white/50 focus:ring-0 outline-none"
                     displayValue={(topic: string) => topic}
                     onChange={e => {
                       setFormData(prev => ({ ...prev, topic: e.target.value || "" }));
@@ -360,7 +360,7 @@ export default function QuizSelectionForm() {
               required
               value={formData.level}
               onChange={handleInputChange}
-              className="w-full border rounded-xl px-4 py-3 text-gray-900 dark:text-white focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] focus:border-transparent transition-all duration-200 bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
+              className="w-full border rounded-xl px-4 py-3 text-base md:text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] focus:border-transparent transition-all duration-200 bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
             >
               <option value="" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">Select level</option>
               <option value="100" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">100</option>
@@ -384,7 +384,7 @@ export default function QuizSelectionForm() {
               required
               value={formData.numQuestions}
               onChange={handleInputChange}
-              className="w-full border rounded-xl px-4 py-3 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-white/50 focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] focus:border-transparent transition-all duration-200 bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
+              className="w-full border rounded-xl px-4 py-3 text-base md:text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-white/50 focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] focus:border-transparent transition-all duration-200 bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
             >
               <option value={5} className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">5 Questions</option>
               <option value={10} className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">10 Questions</option>
@@ -406,7 +406,7 @@ export default function QuizSelectionForm() {
               required
               value={formData.questionType}
               onChange={handleInputChange}
-              className="w-full border rounded-xl px-4 py-3 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-white/50 focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] focus:border-transparent transition-all duration-200 bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
+              className="w-full border rounded-xl px-4 py-3 text-base md:text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-white/50 focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] focus:border-transparent transition-all duration-200 bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
             >
               <option value="OBJECTIVE" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">Objective Questions</option>
               <option value="MCQ" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">Multiple Choice Questions</option>
@@ -427,7 +427,7 @@ export default function QuizSelectionForm() {
               required
               value={formData.difficulty}
               onChange={handleInputChange}
-              className="w-full border rounded-xl px-4 py-3 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-white/50 focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] focus:border-transparent transition-all duration-200 bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
+              className="w-full border rounded-xl px-4 py-3 text-base md:text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-white/50 focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] focus:border-transparent transition-all duration-200 bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
             >
               <option value="easy" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">Easy</option>
               <option value="medium" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">Medium</option>
@@ -446,7 +446,7 @@ export default function QuizSelectionForm() {
               name="timeLimit"
               value={formData.timeLimit || ''}
               onChange={handleInputChange}
-              className="w-full border rounded-xl px-4 py-3 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-white/50 focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] focus:border-transparent transition-all duration-200 bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
+              className="w-full border rounded-xl px-4 py-3 text-base md:text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-white/50 focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] focus:border-transparent transition-all duration-200 bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
             >
               <option value="" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">No time limit</option>
               <option value={5} className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">5 minutes</option>

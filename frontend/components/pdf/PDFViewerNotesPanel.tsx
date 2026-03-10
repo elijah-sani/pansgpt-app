@@ -219,7 +219,7 @@ export function PDFViewerNotesPanel({
                         onChange={(event) => onEditingTextChange(event.target.value)}
                         rows={4}
                         autoFocus
-                        className="w-full resize-none rounded-lg border border-primary/30 bg-background text-xs text-foreground p-2 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
+                        className="w-full resize-none rounded-lg border border-primary/30 bg-background text-base md:text-xs text-foreground p-2 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
                       />
                       <div className="flex items-center gap-1.5">
                         <button
@@ -278,7 +278,7 @@ export function PDFViewerNotesPanel({
             onKeyDown={handlePersonalNoteKeyDown}
             placeholder="Write your own note… (Ctrl+Enter to save)"
             rows={3}
-            className="w-full resize-none rounded-lg border border-border bg-background text-xs text-foreground placeholder:text-muted-foreground/60 p-2.5 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
+            className="w-full resize-none rounded-lg border border-border bg-background text-base md:text-xs text-foreground placeholder:text-muted-foreground/60 p-2.5 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
           />
           <button
             onClick={() => void onSavePersonalNote()}

@@ -253,7 +253,7 @@ export default function QuizHistory() {
               value={filters.courseCode}
               onChange={(e) => handleFilterChange('courseCode', e.target.value)}
               placeholder="Filter by course code"
-              className="w-full px-3 py-2 border rounded-md text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
+              className="w-full px-3 py-2 border rounded-md text-base md:text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
             />
           </div>
           <div>
@@ -263,7 +263,7 @@ export default function QuizHistory() {
             <select
               value={filters.level}
               onChange={(e) => handleFilterChange('level', e.target.value)}
-              className="w-full px-3 py-2 border rounded-md text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
+              className="w-full px-3 py-2 border rounded-md text-base md:text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
             >
               <option value="" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">All Levels</option>
               <option value="100" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">100</option>

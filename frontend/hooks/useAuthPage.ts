@@ -1,10 +1,10 @@
 'use client';
 
-import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { TAGLINES } from '@/components/auth/authConstants';
 import type { AuthMessage, AuthView, SignupFormData } from '@/components/auth/types';
+import { supabase } from '@/lib/supabase';
 
 const INITIAL_FORM_DATA: SignupFormData = {
   firstName: '',
@@ -34,14 +34,6 @@ function getFriendlyAuthError(error: unknown, fallback: string) {
 }
 
 export function useAuthPage() {
-  const supabase = useMemo(
-    () =>
-      createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      ),
-    []
-  );
   const router = useRouter();
 
   const [view, setView] = useState<AuthView>('login');

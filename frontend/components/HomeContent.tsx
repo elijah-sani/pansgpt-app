@@ -4,12 +4,12 @@ import { useEffect, useState, useMemo } from 'react';
 import { BookOpen, ChevronRight, File, Library, FolderOpen, ArrowLeft, User, LogOut, LogIn, LayoutDashboard, PanelLeft } from 'lucide-react';
 import Link from 'next/link';
 import { ThemeToggle } from '@/components/ThemeToggle';
-import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
 import { User as SupabaseUser } from '@supabase/supabase-js';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useSidebarTrigger } from '@/app/(app)/layout';
 
 import { api } from '@/lib/api';
+import { supabase } from '@/lib/supabase';
 import { useReaderCache, type ReaderDocument } from '@/lib/ReaderCacheContext';
 
 interface PDFDocument {
@@ -48,11 +48,6 @@ export default function HomeContent() {
     const [user, setUser] = useState<SupabaseUser | null>(null);
     const [isAdmin, setIsAdmin] = useState(false);
     const [authLoading, setAuthLoading] = useState(true);
-
-    const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
 
     useEffect(() => {
         // Check System Status

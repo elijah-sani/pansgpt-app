@@ -103,7 +103,7 @@ export default function FeedbackModal({ isOpen, onClose, rating, onSubmit }: Fee
                         value={feedbackText}
                         onChange={(e) => setFeedbackText(e.target.value)}
                         placeholder="Tell us more..."
-                        className="w-full h-24 px-3 py-2 bg-background border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm resize-none placeholder:text-muted-foreground/50"
+                        className="w-full h-24 px-3 py-2 bg-background border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary/50 text-base md:text-sm resize-none placeholder:text-muted-foreground/50"
                     />
                 </div>
             </div>

@@ -1,9 +1,9 @@
 'use client';
 import React, { useState, useEffect } from 'react';
 import { X, AlertCircle, Loader2, Check } from 'lucide-react';
-import { createBrowserClient } from '@supabase/auth-helpers-nextjs';
 import MobileBottomSheet from '@/components/MobileBottomSheet';
 import { api } from '@/lib/api';
+import { supabase } from '@/lib/supabase';
 
 interface ReportProblemModalProps {
     isOpen: boolean;
@@ -78,7 +78,7 @@ export default function ReportProblemModal({ isOpen, onClose }: ReportProblemMod
                         value={description}
                         onChange={(e) => setDescription(e.target.value)}
                         placeholder="Please provide details so we can fix it..."
-                        className="h-32 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/40"
+                        className="h-32 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-base md:text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/40"
                     />
                 </div>
             </div>
@@ -127,13 +127,7 @@ export default function ReportProblemModal({ isOpen, onClose }: ReportProblemMod
 
         setIsSubmitting(true);
         try {
-            // 1. Initialize Supabase client
-            const supabase = createBrowserClient(
-                process.env.NEXT_PUBLIC_SUPABASE_URL!,
-                process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-            );
-
-            // 2. Await the current session/user
+            // 1. Await the current session/user from the shared browser client
             const { data: { session }, error: sessionError } = await supabase.auth.getSession();
             const userId = session?.user?.id;
 

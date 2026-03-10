@@ -243,7 +243,7 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
                             type="text"
                             value={formData.firstName}
                             onChange={(e) => updateField('firstName', e.target.value)}
-                            className="w-full px-3 py-2.5 rounded-xl border border-border bg-background text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/30 transition-all"
+                            className="w-full px-3 py-2.5 rounded-xl border border-border bg-background text-base md:text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/30 transition-all"
                         />
                     ) : (
                         <div className="w-full px-3 py-2.5 rounded-xl border border-border bg-muted/40 text-sm text-foreground">
@@ -259,7 +259,7 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
                             type="text"
                             value={formData.otherNames}
                             onChange={(e) => updateField('otherNames', e.target.value)}
-                            className="w-full px-3 py-2.5 rounded-xl border border-border bg-background text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/30 transition-all"
+                            className="w-full px-3 py-2.5 rounded-xl border border-border bg-background text-base md:text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/30 transition-all"
                         />
                     ) : (
                         <div className="w-full px-3 py-2.5 rounded-xl border border-border bg-muted/40 text-sm text-foreground">
@@ -274,7 +274,7 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
                         <select
                             value={formData.university}
                             onChange={(e) => updateField('university', e.target.value)}
-                            className="w-full px-3 py-2.5 rounded-xl border border-border bg-background text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/30 transition-all"
+                            className="w-full px-3 py-2.5 rounded-xl border border-border bg-background text-base md:text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/30 transition-all"
                         >
                             <option value="">Select your university</option>
                             {universityOptions.map((u) => (
@@ -294,7 +294,7 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
                         <select
                             value={formData.level}
                             onChange={(e) => updateField('level', e.target.value)}
-                            className="w-full px-3 py-2.5 rounded-xl border border-border bg-background text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/30 transition-all"
+                            className="w-full px-3 py-2.5 rounded-xl border border-border bg-background text-base md:text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/30 transition-all"
                         >
                             {levelOptions.map((level) => (
                                 <option key={level} value={level}>

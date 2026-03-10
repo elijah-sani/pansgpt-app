@@ -287,7 +287,7 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                                 if (e.key === "Escape") { setRenamingChatId(null); setRenameDraft(""); }
                             }}
                             autoFocus
-                            className="w-full px-3 py-2.5 rounded-xl border border-border bg-background text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/30 transition-all mb-4"
+                            className="w-full px-3 py-2.5 rounded-xl border border-border bg-background text-base md:text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/30 transition-all mb-4"
                             placeholder="Chat name..."
                         />
                         <div className="flex gap-3">

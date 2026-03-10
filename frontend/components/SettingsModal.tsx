@@ -535,7 +535,7 @@ export default function SettingsModal({
                 value={deleteConfirmText}
                 onChange={(event) => setDeleteConfirmText(event.target.value)}
                 placeholder="Type DELETE"
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition-colors focus:border-destructive/40 focus:ring-2 focus:ring-destructive/10"
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-base md:text-sm text-foreground outline-none transition-colors focus:border-destructive/40 focus:ring-2 focus:ring-destructive/10"
                 autoFocus
               />
               {actionError ? <p className="text-sm text-destructive">{actionError}</p> : null}
