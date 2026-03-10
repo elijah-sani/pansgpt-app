@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { AnimatePresence, motion } from "framer-motion";
-import { X } from "lucide-react";
+import { Share, X } from "lucide-react";
 
 declare global {
   interface BeforeInstallPromptEvent extends Event {
@@ -17,29 +17,45 @@ declare global {
 
 const DISMISS_KEY = "pwa-banner-dismissed";
 
+type InstallMode = "native" | "ios" | null;
+
+function isIOSDevice(userAgent: string) {
+  return /iphone|ipad|ipod/i.test(userAgent);
+}
+
+function isSafariBrowser(userAgent: string) {
+  return /safari/i.test(userAgent) && !/crios|fxios|edgios|opr\//i.test(userAgent);
+}
+
 export default function PWAInstallBanner() {
   const deferredPromptRef = useRef<BeforeInstallPromptEvent | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isVisible, setIsVisible] = useState(false);
   const [isInstalling, setIsInstalling] = useState(false);
+  const [installMode, setInstallMode] = useState<InstallMode>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
 
-    const isStandalone = window.matchMedia("(display-mode: standalone)").matches;
+    const isStandalone =
+      window.matchMedia("(display-mode: standalone)").matches ||
+      (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
     const wasDismissed = window.localStorage.getItem(DISMISS_KEY) === "true";
+    const userAgent = window.navigator.userAgent;
+    const shouldShowIOSInstructions = isIOSDevice(userAgent) && isSafariBrowser(userAgent);
 
     if (isStandalone || wasDismissed) {
       return;
     }
 
-    const showBanner = () => {
+    const showBanner = (mode: Exclude<InstallMode, null>) => {
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
       }
       timeoutRef.current = setTimeout(() => {
+        setInstallMode(mode);
         setIsVisible(true);
       }, 4000);
     };
@@ -47,14 +63,19 @@ export default function PWAInstallBanner() {
     const handleBeforeInstallPrompt = (event: Event) => {
       event.preventDefault();
       deferredPromptRef.current = event as BeforeInstallPromptEvent;
-      showBanner();
+      showBanner("native");
     };
 
     const handleAppInstalled = () => {
       window.localStorage.setItem(DISMISS_KEY, "true");
       deferredPromptRef.current = null;
+      setInstallMode(null);
       setIsVisible(false);
     };
+
+    if (shouldShowIOSInstructions) {
+      showBanner("ios");
+    }
 
     window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
     window.addEventListener("appinstalled", handleAppInstalled);
@@ -73,6 +94,7 @@ export default function PWAInstallBanner() {
       window.localStorage.setItem(DISMISS_KEY, "true");
     }
     deferredPromptRef.current = null;
+    setInstallMode(null);
     setIsVisible(false);
   };
 
@@ -87,10 +109,9 @@ export default function PWAInstallBanner() {
       await promptEvent.prompt();
       const { outcome } = await promptEvent.userChoice;
 
-      if (outcome === "accepted") {
-        if (typeof window !== "undefined") {
-          window.localStorage.setItem(DISMISS_KEY, "true");
-        }
+      if (outcome === "accepted" && typeof window !== "undefined") {
+        window.localStorage.setItem(DISMISS_KEY, "true");
+        setInstallMode(null);
         setIsVisible(false);
       }
     } finally {
@@ -99,12 +120,22 @@ export default function PWAInstallBanner() {
     }
   };
 
+  const isIOSMode = installMode === "ios";
+  const mobileSubtitle = isIOSMode
+    ? "Tap Share, then Add to Home Screen."
+    : "Study smarter. Anywhere, anytime.";
+  const desktopSubtitle = isIOSMode
+    ? "Open Safari's Share menu, then tap Add to Home Screen for the full app experience."
+    : "Get the full app experience - study offline, get reminders, launch instantly.";
+  const mobileButtonLabel = isIOSMode ? "Got it" : isInstalling ? "Installing..." : "Install";
+  const desktopButtonLabel = isIOSMode ? "Got it" : isInstalling ? "Installing..." : "Install App";
+
   return (
     <AnimatePresence>
-      {isVisible && deferredPromptRef.current ? (
+      {isVisible && installMode ? (
         <>
           <motion.div
-            key="pwa-install-mobile"
+            key={`pwa-install-mobile-${installMode}`}
             initial={{ y: 100 }}
             animate={{ y: 0 }}
             exit={{ y: 100 }}
@@ -117,16 +148,31 @@ export default function PWAInstallBanner() {
               </div>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-white">Install PansGPT</p>
-                <p className="truncate text-xs text-white/65">Study smarter. Anywhere, anytime.</p>
+                <p className="truncate text-xs text-white/65">{mobileSubtitle}</p>
               </div>
-              <button
-                type="button"
-                onClick={() => void handleInstall()}
-                disabled={isInstalling}
-                className="shrink-0 rounded-full bg-[var(--primary)] px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isInstalling ? "Installing..." : "Install"}
-              </button>
+              {isIOSMode ? (
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/8 text-white/85">
+                    <Share className="h-4 w-4" />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={dismissBanner}
+                    className="shrink-0 rounded-full bg-[var(--primary)] px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+                  >
+                    {mobileButtonLabel}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void handleInstall()}
+                  disabled={isInstalling}
+                  className="shrink-0 rounded-full bg-[var(--primary)] px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {mobileButtonLabel}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={dismissBanner}
@@ -139,7 +185,7 @@ export default function PWAInstallBanner() {
           </motion.div>
 
           <motion.div
-            key="pwa-install-desktop"
+            key={`pwa-install-desktop-${installMode}`}
             initial={{ x: 100, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: 100, opacity: 0 }}
@@ -162,26 +208,31 @@ export default function PWAInstallBanner() {
 
             <div className="space-y-2">
               <h3 className="text-lg font-semibold text-white">Install PansGPT</h3>
-              <p className="text-sm leading-6 text-white/70">
-                Get the full app experience - study offline, get reminders, launch instantly.
-              </p>
+              <p className="text-sm leading-6 text-white/70">{desktopSubtitle}</p>
             </div>
 
             <div className="mt-5 space-y-3">
-              <button
-                type="button"
-                onClick={() => void handleInstall()}
-                disabled={isInstalling}
-                className="w-full rounded-2xl bg-[var(--primary)] px-4 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isInstalling ? "Installing..." : "Install App"}
-              </button>
+              {isIOSMode ? (
+                <div className="flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white/85">
+                  <Share className="h-4 w-4" />
+                  Tap Share, then Add to Home Screen
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void handleInstall()}
+                  disabled={isInstalling}
+                  className="w-full rounded-2xl bg-[var(--primary)] px-4 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {desktopButtonLabel}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={dismissBanner}
                 className="w-full text-center text-sm font-medium text-white/55 transition-colors hover:text-white/80"
               >
-                Not now
+                {isIOSMode ? "Got it" : "Not now"}
               </button>
             </div>
           </motion.div>

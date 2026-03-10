@@ -1,5 +1,4 @@
 import { createClient, type SupportedStorage, type SupabaseClient } from '@supabase/supabase-js';
-import { get, set, del } from 'idb-keyval';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -9,37 +8,24 @@ let supabaseInstance: SupabaseClient;
 type GlobalWithSupabase = typeof globalThis & { supabase?: SupabaseClient };
 const globalWithSupabase = globalThis as GlobalWithSupabase;
 
-// IndexedDB-backed storage via idb-keyval.
-// Far more persistent than localStorage on mobile PWA —
-// browsers (especially Safari iOS) aggressively evict localStorage
-// for home-screen apps, causing session loss on reopen.
-// idb-keyval survives app backgrounding, restarts, and low-memory eviction.
-const idbStorage: SupportedStorage = {
-  getItem: async (key) => {
+// Synchronous localStorage-backed storage.
+// IDB (IndexedDB) was tried but its async nature causes getSession() to
+// resolve before the read completes, returning null and triggering
+// incorrect redirects to /login throughout the app.
+// localStorage is synchronous, always returns the session immediately,
+// and persists fine on modern mobile PWA (iOS 16.4+, Android Chrome).
+const browserStorage: SupportedStorage = {
+  getItem: (key) => {
     if (typeof window === 'undefined') return null;
-    try {
-      const value = await get<string>(key);
-      return value ?? null;
-    } catch {
-      // Fallback to localStorage if IndexedDB is unavailable
-      return window.localStorage.getItem(key);
-    }
+    return window.localStorage.getItem(key);
   },
-  setItem: async (key, value) => {
+  setItem: (key, value) => {
     if (typeof window === 'undefined') return;
-    try {
-      await set(key, value);
-    } catch {
-      window.localStorage.setItem(key, value);
-    }
+    window.localStorage.setItem(key, value);
   },
-  removeItem: async (key) => {
+  removeItem: (key) => {
     if (typeof window === 'undefined') return;
-    try {
-      await del(key);
-    } catch {
-      window.localStorage.removeItem(key);
-    }
+    window.localStorage.removeItem(key);
   },
 };
 
@@ -50,7 +36,7 @@ function createSupabaseBrowserClient() {
       persistSession: true,
       detectSessionInUrl: true,
       storageKey: STORAGE_KEY,
-      storage: idbStorage,
+      storage: browserStorage,
     },
   });
 }
