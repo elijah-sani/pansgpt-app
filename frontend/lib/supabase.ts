@@ -1,4 +1,5 @@
 import { createClient, type SupportedStorage, type SupabaseClient } from '@supabase/supabase-js';
+import { get, set, del } from 'idb-keyval';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -8,18 +9,37 @@ let supabaseInstance: SupabaseClient;
 type GlobalWithSupabase = typeof globalThis & { supabase?: SupabaseClient };
 const globalWithSupabase = globalThis as GlobalWithSupabase;
 
-const browserStorage: SupportedStorage = {
-  getItem: (key) => {
+// IndexedDB-backed storage via idb-keyval.
+// Far more persistent than localStorage on mobile PWA —
+// browsers (especially Safari iOS) aggressively evict localStorage
+// for home-screen apps, causing session loss on reopen.
+// idb-keyval survives app backgrounding, restarts, and low-memory eviction.
+const idbStorage: SupportedStorage = {
+  getItem: async (key) => {
     if (typeof window === 'undefined') return null;
-    return window.localStorage.getItem(key);
+    try {
+      const value = await get<string>(key);
+      return value ?? null;
+    } catch {
+      // Fallback to localStorage if IndexedDB is unavailable
+      return window.localStorage.getItem(key);
+    }
   },
-  setItem: (key, value) => {
+  setItem: async (key, value) => {
     if (typeof window === 'undefined') return;
-    window.localStorage.setItem(key, value);
+    try {
+      await set(key, value);
+    } catch {
+      window.localStorage.setItem(key, value);
+    }
   },
-  removeItem: (key) => {
+  removeItem: async (key) => {
     if (typeof window === 'undefined') return;
-    window.localStorage.removeItem(key);
+    try {
+      await del(key);
+    } catch {
+      window.localStorage.removeItem(key);
+    }
   },
 };
 
@@ -30,7 +50,7 @@ function createSupabaseBrowserClient() {
       persistSession: true,
       detectSessionInUrl: true,
       storageKey: STORAGE_KEY,
-      storage: browserStorage,
+      storage: idbStorage,
     },
   });
 }
@@ -48,7 +68,7 @@ if (supabaseUrl && supabaseKey) {
   supabaseInstance = {
     auth: {
       getSession: async () => ({ data: { session: null }, error: null }),
-      onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
+      onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => { } } } }),
       signOut: async () => ({ error: null }),
       signInWithPassword: async () => ({ data: { session: null, user: null }, error: null }),
       signUp: async () => ({ data: { session: null, user: null }, error: null }),
