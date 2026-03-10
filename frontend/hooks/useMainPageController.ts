@@ -571,21 +571,36 @@ export function useMainPageController() {
     }
   }, [activeSessionId, isLoadingOlder, loadOlderMessages, messages]);
 
-  const extractApiErrorMessage = (errorBody: unknown, fallback: string): string => {
+  const friendlyErrorMessage = (status: number): string => {
+    switch (status) {
+      case 401: return "Your session has expired. Please log in again.";
+      case 403: return "You don't have permission to do that.";
+      case 429: return "You're sending messages too fast. Please wait a moment.";
+      case 500: return "Something went wrong on our end. Please try again.";
+      case 503: return "The service is temporarily unavailable. Please try again shortly.";
+      default: return "Something went wrong. Please try again.";
+    }
+  };
+
+  const extractApiErrorMessage = (errorBody: unknown, fallback: string, status?: number): string => {
+    // For auth/server errors, always show a friendly message — never expose raw backend strings
+    if (status && [401, 403, 500, 503].includes(status)) {
+      return friendlyErrorMessage(status);
+    }
     if (!errorBody || typeof errorBody !== 'object') {
-      return fallback;
+      return status ? friendlyErrorMessage(status) : fallback;
     }
     const payload = errorBody as Record<string, unknown>;
-    if (typeof payload.detail === 'string' && payload.detail.trim().length > 0) {
-      return payload.detail;
+    // Only surface backend message for user-actionable errors (4xx except auth)
+    if (status && status >= 400 && status < 500 && status !== 401 && status !== 403) {
+      if (typeof payload.detail === 'string' && payload.detail.trim().length > 0) {
+        return payload.detail;
+      }
+      if (typeof payload.message === 'string' && payload.message.trim().length > 0) {
+        return payload.message;
+      }
     }
-    if (typeof payload.message === 'string' && payload.message.trim().length > 0) {
-      return payload.message;
-    }
-    if (typeof payload.error === 'string' && payload.error.trim().length > 0) {
-      return payload.error;
-    }
-    return fallback;
+    return status ? friendlyErrorMessage(status) : fallback;
   };
 
   const sendMessageApi = useCallback(
@@ -678,10 +693,11 @@ export function useMainPageController() {
         });
 
         if (!response.ok) {
-          let detail = `API error: ${response.status}`;
+          const status = response.status;
+          let detail = friendlyErrorMessage(status);
           try {
             const errorData = await response.json();
-            detail = extractApiErrorMessage(errorData, detail);
+            detail = extractApiErrorMessage(errorData, detail, status);
           } catch { }
           throw new Error(detail);
         }
@@ -726,7 +742,7 @@ export function useMainPageController() {
           console.error('Chat Error:', error);
           setMessages((previous) => previous.filter((message) => String(message.id) !== tempAssistantId));
           setIsError(true);
-          setChatError(error instanceof Error ? error.message : 'Network Error: Please try again.');
+          setChatError(error instanceof Error && error.message.length < 120 ? error.message : 'Something went wrong. Please try again.');
           lastFailedRequestRef.current = { type: 'send', text, attachments, isRetry };
         }
       } finally {
@@ -863,7 +879,7 @@ export function useMainPageController() {
           console.error('Edit Error:', error);
           setMessages((previous) => previous.filter((message) => String(message.id) !== tempAssistantId));
           setIsError(true);
-          setChatError(error instanceof Error ? error.message : 'Edit failed. Please try again.');
+          setChatError(error instanceof Error && error.message.length < 120 ? error.message : 'Something went wrong. Please try again.');
           lastFailedRequestRef.current = { type: 'edit', messageId: String(messageId), newText };
         }
       } finally {
@@ -934,7 +950,7 @@ export function useMainPageController() {
         console.error('Regenerate failed:', error);
         setMessages((previous) => previous.filter((message) => String(message.id) !== tempAssistantId));
         setIsError(true);
-        setChatError(error instanceof Error ? error.message : 'Regenerate failed. Please try again.');
+        setChatError(error instanceof Error && error.message.length < 120 ? error.message : 'Something went wrong. Please try again.');
         lastFailedRequestRef.current = { type: 'regenerate' };
       }
     } finally {

@@ -86,6 +86,8 @@ const getImages = (imgData: string | undefined): string[] => {
     }
 };
 
+const MESSAGE_COLLAPSE_WORD_THRESHOLD = 120;
+
 export default function ChatInterface({
     messages,
     isLoading,
@@ -145,6 +147,7 @@ export default function ChatInterface({
     const [editDraft, setEditDraft] = useState("");
     const [copiedMessageKey, setCopiedMessageKey] = useState<string | null>(null);
     const copyResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [expandedMessages, setExpandedMessages] = useState<Set<string>>(new Set());
     const {
         isListening,
         isStarting,
@@ -339,6 +342,18 @@ export default function ChatInterface({
         });
     };
 
+    const toggleExpand = (messageKey: string) => {
+        setExpandedMessages(prev => {
+            const next = new Set(prev);
+            if (next.has(messageKey)) {
+                next.delete(messageKey);
+            } else {
+                next.add(messageKey);
+            }
+            return next;
+        });
+    };
+
     return (
         <div className="flex flex-col h-full w-full bg-background font-sans text-foreground relative">
 
@@ -393,6 +408,9 @@ export default function ChatInterface({
                     ) : (
                         messages.filter(m => m.role !== 'system').map((msg, i) => {
                             const messageKey = msg.id ? String(msg.id) : `index-${i}`;
+                            const wordCount = msg.content?.trim() ? msg.content.trim().split(/\s+/).length : 0;
+                            const isLongUserMessage = msg.role === 'user' && wordCount > MESSAGE_COLLAPSE_WORD_THRESHOLD;
+                            const isExpanded = expandedMessages.has(messageKey);
 
                             return (
                             <div key={i} className={`flex flex-col ${msg.role === 'system' ? 'items-center' : msg.role === 'user' ? 'items-end mb-[5px]' : 'items-start'} max-w-3xl mx-auto w-full group`}>
@@ -479,8 +497,25 @@ export default function ChatInterface({
                                             ) : (
                                                 /* Normal Display Mode */
                                                 <>
-                                                    <div className="max-w-[85%] bg-[#253920] text-white px-5 py-3 rounded-2xl rounded-tr-sm shadow-sm border border-[#253920] text-[15px] leading-relaxed">
-                                                        {msg.content}
+                                                    <div className="max-w-[85%]">
+                                                        <div className="bg-[#253920] text-white px-5 py-3 rounded-2xl rounded-tr-sm shadow-sm border border-[#253920] text-[15px] leading-relaxed">
+                                                            <div className={isLongUserMessage && !isExpanded ? 'line-clamp-5' : ''}>
+                                                                {msg.content}
+                                                            </div>
+                                                        </div>
+                                                        {isLongUserMessage && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => toggleExpand(messageKey)}
+                                                                className="flex items-center gap-1 mt-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                                                            >
+                                                                <ChevronDown
+                                                                    size={14}
+                                                                    className={`transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                                                                />
+                                                                {isExpanded ? 'Show less' : 'Show more'}
+                                                            </button>
+                                                        )}
                                                     </div>
                                                     {/* Edit Button (below bubble) */}
                                                     <div className="mt-1 flex items-center gap-1 text-muted-foreground opacity-100 transition-opacity duration-150 sm:opacity-0 sm:group-hover:opacity-100">

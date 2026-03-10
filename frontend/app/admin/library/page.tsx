@@ -6,7 +6,7 @@ import {
     Search, Filter, Plus, FileText, Trash2, Pencil,
     AlertCircle, Loader2,
     UploadCloud, HardDrive, BookOpen, X, ChevronRight,
-    Sparkles, Clock
+    Sparkles, Clock, RefreshCw
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -65,6 +65,7 @@ export default function LibraryPage() {
     const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
     const [editingDoc, setEditingDoc] = useState<Document | null>(null);
     const [deleteTarget, setDeleteTarget] = useState<Document | null>(null); // Store full doc object
+    const [reembeddingIds, setReembeddingIds] = useState<Set<string>>(new Set());
     const [documents, setDocuments] = useState<Document[]>([]);
     const [isLoadingData, setIsLoadingData] = useState(true);
 
@@ -293,6 +294,31 @@ export default function LibraryPage() {
         }
     };
 
+    const handleReembed = async (doc: Document) => {
+        if (reembeddingIds.has(doc.id)) return;
+        setReembeddingIds(prev => new Set(prev).add(doc.id));
+        setDocuments(prev => prev.map(d => d.id === doc.id
+            ? { ...d, embedding_status: 'processing', embedding_progress: 0, embedding_error: undefined }
+            : d
+        ));
+        try {
+            const response = await api.fetch(`/admin/documents/${doc.id}/reembed`, { method: 'POST' });
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => null);
+                throw new Error(errorData?.detail || 'Reembed failed');
+            }
+        } catch (err) {
+            console.error("Reembed failed:", err);
+            alert('Failed to start re-embedding. Check console.');
+            setDocuments(prev => prev.map(d => d.id === doc.id
+                ? { ...d, embedding_status: 'failed' }
+                : d
+            ));
+        } finally {
+            setReembeddingIds(prev => { const s = new Set(prev); s.delete(doc.id); return s; });
+        }
+    };
+
     if (!userEmail) return null; // Wait for session fetch
 
     return (
@@ -475,19 +501,25 @@ export default function LibraryPage() {
                                         </td>
                                         <td className="px-6 py-4 text-right whitespace-nowrap">
                                             <div className="flex items-center justify-end gap-2">
+                                                {(doc.embedding_status === 'failed' || (doc.embedding_status === 'completed' && doc.embedding_error)) && (
+                                                    <button
+                                                        onClick={() => handleReembed(doc)}
+                                                        disabled={reembeddingIds.has(doc.id)}
+                                                        className="p-2 hover:bg-amber-500/10 hover:text-amber-500 rounded-lg text-muted-foreground transition-colors disabled:opacity-50"
+                                                        title="Retry embedding"
+                                                    >
+                                                        {reembeddingIds.has(doc.id)
+                                                            ? <Loader2 className="w-4 h-4 animate-spin" />
+                                                            : <RefreshCw className="w-4 h-4" />
+                                                        }
+                                                    </button>
+                                                )}
                                                 <button
                                                     onClick={() => setEditingDoc(doc)}
                                                     className="p-2 hover:bg-primary/10 hover:text-primary rounded-lg text-muted-foreground transition-colors"
                                                     title="Quick Edit"
                                                 >
                                                     <Pencil className="w-4 h-4" />
-                                                </button>
-                                                <button
-                                                    onClick={() => setDeleteTarget(doc)}
-                                                    className="p-2 hover:bg-destructive/10 hover:text-destructive rounded-lg text-muted-foreground transition-colors"
-                                                    title="Delete"
-                                                >
-                                                    <Trash2 className="w-4 h-4" />
                                                 </button>
                                             </div>
                                         </td>

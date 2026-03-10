@@ -1,73 +1,80 @@
 import { supabase } from './supabase';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-// Avoid using API_KEY unless specifically requested or for non-auth endpoints if needed, but the user snippet removed it effectively.
-// However, in previous steps I added 'x-api-key'. I should keep it if the backend requires it.
 const API_KEY = process.env.NEXT_PUBLIC_API_KEY || '';
 
 interface FetchOptions extends RequestInit {
     headers?: Record<string, string>;
     signal?: AbortSignal;
+    _isRetry?: boolean; // internal flag to prevent infinite retry loops
+}
+
+async function buildHeaders(options: FetchOptions, token?: string): Promise<Record<string, string>> {
+    const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'x-api-key': API_KEY,
+        ...options.headers,
+    };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (options.body instanceof FormData) delete headers['Content-Type'];
+    return headers;
+}
+
+async function handleExpiredSession(): Promise<void> {
+    console.warn('[API] Session expired — signing out and redirecting to login.');
+    await supabase.auth.signOut();
+    window.location.replace('/login');
 }
 
 export const api = {
-    fetch: async (endpoint: string, options: FetchOptions = {}) => {
-        // 1. Get current session token
+    fetch: async (endpoint: string, options: FetchOptions = {}): Promise<Response> => {
+        // 1. Get current session
         const { data: { session } } = await supabase.auth.getSession();
         const token = session?.access_token;
 
-        // Debugging line
-        console.log(`[API] Fetching ${endpoint} | Has Token: ${!!token}`);
-
-        // 2. Prepare Headers
-        const headers: Record<string, string> = {
-            'Content-Type': 'application/json',
-            'x-api-key': API_KEY, // Keep for comprehensive auth
-            ...options.headers,
-        };
-
-        if (token) {
-            headers['Authorization'] = `Bearer ${token}`;
-        }
-
-        // special handling for FormData
-        if (options.body instanceof FormData) {
-            delete headers['Content-Type']; // Let browser set multipart boundary
-        } else if (options.body && typeof options.body === 'string' && !headers['Content-Type']) {
-            headers['Content-Type'] = 'application/json';
-        }
-
-        // 3. Make Request
+        // 2. Build headers + make request
+        const headers = await buildHeaders(options, token);
         const url = `${API_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
 
-        const response = await fetch(url, {
-            ...options,
-            headers,
-        });
+        const response = await fetch(url, { ...options, headers });
 
-        // 4. Global Error Handling (Optional)
-        if (response.status === 401) {
-            console.warn("API request unauthorized - session might be expired or token missing.");
+        // 3. Handle 401 — try refresh once, then retry
+        if (response.status === 401 && !options._isRetry) {
+            console.warn('[API] 401 received — attempting session refresh...');
+            const { data, error } = await supabase.auth.refreshSession();
+
+            if (error || !data.session) {
+                // Refresh failed — session is dead, kick to login
+                await handleExpiredSession();
+                // Return a synthetic response so callers don't crash
+                return new Response(
+                    JSON.stringify({ detail: 'Your session has expired. Please log in again.' }),
+                    { status: 401, headers: { 'Content-Type': 'application/json' } }
+                );
+            }
+
+            // Refresh succeeded — retry the original request once with new token
+            console.info('[API] Session refreshed — retrying request...');
+            const retryHeaders = await buildHeaders(options, data.session.access_token);
+            return fetch(url, { ...options, headers: retryHeaders });
         }
 
+        // 4. Log non-OK responses for debugging (never expose raw errors to UI)
         if (!response.ok) {
             const rawText = await response.clone().text();
-            console.error(`[API Error] Status: ${response.status} ${response.statusText}`);
-            console.error(`[API Error] Raw Body:`, rawText);
+            console.error(`[API Error] ${response.status} ${response.statusText} — ${endpoint}`);
             try {
-                const errorData = JSON.parse(rawText);
-                console.error("API Error Details:", errorData);
+                console.error('[API Error] Details:', JSON.parse(rawText));
             } catch {
-                console.error("API Error (Non-JSON):", response.statusText);
+                console.error('[API Error] Raw:', rawText);
             }
         }
 
         return response;
     },
 
-    get: (endpoint: string, options: FetchOptions = {}) => {
-        return api.fetch(endpoint, { ...options, method: 'GET' });
-    },
+    get: (endpoint: string, options: FetchOptions = {}) =>
+        api.fetch(endpoint, { ...options, method: 'GET' }),
 
     post: (endpoint: string, body: unknown, options: FetchOptions = {}) => {
         const isFormData = body instanceof FormData;
@@ -87,7 +94,6 @@ export const api = {
         });
     },
 
-    delete: (endpoint: string, options: FetchOptions = {}) => {
-        return api.fetch(endpoint, { ...options, method: 'DELETE' });
-    }
+    delete: (endpoint: string, options: FetchOptions = {}) =>
+        api.fetch(endpoint, { ...options, method: 'DELETE' }),
 };

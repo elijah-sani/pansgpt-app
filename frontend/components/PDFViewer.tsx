@@ -804,7 +804,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 sysPrompt = "Capture the key points in a concise bulleted list.";
                 break;
             case "answer":
-                prompt = `Answer this question based on the context: "${textToProcess}"`;
+                prompt = `Answer this question: "${textToProcess}"`;
                 sysPrompt = "Provide a direct and accurate answer to the question.";
                 break;
             case "memory":
@@ -1589,8 +1589,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                             <button
                                 onClick={toggleNotesPanel}
                                 className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 border ${notesOpen
-                                        ? 'bg-card text-primary border-primary/20 shadow-lg shadow-black/5'
-                                        : 'bg-card hover:bg-muted/50 text-muted-foreground border-border shadow-sm'
+                                    ? 'bg-card text-primary border-primary/20 shadow-lg shadow-black/5'
+                                    : 'bg-card hover:bg-muted/50 text-muted-foreground border-border shadow-sm'
                                     }`}
                                 title="My Notes"
                             >

@@ -457,45 +457,56 @@ async def process_and_embed(file_content: bytes, document_id: str, file_name: st
         error_log = ""
         
         for idx, chunk_text in enumerate(chunks):
-            try:
-                # Generate embedding using Gemini (v1 SDK) - Likely Sync I/O
-                if not gemini_client:
-                    raise ValueError("Gemini Client not initialized")
+            # --- Rate-limit aware embedding with 429 retry ---
+            MAX_EMBED_RETRIES = 5
+            embed_success = False
+            for embed_attempt in range(MAX_EMBED_RETRIES):
+                try:
+                    if not gemini_client:
+                        raise ValueError("Gemini Client not initialized")
 
-                # Wrap Gemini call
-                response = await asyncio.to_thread(
-                    partial(
-                        gemini_client.models.embed_content,
-                        model="models/gemini-embedding-001",
-                        contents=chunk_text,
-                        config=types.EmbedContentConfig(output_dimensionality=768)
+                    response = await asyncio.to_thread(
+                        partial(
+                            gemini_client.models.embed_content,
+                            model="models/gemini-embedding-001",
+                            contents=chunk_text,
+                            config=types.EmbedContentConfig(output_dimensionality=768)
+                        )
                     )
-                )
-                
-                # v1 SDK returns object with .embeddings list
-                embedding = response.embeddings[0].values
-                
-                # Insert into Supabase - Sync I/O
-                # Wrap Supabase insert
-                await _execute_with_retry_async(
-                    lambda: db.table('document_embeddings').insert({
-                        'document_id': document_id,
-                        'content': chunk_text,
-                        'embedding': embedding
-                    }).execute(),
-                    f"Insert document embedding chunk {idx+1}",
-                )
-                
-                logger.info(f"[INFO] Chunk {idx+1}/{len(chunks)} embedded")
-                
-            except Exception as e:
-                failed_chunks_count += 1
-                error_msg = f"Chunk {idx} failed: {str(e)}"
-                error_log += error_msg + "\n"
-                logger.error(f"[ERROR] {error_msg}")
-            
-            # Update progress: map chunk index to 42%  99%
-            # _update_progress uses Supabase sync call. Wrap it!
+
+                    embedding = response.embeddings[0].values
+
+                    await _execute_with_retry_async(
+                        lambda: db.table('document_embeddings').insert({
+                            'document_id': document_id,
+                            'content': chunk_text,
+                            'embedding': embedding
+                        }).execute(),
+                        f"Insert document embedding chunk {idx+1}",
+                    )
+
+                    logger.info(f"[INFO] Chunk {idx+1}/{len(chunks)} embedded")
+                    embed_success = True
+
+                    # Stay under 100 req/min free tier limit
+                    await asyncio.sleep(0.65)
+                    break
+
+                except Exception as e:
+                    is_rate_limit = "429" in str(e) or "quota" in str(e).lower() or "resource_exhausted" in str(e).lower()
+                    if is_rate_limit and embed_attempt < MAX_EMBED_RETRIES - 1:
+                        wait = 15 * (embed_attempt + 1)  # 15s, 30s, 45s...
+                        logger.warning(f"[WARNING] Chunk {idx+1} rate limited, retrying in {wait}s (attempt {embed_attempt+1}/{MAX_EMBED_RETRIES})")
+                        await asyncio.sleep(wait)
+                        continue
+                    # Non-retryable or exhausted retries
+                    failed_chunks_count += 1
+                    error_msg = f"Chunk {idx+1} failed: {str(e)}"
+                    error_log += error_msg + "\n"
+                    logger.error(f"[ERROR] {error_msg}")
+                    break
+
+            # Update progress: map chunk index to 42% → 99%
             embed_pct = 42 + int(((idx + 1) / len(chunks)) * 58)
             await asyncio.to_thread(_update_progress, document_id, embed_pct)
 
@@ -988,6 +999,81 @@ async def upsert_reading_progress(
         raise HTTPException(status_code=500, detail="Unable to save your reading progress. Please try again.")
 
 
+@router.post("/documents/{doc_id}/reembed", dependencies=[Depends(verify_api_key)])
+async def admin_reembed_document(doc_id: str, background_tasks: BackgroundTasks):
+    """
+    Admin Endpoint: Re-trigger embedding for a document that has failed or partial chunks.
+    Downloads the PDF from Google Drive and re-runs the full ingestion pipeline.
+    Existing embeddings for this document are cleared first to avoid duplicates.
+    """
+    if not drive_service:
+        raise HTTPException(status_code=503, detail="The file service is temporarily unavailable. Please try again in a moment.")
+
+    db = _db_client()
+    if not db:
+        raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
+
+    # 1. Fetch document metadata
+    try:
+        response = await _execute_with_retry_async(
+            lambda: db.table("pans_library")
+                .select("id, drive_file_id, file_name, embedding_status")
+                .eq("id", doc_id)
+                .execute(),
+            f"Fetch document for reembed {doc_id}",
+        )
+        if not response.data:
+            raise HTTPException(status_code=404, detail="Document not found")
+        doc = response.data[0]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Unable to fetch document. Please try again.")
+
+    # 2. Download PDF from Google Drive
+    try:
+        file_content = await asyncio.to_thread(
+            drive_service.download_file_bytes,
+            doc["drive_file_id"]
+        )
+        if not file_content:
+            raise ValueError("Downloaded file is empty")
+    except Exception as e:
+        logger.error(f"[ERROR] Failed to download {doc_id} from Drive: {e}")
+        raise HTTPException(status_code=500, detail="Unable to download file from storage. Please try again.")
+
+    # 3. Clear existing embeddings to avoid duplicates
+    try:
+        await _execute_with_retry_async(
+            lambda: db.table("document_embeddings").delete().eq("document_id", doc_id).execute(),
+            f"Clear embeddings for reembed {doc_id}",
+        )
+        logger.info(f"[INFO] Cleared existing embeddings for {doc_id}")
+    except Exception as e:
+        logger.warning(f"[WARNING] Could not clear existing embeddings for {doc_id}: {e}")
+
+    # 4. Reset status to processing
+    await _execute_with_retry_async(
+        lambda: db.table("pans_library").update({
+            "embedding_status": "processing",
+            "embedding_progress": 0,
+            "embedding_error": None,
+        }).eq("id", doc_id).execute(),
+        f"Reset status for reembed {doc_id}",
+    )
+
+    # 5. Queue background reprocessing
+    background_tasks.add_task(
+        process_document_background,
+        file_content,
+        doc_id,
+        doc.get("file_name", "document.pdf"),
+    )
+
+    logger.info(f"[INFO] Reembed queued for document {doc_id}")
+    return {"message": "Re-embedding started", "document_id": doc_id, "status": "processing"}
+
+
 # Function to set dependencies (called from main api.py)
 def set_dependencies(drive_svc, supabase, api_key_verifier, folder_id, supabase_service=None):
     global drive_service, supabase_client, verify_api_key_handler, GOOGLE_DRIVE_FOLDER_ID, supabase_service_client
@@ -1000,12 +1086,3 @@ def set_dependencies(drive_svc, supabase, api_key_verifier, folder_id, supabase_
         logger.info("[INFO] Library router using service-role Supabase client for admin/background operations.")
     else:
         logger.warning("[WARNING] Library router running without service-role Supabase client; RLS may block some writes.")
-
-
-
-
-
-
-
-
-
