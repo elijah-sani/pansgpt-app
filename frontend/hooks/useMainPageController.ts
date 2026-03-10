@@ -24,11 +24,11 @@ const INITIAL_MESSAGE_LIMIT = 40;
 
 let mainBootstrapCache:
   | {
-      user: Exclude<MainUser, null>;
-      isAdmin: boolean;
-      webSearchAvailable: boolean;
-      hasSeenWelcome: boolean;
-    }
+    user: Exclude<MainUser, null>;
+    isAdmin: boolean;
+    webSearchAvailable: boolean;
+    hasSeenWelcome: boolean;
+  }
   | null = null;
 
 export function useMainPageController() {
@@ -107,7 +107,7 @@ export function useMainPageController() {
         const data = await response.json();
         setWebSearchUsage(data);
       }
-    } catch {}
+    } catch { }
   }, []);
 
   useEffect(() => {
@@ -132,7 +132,8 @@ export function useMainPageController() {
       let bootstrap = null;
       let profile = null;
 
-      if (mainBootstrapCache?.user.id === id) {
+      const isWelcomeFlow = new URLSearchParams(window.location.search).get('welcome') === 'true';
+      if (mainBootstrapCache?.user.id === id && !isWelcomeFlow) {
         setUser(mainBootstrapCache.user);
         setIsAdmin(mainBootstrapCache.isAdmin);
         setWebSearchAvailable(mainBootstrapCache.webSearchAvailable);
@@ -170,14 +171,24 @@ export function useMainPageController() {
 
       await fetchWebSearchUsage();
 
+      // Show welcome modal if:
+      // 1. Fresh signup (?welcome=true in URL), OR
+      // 2. Existing user who hasn't seen it yet (has_seen_welcome = false)
       const isWelcomeParam = searchParams.get('welcome') === 'true';
-      if (isWelcomeParam && !profile?.has_seen_welcome) {
+      const pendingWelcome = window.localStorage.getItem('pansgpt-show-welcome') === 'true';
+
+      if (isWelcomeParam) {
+        window.localStorage.setItem('pansgpt-show-welcome', 'true');
+        window.history.replaceState({}, '', '/main');
+      }
+
+      if ((isWelcomeParam || pendingWelcome || !profile?.has_seen_welcome)) {
+        window.localStorage.removeItem('pansgpt-show-welcome');
         setShowWelcomeModal(true);
         await api.patch('/me/profile', { has_seen_welcome: true });
         if (mainBootstrapCache) {
           mainBootstrapCache.hasSeenWelcome = true;
         }
-        window.history.replaceState({}, '', '/main');
       }
 
       setAuthLoading(false);
@@ -225,13 +236,13 @@ export function useMainPageController() {
       setUser((previous) =>
         previous
           ? {
-              ...previous,
-              name: detail.name ?? previous.name,
-              avatarUrl: detail.avatarUrl ?? previous.avatarUrl,
-              level: detail.level ?? previous.level,
-              university: detail.university ?? previous.university,
-              subscriptionTier: detail.subscriptionTier ?? previous.subscriptionTier,
-            }
+            ...previous,
+            name: detail.name ?? previous.name,
+            avatarUrl: detail.avatarUrl ?? previous.avatarUrl,
+            level: detail.level ?? previous.level,
+            university: detail.university ?? previous.university,
+            subscriptionTier: detail.subscriptionTier ?? previous.subscriptionTier,
+          }
           : previous
       );
       if (mainBootstrapCache?.user) {
@@ -671,7 +682,7 @@ export function useMainPageController() {
           try {
             const errorData = await response.json();
             detail = extractApiErrorMessage(errorData, detail);
-          } catch {}
+          } catch { }
           throw new Error(detail);
         }
 
@@ -680,12 +691,12 @@ export function useMainPageController() {
           tempAssistantId,
           !isRetry
             ? (userMessageId: string) => {
-                setMessages((previous) =>
-                  previous.map((message) =>
-                    String(message.id) === tempUserId ? { ...message, id: userMessageId } : message
-                  )
-                );
-              }
+              setMessages((previous) =>
+                previous.map((message) =>
+                  String(message.id) === tempUserId ? { ...message, id: userMessageId } : message
+                )
+              );
+            }
             : undefined
         );
 
@@ -787,13 +798,13 @@ export function useMainPageController() {
           const parsedBackendImages =
             typeof targetMessage.image_data === 'string' && targetMessage.image_data
               ? (() => {
-                  try {
-                    const parsed = JSON.parse(targetMessage.image_data);
-                    return Array.isArray(parsed) ? parsed.filter((img): img is string => typeof img === 'string' && img.length > 0) : [targetMessage.image_data];
-                  } catch {
-                    return [targetMessage.image_data];
-                  }
-                })()
+                try {
+                  const parsed = JSON.parse(targetMessage.image_data);
+                  return Array.isArray(parsed) ? parsed.filter((img): img is string => typeof img === 'string' && img.length > 0) : [targetMessage.image_data];
+                } catch {
+                  return [targetMessage.image_data];
+                }
+              })()
               : [];
           const combinedImages = [...(targetMessage.images || []), ...parsedBackendImages];
           if (targetMessage.imageBase64) {
@@ -913,12 +924,12 @@ export function useMainPageController() {
     } catch (error: unknown) {
       if (error instanceof Error && error.name === 'AbortError') {
         setMessages((previous) =>
-            previous.map((message) =>
-              String(message.id) === tempAssistantId
-                ? { ...message, content: streamFullTextRef.current, isThinking: false, isStopped: true, status: streamStatusRef.current }
-                : message
-            )
-          );
+          previous.map((message) =>
+            String(message.id) === tempAssistantId
+              ? { ...message, content: streamFullTextRef.current, isThinking: false, isStopped: true, status: streamStatusRef.current }
+              : message
+          )
+        );
       } else {
         console.error('Regenerate failed:', error);
         setMessages((previous) => previous.filter((message) => String(message.id) !== tempAssistantId));
@@ -1021,12 +1032,12 @@ export function useMainPageController() {
     setUser((previous) =>
       previous
         ? {
-            ...previous,
-            name: data.name ?? previous.name,
-            level: data.level ?? previous.level,
-            university: data.university ?? previous.university,
-            avatarUrl: data.avatarUrl ?? previous.avatarUrl,
-          }
+          ...previous,
+          name: data.name ?? previous.name,
+          level: data.level ?? previous.level,
+          university: data.university ?? previous.university,
+          avatarUrl: data.avatarUrl ?? previous.avatarUrl,
+        }
         : previous
     );
     if (mainBootstrapCache?.user) {

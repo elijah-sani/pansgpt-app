@@ -52,6 +52,49 @@ export function useAuthPage() {
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotSent, setForgotSent] = useState(false);
 
+  // Read URL params and hash on mount to show friendly messages
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const searchParams = new URLSearchParams(window.location.search);
+
+    // ?confirmed=true — email just verified, prompt user to sign in
+    if (searchParams.get('confirmed') === 'true') {
+      setMessage({ type: 'success', text: '✅ Email confirmed! You can now sign in.' });
+      window.history.replaceState(null, '', window.location.pathname);
+      return;
+    }
+
+    // ?error=callback_failed — something went wrong in the callback
+    if (searchParams.get('error') === 'callback_failed') {
+      setMessage({ type: 'error', text: 'Confirmation failed. Please try signing up again.' });
+      window.history.replaceState(null, '', window.location.pathname);
+      return;
+    }
+
+    // #error= hash — Supabase error in hash fragment (e.g. expired OTP)
+    const hash = window.location.hash;
+    if (!hash) return;
+
+    const params = new URLSearchParams(hash.replace('#', ''));
+    const error = params.get('error');
+    const errorCode = params.get('error_code');
+    const errorDescription = params.get('error_description');
+
+    if (error) {
+      let friendlyMessage = errorDescription?.replace(/\+/g, ' ') ||
+        'Something went wrong. Please try again.';
+
+      if (errorCode === 'otp_expired') {
+        friendlyMessage = 'Your confirmation link has expired. Please sign up again or request a new confirmation email.';
+      } else if (errorCode === 'access_denied') {
+        friendlyMessage = 'This link is no longer valid. Please try signing in or request a new link.';
+      }
+
+      setMessage({ type: 'error', text: friendlyMessage });
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  }, []);
+
   useEffect(() => {
     const interval = setInterval(() => {
       setTaglineFading(true);

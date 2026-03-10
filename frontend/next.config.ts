@@ -8,12 +8,16 @@ const withPWAConfig = withPWA({
   aggressiveFrontEndNavCaching: true,
   reloadOnOnline: true,
   disable: process.env.NODE_ENV === "development",
-  // App Router can use this route as the offline document fallback.
   fallbacks: {
     document: "/~offline",
   },
   workboxOptions: {
     disableDevLogs: true,
+    // New service worker takes over immediately without waiting for
+    // all tabs to close — enables silent background updates.
+    skipWaiting: true,
+    // Claim all open tabs immediately after activation
+    clientsClaim: true,
   },
 });
 

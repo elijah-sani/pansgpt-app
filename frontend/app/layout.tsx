@@ -51,6 +51,20 @@ export default function RootLayout({
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         <meta name="apple-mobile-web-app-title" content="PansGPT" />
+        {/* Auto-reload when a new service worker takes over (silent update).
+            controllerchange fires after skipWaiting + clientsClaim activate
+            the new SW — reloading ensures users always get the latest bundle. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.addEventListener('controllerchange', function() {
+                  window.location.reload();
+                });
+              }
+            `,
+          }}
+        />
       </head>
       <body
         className={albertSans.variable}
