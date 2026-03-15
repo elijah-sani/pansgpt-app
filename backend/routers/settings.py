@@ -23,6 +23,7 @@ class SystemConfigUpdate(BaseModel):
     temperature: Optional[float] = None
     maintenance_mode: Optional[bool] = None
     web_search_enabled: Optional[bool] = None  # Admin kill switch for Tavily web search
+    rag_threshold: Optional[float] = None
 
 # --- Helper ---
 async def verify_api_key(x_api_key: str = Header(...)):
@@ -104,7 +105,7 @@ async def update_system_config(
         if not sb:
             raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
 
-        current_res = sb.table('system_settings').select('system_prompt,temperature,maintenance_mode,web_search_enabled').eq('id', 1).execute()
+        current_res = sb.table('system_settings').select('system_prompt,temperature,maintenance_mode,web_search_enabled,rag_threshold').eq('id', 1).execute()
         current = (current_res.data[0] if current_res.data else {}) or {}
 
         merged = {
@@ -113,6 +114,7 @@ async def update_system_config(
             "temperature": config.temperature if config.temperature is not None else current.get("temperature", 0.7),
             "maintenance_mode": config.maintenance_mode if config.maintenance_mode is not None else current.get("maintenance_mode", False),
             "web_search_enabled": config.web_search_enabled if config.web_search_enabled is not None else current.get("web_search_enabled", True),
+            "rag_threshold": config.rag_threshold if config.rag_threshold is not None else current.get("rag_threshold", 0.50),
         }
 
         res = sb.table('system_settings').upsert(merged).execute()

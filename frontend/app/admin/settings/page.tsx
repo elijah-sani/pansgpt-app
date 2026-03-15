@@ -144,21 +144,24 @@ const AvatarSelectionModal = ({ isOpen, onClose, onConfirm }: AvatarSelectionMod
 };
 
 interface AIEditorProps {
-    systemConfig: { system_prompt: string; temperature: number; maintenance_mode: boolean; web_search_enabled: boolean };
-    setSystemConfig: (data: { system_prompt: string; temperature: number; maintenance_mode: boolean; web_search_enabled: boolean }) => void;
+    systemConfig: { system_prompt: string; temperature: number; maintenance_mode: boolean; web_search_enabled: boolean; rag_threshold: number };
+    setSystemConfig: (data: { system_prompt: string; temperature: number; maintenance_mode: boolean; web_search_enabled: boolean; rag_threshold: number }) => void;
     userEmail: string | null;
 }
 
 const AIEditor = ({ systemConfig, setSystemConfig, userEmail }: AIEditorProps) => {
     const [localTemperature, setLocalTemperature] = useState(systemConfig.temperature);
+    const [localRagThreshold, setLocalRagThreshold] = useState(systemConfig.rag_threshold);
     const [isSavingPrompt, setIsSavingPrompt] = useState(false);
     const [isSavingTemp, setIsSavingTemp] = useState(false);
+    const [isSavingRag, setIsSavingRag] = useState(false);
     const [promptMessage, setPromptMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
     // Sync local temp with prop if it changes externally (e.g. initial load)
     useEffect(() => {
         setLocalTemperature(systemConfig.temperature);
-    }, [systemConfig.temperature]);
+        setLocalRagThreshold(systemConfig.rag_threshold);
+    }, [systemConfig.temperature, systemConfig.rag_threshold]);
 
     // Debounced Temperature Save
     useEffect(() => {
@@ -191,6 +194,38 @@ const AIEditor = ({ systemConfig, setSystemConfig, userEmail }: AIEditorProps) =
         // Intentional: avoid including full object/setter deps to prevent save-loop churn while typing.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [localTemperature, userEmail]);
+
+    // Debounced RAG Threshold Save
+    useEffect(() => {
+        const timer = setTimeout(async () => {
+            if (localRagThreshold === systemConfig.rag_threshold) return;
+
+            setIsSavingRag(true);
+            try {
+                const res = await api.post('/admin/config/update', {
+                    rag_threshold: localRagThreshold
+                }, {
+                    headers: {
+                        'x-user-email': userEmail || ''
+                    }
+                });
+
+                if (!res.ok) throw new Error('Failed');
+
+                // Update parent after success to keep in sync
+                setSystemConfig({ ...systemConfig, rag_threshold: localRagThreshold });
+
+            } catch (err) {
+                console.error("Failed to save rag_threshold", err);
+            } finally {
+                setIsSavingRag(false);
+            }
+        }, 500);
+
+        return () => clearTimeout(timer);
+        // Intentional: avoid including full object/setter deps to prevent save-loop churn while typing.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [localRagThreshold, userEmail]);
 
     const handleSavePrompt = async () => {
         setIsSavingPrompt(true);
@@ -256,6 +291,30 @@ const AIEditor = ({ systemConfig, setSystemConfig, userEmail }: AIEditorProps) =
                 </div>
             </div>
 
+            <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                        <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">RAG Match Threshold</label>
+                        {isSavingRag && <span className="text-[10px] text-primary animate-pulse">Saving...</span>}
+                    </div>
+                    <span className="text-primary font-bold font-mono">{localRagThreshold.toFixed(2)}</span>
+                </div>
+                <div className="relative pt-1">
+                    <input
+                        type="range"
+                        min="0.1" max="1" step="0.05"
+                        value={localRagThreshold}
+                        onChange={(e) => setLocalRagThreshold(parseFloat(e.target.value))}
+                        className="w-full h-2 bg-muted rounded-full appearance-none cursor-pointer accent-primary"
+                    />
+                    <div className="flex justify-between text-xs text-muted-foreground mt-2 font-medium">
+                        <span>Loose (0.1)</span>
+                        <span>Balanced (0.5)</span>
+                        <span>Strict (1.0)</span>
+                    </div>
+                </div>
+            </div>
+
             <div className="flex items-center justify-between pt-4 border-t border-border">
                 {promptMessage ? (
                     <div className={`flex items-center gap-2 text-sm font-medium ${promptMessage.type === 'success' ? 'text-green-500' : 'text-destructive'}`}>
@@ -297,7 +356,8 @@ export default function SettingsPage() {
         system_prompt: '',
         temperature: 0.7,
         maintenance_mode: false,
-        web_search_enabled: true
+        web_search_enabled: true,
+        rag_threshold: 0.50
     });
 
     // Avatar Modal
@@ -360,7 +420,8 @@ export default function SettingsPage() {
                     system_prompt: data.system_prompt ?? '',
                     temperature: data.temperature ?? 0.7,
                     maintenance_mode: data.maintenance_mode ?? false,
-                    web_search_enabled: data.web_search_enabled ?? true
+                    web_search_enabled: data.web_search_enabled ?? true,
+                    rag_threshold: data.rag_threshold ?? 0.50
                 });
             }
         } catch (err) {

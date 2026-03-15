@@ -123,6 +123,7 @@ create table if not exists public.system_settings (
   temperature double precision not null default 0.7,
   maintenance_mode boolean not null default false,
   web_search_enabled boolean not null default true,
+  rag_threshold double precision null default 0.50,
   total_api_calls bigint not null default 0,
   updated_at timestamp with time zone not null default timezone('utc'::text, now()),
   constraint check_temperature check (temperature >= 0.0 and temperature <= 1.0)

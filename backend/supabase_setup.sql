@@ -98,6 +98,7 @@ create table if not exists public.system_settings (
   system_prompt text,
   temperature float default 0.7,
   maintenance_mode boolean default false,
+  rag_threshold float default 0.50,
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null,
   constraint check_temperature check (temperature >= 0.0 and temperature <= 1.0)
 );

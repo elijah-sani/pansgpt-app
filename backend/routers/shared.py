@@ -259,7 +259,7 @@ async def get_cached_settings():
     
     try:
         res = await _execute_with_retry(
-            lambda: sb.table("system_settings").select("system_prompt, temperature").eq("id", 1).execute(),
+            lambda: sb.table("system_settings").select("system_prompt, temperature, rag_threshold").eq("id", 1).execute(),
             "Fetch cached system settings",
         )
         if res.data and len(res.data) > 0:
@@ -588,6 +588,10 @@ async def get_relevant_context(
         query_vector = embed_result['embedding']
         logger.info(f"Embedded query: {len(query_vector)} dimensions")
 
+        # Fetch dynamic settings for threshold
+        settings = await get_cached_settings()
+        match_threshold = float(settings.get("rag_threshold", 0.50)) if settings and settings.get("rag_threshold") is not None else float(os.getenv("RAG_MATCH_THRESHOLD", "0.50"))
+
         # ----------------------------
         # Branch A: Local RAG (Study Mode) - keep existing behavior
         # ----------------------------
@@ -637,7 +641,7 @@ async def get_relevant_context(
                     'match_documents',
                     {
                         'query_embedding': query_vector,
-                        'match_threshold': RAG_MATCH_THRESHOLD,
+                        'match_threshold': match_threshold,
                         'match_count': 10,       # Increased from 5 to get more context
                         'filter_doc_id': supabase_doc_id  # Use converted UUID
                     }
@@ -665,7 +669,7 @@ async def get_relevant_context(
             if not response.data or len(response.data) == 0:
                 logger.warning(
                     f"RAG returned no chunks for local document '{supabase_doc_id}'. "
-                    f"Query: '{user_question[:80]}...' | Threshold: {RAG_MATCH_THRESHOLD}"
+                    f"Query: '{user_question[:80]}...' | Threshold: {match_threshold}"
                 )
                 if doc_metadata:
                     # Return just metadata if no chunks found
@@ -754,7 +758,7 @@ async def get_relevant_context(
                 "match_documents_global",
                 {
                     "query_embedding": query_vector,
-                    "match_threshold": RAG_MATCH_THRESHOLD,
+                    "match_threshold": match_threshold,
                     "match_count": 10,
                     "allowed_doc_ids": allowed_doc_ids,
                 },
@@ -766,7 +770,7 @@ async def get_relevant_context(
         if not rows:
             logger.warning(
                 f"RAG returned no chunks for global search. "
-                f"Query: '{user_question[:80]}...' | Threshold: {RAG_MATCH_THRESHOLD} | "
+                f"Query: '{user_question[:80]}...' | Threshold: {match_threshold} | "
                 f"Allowed docs: {len(allowed_doc_ids)}"
             )
             return "", []
@@ -785,7 +789,7 @@ async def get_relevant_context(
             return "", []
         logger.info(
             f"Global RAG: {len(rows)} chunks matched from {len(unique_doc_ids)} documents. "
-            f"Threshold: {RAG_MATCH_THRESHOLD}"
+            f"Threshold: {match_threshold}"
         )
 
         # Single metadata query for all matched documents
