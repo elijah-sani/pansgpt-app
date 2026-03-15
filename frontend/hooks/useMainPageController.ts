@@ -632,18 +632,7 @@ export function useMainPageController() {
 
       try {
         let currentSessionId = activeSessionId;
-        if (!currentSessionId) {
-          const newSession = await createSession('New Chat');
-          if (newSession) {
-            currentSessionId = newSession.id;
-            isCreatingSessionRef.current = true;
-            setActiveSessionId(newSession.id);
-          }
-          if (!currentSessionId) {
-            throw new Error('Could not create chat session. Please retry.');
-          }
-        }
-
+        
         const newUserMessage: Message = {
           id: tempUserId,
           role: 'user',
@@ -672,12 +661,9 @@ export function useMainPageController() {
             wasEarlyStopRef.current = false;
 
             if (isEarlyStop) {
-              // Early stop: remove orphan user msg + empty assistant from UI
-              // and clean up from DB so it doesn't reappear on refresh
-              nextBaseMessages = nextBaseMessages.slice(0, -1); // remove empty assistant
+              nextBaseMessages = nextBaseMessages.slice(0, -1);
               const prevMsg = nextBaseMessages[nextBaseMessages.length - 1];
               if (prevMsg?.role === 'user') {
-                // Clean up orphan user message from DB
                 if (currentSessionId) {
                   api.fetch('/chat/truncate-last-stopped', {
                     method: 'POST',
@@ -686,9 +672,6 @@ export function useMainPageController() {
                 }
                 nextBaseMessages = nextBaseMessages.slice(0, -1);
               }
-            } else {
-              // Mid-stream stop: keep the stopped exchange in history (like ChatGPT)
-              // just don't remove it — new message will append below naturally
             }
           } else if (isError) {
             const previousMessage = nextBaseMessages[nextBaseMessages.length - 1];
@@ -704,6 +687,21 @@ export function useMainPageController() {
             ? [...previous, assistantPlaceholder]
             : [...nextBaseMessages, newUserMessage, assistantPlaceholder]
         );
+
+        if (!currentSessionId) {
+          const newSession = await createSession('New Chat');
+          if (newSession) {
+            currentSessionId = newSession.id;
+            isCreatingSessionRef.current = true;
+            setActiveSessionId(newSession.id);
+            // Update message references with the new session ID
+            newUserMessage.session_id = currentSessionId || undefined;
+            assistantPlaceholder.session_id = currentSessionId || undefined;
+          }
+          if (!currentSessionId) {
+            throw new Error('Could not create chat session. Please retry.');
+          }
+        }
 
         const payload = {
           text,

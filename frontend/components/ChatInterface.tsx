@@ -117,6 +117,7 @@ export default function ChatInterface({
     const chatEndRef = useRef<HTMLDivElement>(null);
     const chatScrollRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
     const inputMessageRef = useRef(inputMessage);
     const [selectedImage, setSelectedImage] = useState<string | null>(null);
     const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -196,6 +197,14 @@ export default function ChatInterface({
 
     useEffect(() => {
         inputMessageRef.current = inputMessage;
+    }, [inputMessage]);
+
+    useEffect(() => {
+        const ta = textareaRef.current;
+        if (ta) {
+            ta.style.height = 'auto';
+            ta.style.height = `${Math.min(Math.max(ta.scrollHeight, 44), 200)}px`;
+        }
     }, [inputMessage]);
 
     useEffect(() => {
@@ -654,6 +663,7 @@ export default function ChatInterface({
                             </div>
                         ) : (
                             <textarea
+                                ref={textareaRef}
                                 value={inputMessage}
                                 onChange={(e) => {
                                     setInputMessage(e.target.value);
