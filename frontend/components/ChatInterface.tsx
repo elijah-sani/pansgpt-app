@@ -86,7 +86,7 @@ const getImages = (imgData: string | undefined): string[] => {
     }
 };
 
-const MESSAGE_COLLAPSE_WORD_THRESHOLD = 120;
+const MESSAGE_COLLAPSE_WORD_THRESHOLD = 20;
 
 export default function ChatInterface({
     messages,
@@ -465,6 +465,7 @@ export default function ChatInterface({
                                                         value={editDraft}
                                                         onChange={(e) => setEditDraft(e.target.value)}
                                                         className="w-full bg-muted border border-border rounded-xl px-4 py-3 text-base md:text-[15px] leading-relaxed text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none min-h-[80px]"
+                                                        rows={3}
                                                         autoFocus
                                                     />
                                                     <div className="flex gap-2 justify-end">
@@ -499,7 +500,7 @@ export default function ChatInterface({
                                                 <>
                                                     <div className="max-w-[85%]">
                                                         <div className="bg-[#253920] text-white px-5 py-3 rounded-2xl rounded-tr-sm shadow-sm border border-[#253920] text-[15px] leading-relaxed">
-                                                            <div className={isLongUserMessage && !isExpanded ? 'line-clamp-5' : ''}>
+                                                            <div className={isLongUserMessage && !isExpanded ? 'line-clamp-3' : ''}>
                                                                 {msg.content}
                                                             </div>
                                                         </div>

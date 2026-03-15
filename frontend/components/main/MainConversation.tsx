@@ -8,7 +8,7 @@ import MessageBubble, { type Message } from '@/components/MessageBubble';
 import { CHAT_TEXT_SIZE_EVENT, CHAT_TEXT_SIZE_KEY, type ChatTextSize } from '@/lib/settings-events';
 import type { WebSearchUsage } from './types';
 
-const MESSAGE_COLLAPSE_THRESHOLD = 500;
+const MESSAGE_COLLAPSE_THRESHOLD = 300;
 const CHAT_TEXT_SIZE_STYLES: Record<ChatTextSize, CSSProperties> = {
   small: { '--chat-text-size': '14px' } as CSSProperties,
   medium: { '--chat-text-size': '15px' } as CSSProperties,
@@ -65,6 +65,7 @@ type MainConversationProps = {
   maxImages: number;
   messages: Message[];
   onDropImage: (base64: string) => void;
+  onScrollStateChange?: (isScrolledUp: boolean) => void;
   pendingAttachments: string[];
   removeAttachment: (index: number) => void;
   selectedImageSetter: (image: string) => void;
@@ -111,6 +112,7 @@ export function MainConversation({
   maxImages,
   messages,
   onDropImage,
+  onScrollStateChange,
   pendingAttachments,
   removeAttachment,
   selectedImageSetter,
@@ -176,7 +178,9 @@ export function MainConversation({
     }
 
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    const isAtBottom = distanceFromBottom < 50;
     setShowScrollToBottom(distanceFromBottom > 100);
+    onScrollStateChange?.(!isAtBottom);
   };
 
   const handleScrollToBottom = () => {
@@ -273,6 +277,7 @@ export function MainConversation({
                                 value={editDraft}
                                 onChange={(event) => setEditDraft(event.target.value)}
                                 className="w-full bg-accent border border-border rounded-xl px-4 py-3 text-base md:text-[15px] leading-relaxed text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none min-h-[80px]"
+                                rows={5}
                                 autoFocus
                               />
                               <div className="flex gap-2 justify-end">
@@ -305,7 +310,7 @@ export function MainConversation({
                                   className="bg-primary/20 dark:bg-secondary text-[#1b4332] dark:text-secondary-foreground font-sans px-5 py-3 rounded-2xl rounded-tr-sm leading-relaxed"
                                   style={{ fontSize: 'var(--chat-text-size)' }}
                                 >
-                                  <div className={isLongUserMessage && !isExpanded ? 'line-clamp-6' : ''}>
+                                  <div className={isLongUserMessage && !isExpanded ? 'line-clamp-4' : ''}>
                                     {message.content}
                                   </div>
                                 </div>

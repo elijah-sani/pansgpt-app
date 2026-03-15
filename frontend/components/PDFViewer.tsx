@@ -344,6 +344,9 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     const [chatError, setChatError] = useState<string | null>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
     const streamFullTextRef = useRef('');
+    // Tracks whether user stopped BEFORE any text arrived (early stop)
+    // so the next sendMessage can clean up the orphaned exchange from the DB
+    const wasEarlyStopRef = useRef(false);
 
     const [pendingAttachments, setPendingAttachments] = useState<string[]>([]); // Array of base64 images
     const selectionTimer = useRef<NodeJS.Timeout | null>(null);
@@ -978,9 +981,10 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     };
 
     const sendMessage = async (text: string, attachments: string[] = [], systemInstruction?: string, isRetry: boolean = false) => {
+        // Reset the stream buffer immediately so early-stop doesn't show stale text
+        streamFullTextRef.current = '';
         setIsLoading(true);
         setIsError(false);
-        setChatError(null);
         setChatError(null);
 
         const controller = new AbortController();
@@ -990,6 +994,35 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         const tempAssistantId = `temp-assistant-${Date.now()}`;
 
         let isNewSession = false;
+
+        // --- On new send: clean up any previous stopped/orphan exchange from UI ---
+        if (!isRetry) {
+            setChatHistory(prev => {
+                const cleaned = [...prev];
+                const lastMsg = cleaned[cleaned.length - 1];
+                // If last message is a stopped/empty assistant, remove it (and its preceding user)
+                if (lastMsg && (lastMsg.role === 'assistant' || lastMsg.role === 'ai') &&
+                    ((lastMsg as Message & { isStopped?: boolean }).isStopped || lastMsg.content === '')) {
+                    const isEarly = wasEarlyStopRef.current || !lastMsg.content;
+                    wasEarlyStopRef.current = false;
+                    if (isEarly) {
+                        cleaned.pop(); // remove empty assistant
+                        const prev2 = cleaned[cleaned.length - 1];
+                        if (prev2?.role === 'user') {
+                            cleaned.pop(); // remove orphan user message
+                        }
+                        // Clean up from DB too
+                        if (currentSessionId) {
+                            api.fetch('/chat/truncate-last-stopped', {
+                                method: 'POST',
+                                body: JSON.stringify({ session_id: currentSessionId }),
+                            }).catch(e => console.warn('[StudyMode] orphan cleanup failed:', e));
+                        }
+                    }
+                }
+                return cleaned;
+            });
+        }
 
         try {
             // --- Optimistic UI: show messages immediately, create session in background ---
@@ -1081,6 +1114,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
         } catch (err: unknown) {
             if (err instanceof Error && err.name === 'AbortError') {
+                // Update UI to show partial text with stopped indicator
                 setChatHistory(prev =>
                     prev.map(msg =>
                         String(msg.id) === tempAssistantId
@@ -1088,6 +1122,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                             : msg
                     )
                 );
+                // stopGeneration() already handles DB save/truncate via the timeout approach.
+                // No need to call save-partial or truncate again here — avoid double call.
             } else {
                 console.error('Chat Error:', err);
                 setChatHistory(prev => prev.filter(msg => String(msg.id) !== tempAssistantId));
@@ -1103,8 +1139,27 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         }
     };
     const stopGeneration = () => {
-        setIsLoading(false);
+        // Track whether any text was streamed before the user stopped
+        wasEarlyStopRef.current = !streamFullTextRef.current.trim();
         abortControllerRef.current?.abort();
+        // Immediately reset loading so the stop button reverts to send icon right away
+        setIsLoading(false);
+
+        const partialText = streamFullTextRef.current.trim();
+        const sessionId = currentSessionId;
+        if (!sessionId) return;
+
+        // For mid-stream stops: wait 800ms for backend disconnect handler to save first,
+        // then call save-partial as a fallback (it will UPDATE the existing row, not INSERT).
+        // For early stops: no save needed here — cleanup happens on next sendMessage().
+        if (!wasEarlyStopRef.current && partialText) {
+            setTimeout(() => {
+                api.fetch('/chat/save-partial', {
+                    method: 'POST',
+                    body: JSON.stringify({ session_id: sessionId, content: partialText }),
+                }).catch(e => console.warn('[Stop/StudyMode] save-partial failed:', e));
+            }, 800);
+        }
     };
 
     const handleRetry = async () => {
@@ -1131,6 +1186,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
     const handleEditMessage = async (messageId: string, newText: string) => {
         if (!currentSessionId) return;
+        // Reset stream buffer so partial stop shows correct text
+        streamFullTextRef.current = '';
         const tempAssistantId = `temp-assistant-edit-${Date.now()}`;
 
         // Safety log: what ID is being sent to the backend?
@@ -1159,9 +1216,14 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         setIsLoading(true);
         setIsError(false);
 
+        // Create a fresh AbortController for this edit so stopGeneration() can cancel it
+        const editController = new AbortController();
+        abortControllerRef.current = editController;
+
         try {
             const response = await api.fetch('/chat/edit', {
                 method: 'POST',
+                signal: editController.signal,
                 body: JSON.stringify({
                     session_id: currentSessionId,
                     message_id: messageId,
@@ -1195,14 +1257,32 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
             }
 
         } catch (err) {
-            console.error("Edit Error:", err);
-            setChatHistory(prev => prev.filter(msg => String(msg.id) !== tempAssistantId));
-            setIsError(true);
-            setChatError(err instanceof Error ? err.message : "Edit failed. Please try again.");
+            if (err instanceof Error && err.name === 'AbortError') {
+                // Stopped during edit — mark message as stopped and save partial
+                setChatHistory(prev =>
+                    prev.map(msg =>
+                        String(msg.id) === tempAssistantId
+                            ? { ...msg, content: streamFullTextRef.current, isThinking: false, isStopped: true }
+                            : msg
+                    )
+                );
+                if (currentSessionId) {
+                    api.fetch('/chat/save-partial', {
+                        method: 'POST',
+                        body: JSON.stringify({ session_id: currentSessionId, content: streamFullTextRef.current.trim() }),
+                    }).catch(e => console.warn('[Stop/StudyMode/Edit] save-partial failed:', e));
+                }
+            } else {
+                console.error("Edit Error:", err);
+                setChatHistory(prev => prev.filter(msg => String(msg.id) !== tempAssistantId));
+                setIsError(true);
+                setChatError("Something went wrong. Please try again.");
+            }
         } finally {
             setIsLoading(false);
         }
     };
+
 
     const handleSendMessage = async () => {
         const hasText = inputMessage.trim().length > 0;
@@ -1437,6 +1517,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
             onRegenerate={async () => {
                 // Regenerate Logic (Backend-driven):
                 if (!currentSessionId) return;
+                // Reset stream buffer so stop doesn't show stale text from previous response
+                streamFullTextRef.current = '';
                 const tempAssistantId = `temp-assistant-regen-${Date.now()}`;
 
                 // 1. Optimistic UI Update: Remove last assistant message and add placeholder
@@ -1448,10 +1530,15 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 });
                 setIsLoading(true);
 
+                // Create a fresh AbortController for regenerate so stopGeneration() can cancel it
+                const regenController = new AbortController();
+                abortControllerRef.current = regenController;
+
                 try {
                     // 2. Call Backend Regenerate Endpoint (SSE stream)
                     const res = await api.fetch(`/chat/${currentSessionId}/regenerate`, {
                         method: 'POST',
+                        signal: regenController.signal,
                         body: JSON.stringify({})
                     });
 
@@ -1469,10 +1556,27 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                         );
                     }
                 } catch (err) {
-                    console.error("Regenerate failed:", err);
-                    setChatHistory(prev => prev.filter(msg => String(msg.id) !== tempAssistantId));
-                    setIsError(true);
-                    setChatError(err instanceof Error ? err.message : "Regenerate failed. Please try again.");
+                    if (err instanceof Error && err.name === 'AbortError') {
+                        // Stopped during regenerate — preserve partial text
+                        setChatHistory(prev =>
+                            prev.map(msg =>
+                                String(msg.id) === tempAssistantId
+                                    ? { ...msg, content: streamFullTextRef.current, isThinking: false, isStopped: true }
+                                    : msg
+                            )
+                        );
+                        if (currentSessionId) {
+                            api.fetch('/chat/save-partial', {
+                                method: 'POST',
+                                body: JSON.stringify({ session_id: currentSessionId, content: streamFullTextRef.current.trim() }),
+                            }).catch(e => console.warn('[Stop/StudyMode/Regen] save-partial failed:', e));
+                        }
+                    } else {
+                        console.error("Regenerate failed:", err);
+                        setChatHistory(prev => prev.filter(msg => String(msg.id) !== tempAssistantId));
+                        setIsError(true);
+                        setChatError("Something went wrong. Please try again.");
+                    }
                 } finally {
                     setIsLoading(false);
                 }

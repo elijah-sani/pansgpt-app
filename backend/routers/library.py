@@ -66,6 +66,7 @@ def _is_retryable_network_error(exc: Exception) -> bool:
     )
     return any(marker in msg for marker in retry_markers)
 
+
 async def _execute_with_retry_async(execute_fn, operation_name: str, max_attempts: int = 3):
     """
     Retry transient Supabase calls from async code paths.
@@ -116,6 +117,7 @@ if GOOGLE_API_KEY:
 
 else:
     logger.warning("[WARNING] GOOGLE_API_KEY not set, RAG ingestion will fail")
+
 
 # --- Models ---
 class DocumentUpdate(BaseModel):

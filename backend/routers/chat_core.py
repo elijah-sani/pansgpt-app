@@ -1145,8 +1145,12 @@ async def save_partial_response(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Save a partial assistant response when the user stops generation.
-    Fallback for cases where the streaming disconnect detection is too slow.
+    Save or update a partial assistant response when the user stops generation.
+    
+    Strategy:
+    - If the backend disconnect handler already saved a message, UPDATE that row
+      rather than inserting a duplicate.
+    - Only INSERT a new row if no recent AI message exists for this session.
     """
     if not shared.supabase_client:
         raise HTTPException(status_code=503, detail="Database not active")
@@ -1154,11 +1158,14 @@ async def save_partial_response(
     await _assert_session_owner(request.session_id, current_user)
 
     content = request.content.strip()
-    if not content:
-        return {"status": "skipped", "reason": "empty content"}
+    # Build the saved text — append the stop note if not already present
+    if content:
+        text_to_save = f"{content}\n\n{STOPPED_ASSISTANT_NOTE}" if STOPPED_ASSISTANT_NOTE not in content else content
+    else:
+        text_to_save = STOPPED_ASSISTANT_NOTE
 
-    # Check if the backend's disconnect handler already saved a message
     try:
+        # Check if there's already an AI message we can update (from backend disconnect handler)
         recent_ai = await _execute_with_retry(
             lambda: shared.supabase_client.table("chat_messages")
                 .select("id, content")
@@ -1169,19 +1176,52 @@ async def save_partial_response(
                 .execute(),
             "Check for existing AI message on stop",
         )
+
         if recent_ai.data:
+            existing_id = recent_ai.data[0]["id"]
             existing_content = (recent_ai.data[0].get("content") or "").strip()
-            # If the backend already saved this (or a longer version), skip
-            if existing_content and content in existing_content:
-                return {"status": "already_saved", "message_id": recent_ai.data[0]["id"]}
+
+            # If the existing AI message already has the stopped note with the SAME content
+            # (or more), skip — nothing to update
+            if existing_content == text_to_save:
+                return {"status": "already_saved", "message_id": existing_id}
+
+            # If the existing message has the stop note but the frontend has MORE content
+            # (more streamed text), update it with the richer version
+            if STOPPED_ASSISTANT_NOTE in existing_content:
+                # Only update if frontend's version is longer (has more streamed text)
+                existing_real = existing_content.replace(STOPPED_ASSISTANT_NOTE, "").strip()
+                new_real = content
+                if len(new_real) >= len(existing_real):
+                    await _execute_with_retry(
+                        lambda: shared.supabase_client.table("chat_messages")
+                            .update({"content": text_to_save})
+                            .eq("id", existing_id)
+                            .execute(),
+                        "Update existing stopped AI message",
+                    )
+                    return {"status": "updated", "message_id": existing_id}
+                else:
+                    return {"status": "already_saved", "message_id": existing_id}
+
+            # Existing AI message does NOT have the stop note — this is the message the
+            # backend disconnect handler saved. Update it to include the stop note.
+            await _execute_with_retry(
+                lambda: shared.supabase_client.table("chat_messages")
+                    .update({"content": text_to_save})
+                    .eq("id", existing_id)
+                    .execute(),
+                "Update AI message with stop note",
+            )
+            return {"status": "updated", "message_id": existing_id}
+
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.warning(f"Could not check existing AI message on stop: {e}")
+        logger.warning(f"Could not check/update existing AI message on stop: {e}")
 
-    # Append the stopped note
-    text_to_save = content
-    if STOPPED_ASSISTANT_NOTE not in text_to_save:
-        text_to_save = f"{text_to_save}\n\n{STOPPED_ASSISTANT_NOTE}"
-
+    # No existing AI message found — insert a new one (edge case: backend disconnect handler
+    # failed or message was deleted)
     try:
         saved_id = await chat_history.save_assistant_message(
             session_id=request.session_id,
@@ -1191,6 +1231,96 @@ async def save_partial_response(
     except Exception as e:
         logger.error(f"Failed to save partial response: {e}")
         raise HTTPException(status_code=500, detail="Failed to save partial response")
+
+
+
+# --- Truncate Last Stopped Exchange (early stop cleanup) ---
+class TruncateLastStoppedRequest(BaseModel):
+    session_id: str
+
+@router.post("/chat/truncate-last-stopped", dependencies=[Depends(verify_api_key)])
+async def truncate_last_stopped(
+    request: TruncateLastStoppedRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Called when the user stopped BEFORE the AI started streaming meaningful text.
+    Deletes the orphaned exchange from the DB (user message + any empty/note-only AI message)
+    so it doesn't reappear on refresh.
+
+    Handles two cases:
+    1. Last msg is a user message (backend hasn't saved AI response yet) → delete user msg
+    2. Last msg is an AI message with ONLY the stopped note (no real streamed content)
+       → delete AI msg + the preceding user msg
+    """
+    if not shared.supabase_client:
+        raise HTTPException(status_code=503, detail="Database not active")
+
+    await _assert_session_owner(request.session_id, current_user)
+
+    try:
+        msgs_res = await _execute_with_retry(
+            lambda: shared.supabase_client.table("chat_messages")
+                .select("id, role, content, created_at")
+                .eq("session_id", request.session_id)
+                .order("created_at", desc=True)
+                .limit(3)
+                .execute(),
+            "Fetch last messages for early-stop truncate",
+        )
+        msgs = msgs_res.data or []
+        if not msgs:
+            return {"status": "skipped", "reason": "no messages"}
+
+        last_msg = msgs[0]
+        last_role = last_msg.get("role", "")
+        last_content = (last_msg.get("content") or "").strip()
+
+        ids_to_delete: list[str] = []
+
+        # Case 1: Last message is an orphan user message (backend not yet saved AI response)
+        if last_role == "user":
+            ids_to_delete.append(last_msg["id"])
+            logger.info(f"Truncate early-stop: found orphan user message {last_msg['id']}")
+
+        # Case 2: Last message is an AI-only stop note (no real streamed content)
+        # This happens when the backend disconnect handler saved the note before truncate ran
+        elif last_role in ("ai", "assistant"):
+            is_stop_only = last_content == shared.STOPPED_ASSISTANT_NOTE or last_content == ""
+            if is_stop_only:
+                ids_to_delete.append(last_msg["id"])
+                logger.info(f"Truncate early-stop: found stop-only AI message {last_msg['id']}")
+                # Also delete the preceding user message that triggered this exchange
+                if len(msgs) > 1:
+                    prev_msg = msgs[1]
+                    if prev_msg.get("role") == "user":
+                        ids_to_delete.append(prev_msg["id"])
+                        logger.info(f"Truncate early-stop: also deleting user message {prev_msg['id']}")
+            else:
+                return {"status": "skipped", "reason": "last AI message has real content, not deleting"}
+        else:
+            return {"status": "skipped", "reason": f"unexpected last message role: {last_role}"}
+
+        if not ids_to_delete:
+            return {"status": "skipped", "reason": "nothing matched deletion criteria"}
+
+        for msg_id in ids_to_delete:
+            await _execute_with_retry(
+                lambda mid=msg_id: shared.supabase_client.table("chat_messages")
+                    .delete()
+                    .eq("id", mid)
+                    .execute(),
+                f"Delete early-stop message {msg_id}",
+            )
+        logger.info(f"Deleted {len(ids_to_delete)} message(s) for early-stop in session {request.session_id}")
+        return {"status": "deleted", "deleted_ids": ids_to_delete}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to truncate early stop message: {e}")
+        raise HTTPException(status_code=500, detail="Failed to clean up message")
+
 
 # --- Rename Session Endpoint ---
 class RenameSessionRequest(BaseModel):

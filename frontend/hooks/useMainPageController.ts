@@ -82,9 +82,12 @@ export function useMainPageController() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const streamFullTextRef = useRef('');
+  const wasEarlyStopRef = useRef(false); // true if stopped before AI started streaming
   const streamStatusRef = useRef('processing');
   const isCreatingSessionRef = useRef(false);
   const lastFailedRequestRef = useRef<FailedRequest>(null);
+  const isUserScrolledUpRef = useRef(false);
+  const prevMessagesLengthRef = useRef(0);
   const voiceBaseInputRef = useRef('');
   const inputMessageRef = useRef(inputMessage);
 
@@ -466,16 +469,23 @@ export function useMainPageController() {
   }, []);
 
   useEffect(() => {
-    scrollToBottom(true);
-  }, [messages.length, scrollToBottom]);
-
-  useEffect(() => {
-    if (!isLoading) {
+    const isNewMessageAdd = messages.length > prevMessagesLengthRef.current;
+    prevMessagesLengthRef.current = messages.length;
+    if (isUserScrolledUpRef.current) {
       return;
     }
+    if (isNewMessageAdd && !isLoadingOlder) {
+      scrollToBottom(true);
+      return;
+    }
+    if (isLoading) {
+      scrollToBottom(false);
+    }
+  }, [isLoading, isLoadingOlder, messages, scrollToBottom]);
 
-    scrollToBottom(false);
-  }, [isLoading, messages, scrollToBottom]);
+  const handleScrollStateChange = useCallback((isScrolledUp: boolean) => {
+    isUserScrolledUpRef.current = isScrolledUp;
+  }, []);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -498,6 +508,7 @@ export function useMainPageController() {
   }, []);
 
   const handleNewChat = useCallback(() => {
+    isUserScrolledUpRef.current = false;
     setMessages([]);
     setActiveSessionId(null);
     setInputMessage('');
@@ -508,6 +519,7 @@ export function useMainPageController() {
 
   const handleLoadSession = useCallback(
     async (id: string) => {
+      isUserScrolledUpRef.current = false;
       setIsLoadingChat(true);
       try {
         const loadedMessages = await loadSession(id);
@@ -610,6 +622,7 @@ export function useMainPageController() {
       setChatError(null);
       lastFailedRequestRef.current = null;
       streamFullTextRef.current = '';
+      wasEarlyStopRef.current = false;
 
       const controller = new AbortController();
       abortControllerRef.current = controller;
@@ -655,10 +668,27 @@ export function useMainPageController() {
             (lastMessage.isStopped === true || lastMessage.content === '');
 
           if (lastMessageIsReplaceableAssistant) {
-            nextBaseMessages = nextBaseMessages.slice(0, -1);
-            const previousMessage = nextBaseMessages[nextBaseMessages.length - 1];
-            if (previousMessage?.role === 'user') {
-              nextBaseMessages = nextBaseMessages.slice(0, -1);
+            const isEarlyStop = wasEarlyStopRef.current || !lastMessage.content;
+            wasEarlyStopRef.current = false;
+
+            if (isEarlyStop) {
+              // Early stop: remove orphan user msg + empty assistant from UI
+              // and clean up from DB so it doesn't reappear on refresh
+              nextBaseMessages = nextBaseMessages.slice(0, -1); // remove empty assistant
+              const prevMsg = nextBaseMessages[nextBaseMessages.length - 1];
+              if (prevMsg?.role === 'user') {
+                // Clean up orphan user message from DB
+                if (currentSessionId) {
+                  api.fetch('/chat/truncate-last-stopped', {
+                    method: 'POST',
+                    body: JSON.stringify({ session_id: currentSessionId }),
+                  }).catch(e => console.warn('[Truncate] cleanup failed:', e));
+                }
+                nextBaseMessages = nextBaseMessages.slice(0, -1);
+              }
+            } else {
+              // Mid-stream stop: keep the stopped exchange in history (like ChatGPT)
+              // just don't remove it — new message will append below naturally
             }
           } else if (isError) {
             const previousMessage = nextBaseMessages[nextBaseMessages.length - 1];
@@ -765,9 +795,29 @@ export function useMainPageController() {
   }, [inputMessage, isLoading, pendingAttachments, sendMessageApi]);
 
   const handleStopGeneration = useCallback(() => {
-    setIsLoading(false);
+    // Track whether any text was streamed before the stop
+    wasEarlyStopRef.current = !streamFullTextRef.current.trim();
     abortControllerRef.current?.abort();
-  }, []);
+    // Immediately reset loading so the stop button reverts to the send icon right away.
+    setIsLoading(false);
+
+    const partialText = streamFullTextRef.current.trim();
+    const sessionId = activeSessionId;
+    if (!sessionId) return;
+
+    // For mid-stream stops: wait 800ms for backend disconnect handler to save first,
+    // then call save-partial as fallback (it will UPDATE the existing row, not INSERT).
+    // For early stops: no save needed here — cleanup happens in sendMessageApi on next send.
+    if (!wasEarlyStopRef.current && partialText) {
+      setTimeout(() => {
+        api.fetch('/chat/save-partial', {
+          method: 'POST',
+          body: JSON.stringify({ session_id: sessionId, content: partialText }),
+        }).catch(e => console.warn('[Stop] save-partial failed:', e));
+      }, 800);
+    }
+  }, [activeSessionId]);
+
 
   const handleEditMessage = useCallback(
     async (messageId: string, newText: string) => {
@@ -875,11 +925,18 @@ export function useMainPageController() {
                 : message
             )
           );
+          // Persist partial text on edit abort (same guarantee as regular send)
+          if (activeSessionId) {
+            api.fetch('/chat/save-partial', {
+              method: 'POST',
+              body: JSON.stringify({ session_id: activeSessionId, content: streamFullTextRef.current.trim() }),
+            }).catch(e => console.warn('[Stop/Edit] save-partial failed:', e));
+          }
         } else {
           console.error('Edit Error:', error);
           setMessages((previous) => previous.filter((message) => String(message.id) !== tempAssistantId));
           setIsError(true);
-          setChatError(error instanceof Error && error.message.length < 120 ? error.message : 'Something went wrong. Please try again.');
+          setChatError('Something went wrong. Please try again.');
           lastFailedRequestRef.current = { type: 'edit', messageId: String(messageId), newText };
         }
       } finally {
@@ -946,11 +1003,18 @@ export function useMainPageController() {
               : message
           )
         );
+        // Persist partial text on regenerate abort
+        if (activeSessionId) {
+          api.fetch('/chat/save-partial', {
+            method: 'POST',
+            body: JSON.stringify({ session_id: activeSessionId, content: streamFullTextRef.current.trim() }),
+          }).catch(e => console.warn('[Stop/Regenerate] save-partial failed:', e));
+        }
       } else {
         console.error('Regenerate failed:', error);
         setMessages((previous) => previous.filter((message) => String(message.id) !== tempAssistantId));
         setIsError(true);
-        setChatError(error instanceof Error && error.message.length < 120 ? error.message : 'Something went wrong. Please try again.');
+        setChatError('Something went wrong. Please try again.');
         lastFailedRequestRef.current = { type: 'regenerate' };
       }
     } finally {
@@ -1090,6 +1154,7 @@ export function useMainPageController() {
     handlePaste,
     handleRegenerate,
     handleRetryFailure,
+    handleScrollStateChange,
     handleSendMessage,
     handleStopGeneration,
     handleVoiceToggle,

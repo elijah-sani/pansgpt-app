@@ -30,6 +30,7 @@ export default function MainPage() {
     handlePaste,
     handleRegenerate,
     handleRetryFailure,
+    handleScrollStateChange,
     handleSendMessage,
     handleStopGeneration,
     handleVoiceToggle,
@@ -119,6 +120,7 @@ export default function MainPage() {
           handlePaste={handlePaste}
           handleRegenerate={handleRegenerate}
           handleRetryFailure={handleRetryFailure}
+          onScrollStateChange={handleScrollStateChange}
           handleSendMessage={handleSendMessage}
           handleStopGeneration={handleStopGeneration}
           handleVoiceToggle={handleVoiceToggle}

@@ -162,7 +162,9 @@ export function PDFViewerNotesPanel({
           ) : (
             <>
               {isSavingNote && <NoteCardSkeleton />}
-              {notes.map((note) => (
+              {notes.map((note) => {
+                const isDeleting = deletingNoteId === String(note.id);
+                return (
                 <div key={note.id} className="bg-background border border-border rounded-xl overflow-hidden group">
                   <div className="flex items-center justify-between px-3 pt-2.5 pb-1">
                     <span
@@ -182,7 +184,7 @@ export function PDFViewerNotesPanel({
                       {editingNoteId !== String(note.id) && (
                         <button
                           onClick={() => onStartEdit(note)}
-                          className="opacity-0 group-hover:opacity-100 p-1 rounded-md hover:bg-muted transition-all"
+                          className="opacity-100 lg:opacity-0 lg:group-hover:opacity-100 p-1 rounded-md hover:bg-muted transition-all"
                           title="Edit note"
                         >
                           <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
@@ -190,10 +192,10 @@ export function PDFViewerNotesPanel({
                       )}
                       <button
                         onClick={() => onDeleteNote(note.id)}
-                        disabled={deletingNoteId === String(note.id)}
-                        className="opacity-0 group-hover:opacity-100 p-1 rounded-md hover:bg-destructive/10 transition-all disabled:opacity-100"
+                        disabled={isDeleting}
+                        className={`${isDeleting ? 'opacity-100 lg:opacity-100' : 'opacity-100 lg:opacity-0 lg:group-hover:opacity-100'} p-1 rounded-md hover:bg-destructive/10 transition-all disabled:opacity-100`}
                       >
-                        {deletingNoteId === String(note.id) ? (
+                        {isDeleting ? (
                           <Loader2 className="w-3.5 h-3.5 text-destructive animate-spin" />
                         ) : (
                           <Trash2 className="w-3.5 h-3.5 text-destructive" />
@@ -266,7 +268,8 @@ export function PDFViewerNotesPanel({
                     </div>
                   )}
                 </div>
-              ))}
+              );
+              })}
             </>
           )}
         </div>

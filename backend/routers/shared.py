@@ -33,6 +33,7 @@ RAG_NETWORK_TIMEOUT_MESSAGE = (
 # Default is 0.65. Override via environment variable RAG_MATCH_THRESHOLD.
 RAG_MATCH_THRESHOLD = float(os.getenv("RAG_MATCH_THRESHOLD", "0.65"))
 
+
 try:
     import grpc  # type: ignore
 except ImportError:
@@ -113,7 +114,7 @@ async def verify_api_key(x_api_key: str = Header(...)):
 
 def _is_retryable_network_error(exc: Exception) -> bool:
     """
-    Return True for transient SSL/timeout failures that should be retried.
+    Return True for transient SSL/timeout/connection failures that should be retried.
     """
     msg = str(exc).lower()
     retry_markers = (
@@ -123,8 +124,16 @@ def _is_retryable_network_error(exc: Exception) -> bool:
         "the read operation timed out",
         "_ssl.c",
         "ssl",
+        # httpx.RemoteProtocolError raised when the server closes the connection
+        # mid-request (common after SSE client disconnects reset the connection pool)
+        "server disconnected",
+        "remote protocol error",
+        "connection reset",
+        "peer closed",
+        "broken pipe",
     )
     return any(marker in msg for marker in retry_markers)
+
 
 def _is_rag_network_timeout_error(exc: Exception) -> bool:
     """
@@ -157,6 +166,7 @@ def _is_rag_network_timeout_error(exc: Exception) -> bool:
             pass
 
     return False
+
 
 async def _execute_with_retry(execute_fn, operation_name: str, max_attempts: int = 3):
     """
