@@ -237,6 +237,7 @@ _settings_cache = TTLCache(maxsize=1, ttl=300)
 _faculty_cache = TTLCache(maxsize=10, ttl=300)
 _timetable_cache = TTLCache(maxsize=10, ttl=300)
 _profile_cache = TTLCache(maxsize=100, ttl=300)
+_drive_metadata_cache = TTLCache(maxsize=200, ttl=7200)
 
 def invalidate_settings_cache() -> None:
     """
@@ -619,21 +620,28 @@ async def get_relevant_context(
                     logger.warning(f"Could not fetch metadata: {meta_err}")
             except (ValueError, AttributeError):
                 # Not a UUID - must be a Drive file ID, lookup the Supabase UUID and metadata
-                try:
-                    doc_response = await _execute_with_retry(
-                        lambda: supabase_client.table("pans_library").select("id, file_name, topic, lecturer_name, course_code").eq("drive_file_id", document_id).execute(),
-                        "Fetch document metadata by Drive ID",
-                    )
-                    if doc_response.data and len(doc_response.data) > 0:
-                        supabase_doc_id = doc_response.data[0]['id']
-                        doc_metadata = doc_response.data[0]
-                        logger.info(f"Converted Drive ID to UUID: {supabase_doc_id}")
-                    else:
-                        logger.warning(f"No document found for Drive ID: {document_id}")
+                if document_id in _drive_metadata_cache:
+                    cached_data = _drive_metadata_cache[document_id]
+                    supabase_doc_id = cached_data['id']
+                    doc_metadata = cached_data
+                    logger.info(f"Using cached Drive ID to UUID metadata: {supabase_doc_id}")
+                else:
+                    try:
+                        doc_response = await _execute_with_retry(
+                            lambda: supabase_client.table("pans_library").select("id, file_name, topic, lecturer_name, course_code").eq("drive_file_id", document_id).execute(),
+                            "Fetch document metadata by Drive ID",
+                        )
+                        if doc_response.data and len(doc_response.data) > 0:
+                            supabase_doc_id = doc_response.data[0]['id']
+                            doc_metadata = doc_response.data[0]
+                            _drive_metadata_cache[document_id] = doc_metadata
+                            logger.info(f"Converted Drive ID to UUID: {supabase_doc_id}")
+                        else:
+                            logger.warning(f"No document found for Drive ID: {document_id}")
+                            return "", []
+                    except Exception as lookup_err:
+                        logger.error(f"Document ID lookup failed: {lookup_err}")
                         return "", []
-                except Exception as lookup_err:
-                    logger.error(f"Document ID lookup failed: {lookup_err}")
-                    return "", []
 
             # Step 2: Call Supabase RPC for vector similarity search
             response = await _execute_with_retry(
@@ -642,7 +650,7 @@ async def get_relevant_context(
                     {
                         'query_embedding': query_vector,
                         'match_threshold': match_threshold,
-                        'match_count': 10,       # Increased from 5 to get more context
+                        'match_count': 4,
                         'filter_doc_id': supabase_doc_id  # Use converted UUID
                     }
                 ).execute(),
@@ -759,7 +767,7 @@ async def get_relevant_context(
                 {
                     "query_embedding": query_vector,
                     "match_threshold": match_threshold,
-                    "match_count": 10,
+                    "match_count": 4,
                     "allowed_doc_ids": allowed_doc_ids,
                 },
             ).execute(),

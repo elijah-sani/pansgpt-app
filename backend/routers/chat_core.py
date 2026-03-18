@@ -67,7 +67,7 @@ import random
 def _trim_messages_to_fit(
     messages: list[dict],
     system_prompt: str,
-    max_tokens: int = 6000,
+    max_tokens: int = 14000,
     chars_per_token: int = 4,
 ) -> list[dict]:
     """
@@ -1155,7 +1155,30 @@ async def save_partial_response(
     if not shared.supabase_client:
         raise HTTPException(status_code=503, detail="Database not active")
 
-    await _assert_session_owner(request.session_id, current_user)
+    # Session owner check — wrapped so a flaky post-abort connection doesn't kill the save
+    try:
+        await _assert_session_owner(request.session_id, current_user)
+    except Exception as e:
+        # If the owner check itself fails (e.g. "Server disconnected" after abort),
+        # fall back to a direct user_id match rather than dropping the save entirely
+        logger.warning(f"save-partial: _assert_session_owner failed ({e}), falling back to direct check")
+        if shared.supabase_client:
+            try:
+                sess_res = await _execute_with_retry(
+                    lambda: shared.supabase_client.table("chat_sessions")
+                        .select("id")
+                        .eq("id", request.session_id)
+                        .eq("user_id", current_user.id)
+                        .limit(1)
+                        .execute(),
+                    "save-partial fallback session check",
+                )
+                if not sess_res.data:
+                    raise HTTPException(status_code=403, detail="Not your session")
+            except HTTPException:
+                raise
+            except Exception as e2:
+                logger.error(f"save-partial: fallback session check also failed ({e2}), proceeding with JWT trust")
 
     content = request.content.strip()
     # Build the saved text — append the stop note if not already present
@@ -1180,10 +1203,21 @@ async def save_partial_response(
         if recent_ai.data:
             existing_id = recent_ai.data[0]["id"]
             existing_content = (recent_ai.data[0].get("content") or "").strip()
+            existing_created = recent_ai.data[0].get("created_at", "")
 
-            # If the existing AI message already has the stopped note with the SAME content
-            # (or more), skip — nothing to update
-            if existing_content == text_to_save:
+            # Only treat as a duplicate if saved in the last 20 seconds
+            # (avoids false positives from a prior stopped exchange in the same session)
+            is_recent = False
+            if existing_created:
+                try:
+                    from datetime import datetime, timezone
+                    created_dt = datetime.fromisoformat(existing_created.replace("Z", "+00:00"))
+                    age_seconds = (datetime.now(timezone.utc) - created_dt).total_seconds()
+                    is_recent = age_seconds < 20
+                except Exception:
+                    is_recent = True  # If parsing fails, assume recent
+
+            if existing_content == text_to_save and is_recent:
                 return {"status": "already_saved", "message_id": existing_id}
 
             # If the existing message has the stop note but the frontend has MORE content

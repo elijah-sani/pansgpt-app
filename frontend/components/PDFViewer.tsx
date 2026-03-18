@@ -997,31 +997,36 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
         // --- On new send: clean up any previous stopped/orphan exchange from UI ---
         if (!isRetry) {
-            setChatHistory(prev => {
-                const cleaned = [...prev];
-                const lastMsg = cleaned[cleaned.length - 1];
-                // If last message is a stopped/empty assistant, remove it (and its preceding user)
-                if (lastMsg && (lastMsg.role === 'assistant' || lastMsg.role === 'ai') &&
-                    ((lastMsg as Message & { isStopped?: boolean }).isStopped || lastMsg.content === '')) {
-                    const isEarly = wasEarlyStopRef.current || !lastMsg.content;
-                    wasEarlyStopRef.current = false;
-                    if (isEarly) {
-                        cleaned.pop(); // remove empty assistant
-                        const prev2 = cleaned[cleaned.length - 1];
-                        if (prev2?.role === 'user') {
-                            cleaned.pop(); // remove orphan user message
-                        }
-                        // Clean up from DB too
-                        if (currentSessionId) {
-                            api.fetch('/chat/truncate-last-stopped', {
-                                method: 'POST',
-                                body: JSON.stringify({ session_id: currentSessionId }),
-                            }).catch(e => console.warn('[StudyMode] orphan cleanup failed:', e));
-                        }
+            // Check BEFORE setState — read current history snapshot directly
+            const currentHistory = [...chatHistory];
+            const lastMsg = currentHistory[currentHistory.length - 1];
+            const isStoppedOrEmpty = lastMsg &&
+                (lastMsg.role === 'assistant' || lastMsg.role === 'ai') &&
+                ((lastMsg as Message & { isStopped?: boolean }).isStopped || lastMsg.content === '');
+
+            if (isStoppedOrEmpty) {
+                const isEarly = wasEarlyStopRef.current || !lastMsg.content;
+                wasEarlyStopRef.current = false;
+
+                if (isEarly) {
+                    // Remove orphan from UI
+                    let sliceEnd = currentHistory.length - 1; // remove stopped assistant
+                    const prevMsg = currentHistory[sliceEnd - 1];
+                    if (prevMsg?.role === 'user') sliceEnd--; // remove orphan user too
+                    setChatHistory(currentHistory.slice(0, sliceEnd));
+
+                    // Clean up DB — called OUTSIDE setState so it fires exactly once
+                    if (currentSessionId) {
+                        api.fetch('/chat/truncate-last-stopped', {
+                            method: 'POST',
+                            body: JSON.stringify({ session_id: currentSessionId }),
+                        }).catch(e => console.warn('[StudyMode] orphan cleanup failed:', e));
                     }
+                } else {
+                    // Mid-stream stop — keep history as-is, new message appends below
+                    setChatHistory(currentHistory);
                 }
-                return cleaned;
-            });
+            }
         }
 
         try {
@@ -1128,7 +1133,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 console.error('Chat Error:', err);
                 setChatHistory(prev => prev.filter(msg => String(msg.id) !== tempAssistantId));
                 setIsError(true);
-                setChatError(err instanceof Error ? err.message : "Network Error: Please try again.");
+                setChatError("Something went wrong. Please try again.");
             }
         } finally {
             setIsLoading(false);
@@ -1186,8 +1191,9 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
     const handleEditMessage = async (messageId: string, newText: string) => {
         if (!currentSessionId) return;
-        // Reset stream buffer so partial stop shows correct text
+        // Reset stream buffer and early-stop flag so stale state from previous stop is cleared
         streamFullTextRef.current = '';
+        wasEarlyStopRef.current = false;
         const tempAssistantId = `temp-assistant-edit-${Date.now()}`;
 
         // Safety log: what ID is being sent to the backend?
@@ -1529,6 +1535,10 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                     return [...base, { id: tempAssistantId, role: 'assistant', content: '', session_id: currentSessionId, isThinking: true }];
                 });
                 setIsLoading(true);
+
+                // Reset stream buffer FIRST so stale text from previous stop isn't used
+                streamFullTextRef.current = '';
+                wasEarlyStopRef.current = false;
 
                 // Create a fresh AbortController for regenerate so stopGeneration() can cancel it
                 const regenController = new AbortController();
