@@ -981,8 +981,9 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     };
 
     const sendMessage = async (text: string, attachments: string[] = [], systemInstruction?: string, isRetry: boolean = false) => {
-        // Reset the stream buffer immediately so early-stop doesn't show stale text
+        // Reset stream buffer and early-stop flag so stale state never bleeds into next send
         streamFullTextRef.current = '';
+        wasEarlyStopRef.current = false;
         setIsLoading(true);
         setIsError(false);
         setChatError(null);
@@ -1017,15 +1018,20 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                         baseHistory = baseHistory.slice(0, -1); // remove orphan user
                     }
 
-                    // Update UI to match — called OUTSIDE setState updater so it fires once
+                    // Update UI to match
                     setChatHistory(baseHistory);
 
-                    // Clean up DB — fires exactly once, outside setState
+                    // MUST await before firing /chat — if fire-and-forget, truncate can
+                    // race with /chat saving the new user message and delete it instead
                     if (currentSessionId) {
-                        api.fetch('/chat/truncate-last-stopped', {
-                            method: 'POST',
-                            body: JSON.stringify({ session_id: currentSessionId }),
-                        }).catch(e => console.warn('[StudyMode] orphan cleanup failed:', e));
+                        try {
+                            await api.fetch('/chat/truncate-last-stopped', {
+                                method: 'POST',
+                                body: JSON.stringify({ session_id: currentSessionId }),
+                            });
+                        } catch (e) {
+                            console.warn('[StudyMode] orphan cleanup failed:', e);
+                        }
                     }
                 }
                 // Mid-stream stop: baseHistory unchanged — new message appends below naturally
@@ -1137,7 +1143,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 console.error('Chat Error:', err);
                 setChatHistory(prev => prev.filter(msg => String(msg.id) !== tempAssistantId));
                 setIsError(true);
-                setChatError(err instanceof Error ? err.message : "Network Error: Please try again.");
+                setChatError(err instanceof Error && err.message.length < 120 ? err.message : 'Something went wrong. Please try again.');
             }
         } finally {
             setIsLoading(false);

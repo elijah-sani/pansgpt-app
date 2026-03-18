@@ -632,7 +632,7 @@ export function useMainPageController() {
 
       try {
         let currentSessionId = activeSessionId;
-        
+
         const newUserMessage: Message = {
           id: tempUserId,
           role: 'user',
@@ -664,11 +664,17 @@ export function useMainPageController() {
               nextBaseMessages = nextBaseMessages.slice(0, -1);
               const prevMsg = nextBaseMessages[nextBaseMessages.length - 1];
               if (prevMsg?.role === 'user') {
+                // MUST await — fire-and-forget races with /chat saving the new user
+                // message and truncate deletes it instead of the orphan
                 if (currentSessionId) {
-                  api.fetch('/chat/truncate-last-stopped', {
-                    method: 'POST',
-                    body: JSON.stringify({ session_id: currentSessionId }),
-                  }).catch(e => console.warn('[Truncate] cleanup failed:', e));
+                  try {
+                    await api.fetch('/chat/truncate-last-stopped', {
+                      method: 'POST',
+                      body: JSON.stringify({ session_id: currentSessionId }),
+                    });
+                  } catch (e) {
+                    console.warn('[Truncate] cleanup failed:', e);
+                  }
                 }
                 nextBaseMessages = nextBaseMessages.slice(0, -1);
               }
