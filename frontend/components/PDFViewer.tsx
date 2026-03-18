@@ -995,11 +995,12 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
         let isNewSession = false;
 
-        // --- On new send: clean up any previous stopped/orphan exchange from UI ---
+        // --- On new send: clean up any previous stopped/orphan exchange ---
+        // Build baseHistory SYNCHRONOUSLY from current chatHistory snapshot
+        // so the backend payload is always clean — React state may not have updated yet
+        let baseHistory = [...chatHistory];
         if (!isRetry) {
-            // Check BEFORE setState — read current history snapshot directly
-            const currentHistory = [...chatHistory];
-            const lastMsg = currentHistory[currentHistory.length - 1];
+            const lastMsg = baseHistory[baseHistory.length - 1];
             const isStoppedOrEmpty = lastMsg &&
                 (lastMsg.role === 'assistant' || lastMsg.role === 'ai') &&
                 ((lastMsg as Message & { isStopped?: boolean }).isStopped || lastMsg.content === '');
@@ -1009,23 +1010,25 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 wasEarlyStopRef.current = false;
 
                 if (isEarly) {
-                    // Remove orphan from UI
-                    let sliceEnd = currentHistory.length - 1; // remove stopped assistant
-                    const prevMsg = currentHistory[sliceEnd - 1];
-                    if (prevMsg?.role === 'user') sliceEnd--; // remove orphan user too
-                    setChatHistory(currentHistory.slice(0, sliceEnd));
+                    // Strip orphan assistant + orphan user from base history
+                    baseHistory = baseHistory.slice(0, -1); // remove empty/stopped assistant
+                    const prevMsg = baseHistory[baseHistory.length - 1];
+                    if (prevMsg?.role === 'user') {
+                        baseHistory = baseHistory.slice(0, -1); // remove orphan user
+                    }
 
-                    // Clean up DB — called OUTSIDE setState so it fires exactly once
+                    // Update UI to match — called OUTSIDE setState updater so it fires once
+                    setChatHistory(baseHistory);
+
+                    // Clean up DB — fires exactly once, outside setState
                     if (currentSessionId) {
                         api.fetch('/chat/truncate-last-stopped', {
                             method: 'POST',
                             body: JSON.stringify({ session_id: currentSessionId }),
                         }).catch(e => console.warn('[StudyMode] orphan cleanup failed:', e));
                     }
-                } else {
-                    // Mid-stream stop — keep history as-is, new message appends below
-                    setChatHistory(currentHistory);
                 }
+                // Mid-stream stop: baseHistory unchanged — new message appends below naturally
             }
         }
 
@@ -1046,8 +1049,9 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 isThinking: true
             };
 
-            const updatedHistory = isRetry ? [...chatHistory] : [...chatHistory, newUserMsg];
-            setChatHistory(prev => (isRetry ? [...prev, assistantPlaceholder] : [...prev, newUserMsg, assistantPlaceholder]));
+            // Use baseHistory (already cleaned) — NOT chatHistory (stale)
+            const updatedHistory = isRetry ? [...baseHistory] : [...baseHistory, newUserMsg];
+            setChatHistory(isRetry ? [...baseHistory, assistantPlaceholder] : [...baseHistory, newUserMsg, assistantPlaceholder]);
 
             let activeSessionId = currentSessionId;
             if (!activeSessionId) {
@@ -1133,7 +1137,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 console.error('Chat Error:', err);
                 setChatHistory(prev => prev.filter(msg => String(msg.id) !== tempAssistantId));
                 setIsError(true);
-                setChatError("Something went wrong. Please try again.");
+                setChatError(err instanceof Error ? err.message : "Network Error: Please try again.");
             }
         } finally {
             setIsLoading(false);
@@ -1191,9 +1195,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
     const handleEditMessage = async (messageId: string, newText: string) => {
         if (!currentSessionId) return;
-        // Reset stream buffer and early-stop flag so stale state from previous stop is cleared
+        // Reset stream buffer so partial stop shows correct text
         streamFullTextRef.current = '';
-        wasEarlyStopRef.current = false;
         const tempAssistantId = `temp-assistant-edit-${Date.now()}`;
 
         // Safety log: what ID is being sent to the backend?
@@ -1371,11 +1374,11 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 }),
             });
             if (res.ok) {
-                setNoteSavedFlash(true);
-                setTimeout(() => setNoteSavedFlash(false), 2000);
-                // Always open notes panel and refresh list after saving
+                const saved = await res.json();
+                setNotes(prev => [...prev, saved]);
                 setNotesOpen(true);
-                void fetchNotes();
+                setNoteSavedFlash(true);
+                setTimeout(() => setNoteSavedFlash(false), 2500);
             }
         } catch {
             // Ignore silently for now.
@@ -1398,11 +1401,11 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 }),
             });
             if (res.ok) {
-                setNoteSavedFlash(true);
-                setTimeout(() => setNoteSavedFlash(false), 2000);
-                // Always open notes panel and refresh list after saving
+                const saved = await res.json();
+                setNotes(prev => [...prev, saved]);
                 setNotesOpen(true);
-                void fetchNotes();
+                setNoteSavedFlash(true);
+                setTimeout(() => setNoteSavedFlash(false), 2500);
             }
         } catch {
             // Ignore silently for now.
@@ -1535,10 +1538,6 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                     return [...base, { id: tempAssistantId, role: 'assistant', content: '', session_id: currentSessionId, isThinking: true }];
                 });
                 setIsLoading(true);
-
-                // Reset stream buffer FIRST so stale text from previous stop isn't used
-                streamFullTextRef.current = '';
-                wasEarlyStopRef.current = false;
 
                 // Create a fresh AbortController for regenerate so stopGeneration() can cancel it
                 const regenController = new AbortController();
@@ -2022,12 +2021,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                         </div>
                                     )}
 
-                                    {noteSavedFlash && (
-                                        <div className="absolute bottom-20 left-1/2 -translate-x-1/2 bg-emerald-600 text-white text-xs font-medium px-4 py-2 rounded-full shadow-lg z-50 animate-in fade-in slide-in-from-bottom-2 flex items-center gap-2">
-                                            <BookmarkPlus className="w-3.5 h-3.5" />
-                                            Note saved
-                                        </div>
-                                    )}
+
                                 </div>
                             </div>
                         </div>

@@ -1,5 +1,5 @@
 import { BookOpen, Check, Copy, Download, Loader2, Pencil, Send, Trash2, X } from 'lucide-react';
-import type { KeyboardEvent } from 'react';
+import { useRef, useEffect, type KeyboardEvent } from 'react';
 import type { PDFNote } from './types';
 
 const NoteCardSkeleton = () => (
@@ -32,6 +32,7 @@ type PDFViewerNotesPanelProps = {
   isSavingNote: boolean;
   isSavingPersonal: boolean;
   notes: PDFNote[];
+  showSavedFlash?: boolean;
   onClose: () => void;
   onCopyNotes: () => void;
   onDeleteNote: (noteId: string | number) => void;
@@ -60,6 +61,7 @@ export function PDFViewerNotesPanel({
   isSavingNote,
   isSavingPersonal,
   notes,
+  showSavedFlash,
   onClose,
   onCopyNotes,
   onDeleteNote,
@@ -74,6 +76,14 @@ export function PDFViewerNotesPanel({
   onToggleExpanded,
   personalNote,
 }: PDFViewerNotesPanelProps) {
+  const notesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (notes.length > 0) {
+      notesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [notes.length]);
+
   if (!isOpen) {
     return null;
   }
@@ -165,112 +175,119 @@ export function PDFViewerNotesPanel({
               {notes.map((note) => {
                 const isDeleting = deletingNoteId === String(note.id);
                 return (
-                <div key={note.id} className="bg-background border border-border rounded-xl overflow-hidden group">
-                  <div className="flex items-center justify-between px-3 pt-2.5 pb-1">
-                    <span
-                      className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
-                        note.category === 'Definition'
-                          ? 'bg-blue-500/10 text-blue-500'
-                          : note.category === 'Formula'
-                            ? 'bg-amber-500/10 text-amber-500'
-                            : note.category === 'Important'
-                              ? 'bg-red-500/10 text-red-500'
-                              : 'bg-emerald-500/10 text-emerald-500'
-                      }`}
-                    >
-                      {note.category || 'Key Point'}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      {editingNoteId !== String(note.id) && (
-                        <button
-                          onClick={() => onStartEdit(note)}
-                          className="opacity-100 lg:opacity-0 lg:group-hover:opacity-100 p-1 rounded-md hover:bg-muted transition-all"
-                          title="Edit note"
-                        >
-                          <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
-                        </button>
-                      )}
-                      <button
-                        onClick={() => onDeleteNote(note.id)}
-                        disabled={isDeleting}
-                        className={`${isDeleting ? 'opacity-100 lg:opacity-100' : 'opacity-100 lg:opacity-0 lg:group-hover:opacity-100'} p-1 rounded-md hover:bg-destructive/10 transition-all disabled:opacity-100`}
+                  <div key={note.id} className="bg-background border border-border rounded-xl overflow-hidden group">
+                    <div className="flex items-center justify-between px-3 pt-2.5 pb-1">
+                      <span
+                        className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${note.category === 'Definition'
+                            ? 'bg-blue-500/10 text-blue-500'
+                            : note.category === 'Formula'
+                              ? 'bg-amber-500/10 text-amber-500'
+                              : note.category === 'Important'
+                                ? 'bg-red-500/10 text-red-500'
+                                : 'bg-emerald-500/10 text-emerald-500'
+                          }`}
                       >
-                        {isDeleting ? (
-                          <Loader2 className="w-3.5 h-3.5 text-destructive animate-spin" />
-                        ) : (
-                          <Trash2 className="w-3.5 h-3.5 text-destructive" />
+                        {note.category || 'Key Point'}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        {editingNoteId !== String(note.id) && (
+                          <button
+                            onClick={() => onStartEdit(note)}
+                            className="opacity-100 lg:opacity-0 lg:group-hover:opacity-100 p-1 rounded-md hover:bg-muted transition-all"
+                            title="Edit note"
+                          >
+                            <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
+                          </button>
                         )}
-                      </button>
-                    </div>
-                  </div>
-
-                  {note.image_base64 && (
-                    <div className="px-3 pb-2">
-                      <img
-                        src={`data:image/png;base64,${note.image_base64}`}
-                        alt="Note snippet"
-                        className="w-full rounded-lg border border-border object-contain max-h-28"
-                      />
-                    </div>
-                  )}
-
-                  {editingNoteId === String(note.id) ? (
-                    <div className="px-3 pb-2 space-y-1.5">
-                      <textarea
-                        value={editingText}
-                        onChange={(event) => onEditingTextChange(event.target.value)}
-                        rows={4}
-                        autoFocus
-                        className="w-full resize-none rounded-lg border border-primary/30 bg-background text-base md:text-xs text-foreground p-2 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
-                      />
-                      <div className="flex items-center gap-1.5">
                         <button
-                          onClick={() => void onSaveEdit(String(note.id))}
-                          disabled={isSavingEdit || !editingText.trim()}
-                          className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-primary text-primary-foreground text-[10px] font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                          onClick={() => onDeleteNote(note.id)}
+                          disabled={isDeleting}
+                          className={`${isDeleting ? 'opacity-100 lg:opacity-100' : 'opacity-100 lg:opacity-0 lg:group-hover:opacity-100'} p-1 rounded-md hover:bg-destructive/10 transition-all disabled:opacity-100`}
                         >
-                          {isSavingEdit ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-                          Save
-                        </button>
-                        <button
-                          onClick={() => onSetEditingNoteId(null)}
-                          className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-muted text-muted-foreground text-[10px] font-medium hover:bg-muted/70 transition-colors"
-                        >
-                          <X className="w-3 h-3" /> Cancel
+                          {isDeleting ? (
+                            <Loader2 className="w-3.5 h-3.5 text-destructive animate-spin" />
+                          ) : (
+                            <Trash2 className="w-3.5 h-3.5 text-destructive" />
+                          )}
                         </button>
                       </div>
                     </div>
-                  ) : note.user_annotation ? (
-                    <div className="px-3 pb-2">
-                      <p className={`text-xs text-foreground leading-relaxed whitespace-pre-wrap ${expandedNotes.has(String(note.id)) ? '' : 'line-clamp-3'}`}>
-                        {note.user_annotation}
-                      </p>
-                      {note.user_annotation.length > 80 && (
-                        <button
-                          onClick={() => onToggleExpanded(String(note.id))}
-                          className="mt-1 text-[10px] font-medium text-primary hover:underline"
-                        >
-                          {expandedNotes.has(String(note.id)) ? 'Show less ↑' : 'Show more ↓'}
-                        </button>
-                      )}
-                    </div>
-                  ) : null}
 
-                  {note.ai_explanation && (
-                    <div className="px-3 pb-3">
-                      <p className="text-xs text-muted-foreground leading-relaxed">{note.ai_explanation}</p>
-                    </div>
-                  )}
+                    {note.image_base64 && (
+                      <div className="px-3 pb-2">
+                        <img
+                          src={`data:image/png;base64,${note.image_base64}`}
+                          alt="Note snippet"
+                          className="w-full rounded-lg border border-border object-contain max-h-28"
+                        />
+                      </div>
+                    )}
 
-                  {note.page_number && (
-                    <div className="px-3 pb-2.5">
-                      <span className="text-[10px] text-muted-foreground/60">Page {note.page_number}</span>
-                    </div>
-                  )}
-                </div>
-              );
+                    {editingNoteId === String(note.id) ? (
+                      <div className="px-3 pb-2 space-y-1.5">
+                        <textarea
+                          value={editingText}
+                          onChange={(event) => onEditingTextChange(event.target.value)}
+                          rows={4}
+                          autoFocus
+                          className="w-full resize-none rounded-lg border border-primary/30 bg-background text-base md:text-xs text-foreground p-2 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
+                        />
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => void onSaveEdit(String(note.id))}
+                            disabled={isSavingEdit || !editingText.trim()}
+                            className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-primary text-primary-foreground text-[10px] font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                          >
+                            {isSavingEdit ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                            Save
+                          </button>
+                          <button
+                            onClick={() => onSetEditingNoteId(null)}
+                            className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-muted text-muted-foreground text-[10px] font-medium hover:bg-muted/70 transition-colors"
+                          >
+                            <X className="w-3 h-3" /> Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : note.user_annotation ? (
+                      <div className="px-3 pb-2">
+                        <p className={`text-xs text-foreground leading-relaxed whitespace-pre-wrap ${expandedNotes.has(String(note.id)) ? '' : 'line-clamp-3'}`}>
+                          {note.user_annotation}
+                        </p>
+                        {note.user_annotation.length > 80 && (
+                          <button
+                            onClick={() => onToggleExpanded(String(note.id))}
+                            className="mt-1 text-[10px] font-medium text-primary hover:underline"
+                          >
+                            {expandedNotes.has(String(note.id)) ? 'Show less ↑' : 'Show more ↓'}
+                          </button>
+                        )}
+                      </div>
+                    ) : null}
+
+                    {note.ai_explanation && (
+                      <div className="px-3 pb-3">
+                        <p className="text-xs text-muted-foreground leading-relaxed">{note.ai_explanation}</p>
+                      </div>
+                    )}
+
+                    {note.page_number && (
+                      <div className="px-3 pb-2.5">
+                        <span className="text-[10px] text-muted-foreground/60">Page {note.page_number}</span>
+                      </div>
+                    )}
+                  </div>
+                );
               })}
+              <div ref={notesEndRef} />
             </>
+          )}
+
+          {showSavedFlash && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 text-xs font-medium animate-in fade-in slide-in-from-bottom-2 duration-200">
+              <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+              Note saved
+            </div>
           )}
         </div>
 

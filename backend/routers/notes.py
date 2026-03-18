@@ -89,23 +89,26 @@ async def _categorize_note(image_base64: str, annotation: Optional[str] = None) 
             "EXPLANATION: <explanation>"
         )
 
-        response = await llm_engine.google_client.chat.completions.create(
-            model=llm_engine.TEXT_SECONDARY,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{image_base64}"}
-                        },
-                        {"type": "text", "text": prompt}
-                    ]
-                }
-            ],
-            temperature=0.2,
-            max_tokens=100,
-            stream=False,
+        response = await asyncio.wait_for(
+            llm_engine.google_client.chat.completions.create(
+                model="gemma-3-4b-it",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/png;base64,{image_base64}"}
+                            },
+                            {"type": "text", "text": prompt}
+                        ]
+                    }
+                ],
+                temperature=0.2,
+                max_tokens=100,
+                stream=False,
+            ),
+            timeout=8.0,
         )
 
         raw = (response.choices[0].message.content or "").strip()
@@ -122,46 +125,73 @@ async def _categorize_note(image_base64: str, annotation: Optional[str] = None) 
 
         return {"explanation": explanation, "category": category}
 
+    except asyncio.TimeoutError:
+        logger.warning("Note categorization skipped: model took too long")
+        return {"explanation": None, "category": "Key Point"}
     except Exception as e:
         logger.warning(f"Note categorization failed: {e}")
         return {"explanation": None, "category": "Key Point"}
 
 
 async def _fix_typos(text: str) -> str:
-    """Use AI to fix typos and misspellings while preserving the original meaning."""
+    """Use Gemma 3 4B to fix typos — lightweight model, 5s hard timeout."""
     if not text or len(text.strip()) < 3:
         return text
     try:
         if llm_engine.google_client is None:
             return text
 
-        response = await llm_engine.google_client.chat.completions.create(
-            model=llm_engine.TEXT_SECONDARY,
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        "Fix ONLY spelling mistakes, typos, and obvious grammatical errors in the text below. "
-                        "Do NOT change wording, meaning, structure, or add new content. "
-                        "Do NOT add explanations — respond with ONLY the corrected text. "
-                        "If the text has no errors, return it exactly as-is.\n\n"
-                        f"Text: {text}"
-                    ),
-                },
-            ],
-            temperature=0.1,
-            max_tokens=500,
-            stream=False,
+        response = await asyncio.wait_for(
+            llm_engine.google_client.chat.completions.create(
+                model="gemma-3-4b-it",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": (
+                            "Fix ONLY spelling mistakes, typos, and obvious grammatical errors in the text below. "
+                            "Do NOT change wording, meaning, structure, or add new content. "
+                            "Do NOT add explanations — respond with ONLY the corrected text. "
+                            "If the text has no errors, return it exactly as-is.\n\n"
+                            f"Text: {text}"
+                        ),
+                    },
+                ],
+                temperature=0.1,
+                max_tokens=500,
+                stream=False,
+            ),
+            timeout=5.0,
         )
 
         corrected = (response.choices[0].message.content or "").strip()
-        # Safety check: if the AI returned something wildly different or empty, keep original
         if not corrected or len(corrected) > len(text) * 3:
             return text
         return corrected
+    except asyncio.TimeoutError:
+        logger.warning("Typo correction skipped: model took too long")
+        return text
     except Exception as e:
         logger.warning(f"Typo correction failed (non-fatal): {e}")
         return text
+
+
+async def _background_categorize_and_update(note_id: str, image_base64: str, annotation: Optional[str], sb):
+    """Background task: categorize image note then update DB silently."""
+    try:
+        result = await _categorize_note(image_base64, annotation)
+        await _execute_with_retry(
+            lambda: sb.table("document_notes")
+                .update({
+                    "ai_explanation": result["explanation"],
+                    "category": result["category"],
+                })
+                .eq("id", str(note_id))
+                .execute(),
+            "Background note categorization",
+        )
+        logger.info(f"Background categorization applied for note {note_id}: {result['category']}")
+    except Exception as e:
+        logger.warning(f"Background note categorization failed (non-fatal): {e}")
 
 
 async def _background_fix_and_update(note_id: str, text: str):
@@ -196,9 +226,16 @@ async def save_note(
     if not sb:
         raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
 
-    # Run AI categorization (instant for text-only notes, async for images)
-    ai_result = await _categorize_note(body.image_base64, body.user_annotation)
     resolved_document_id = await _resolve_document_uuid(sb, body.document_id)
+
+    # For text-only notes: categorize instantly (no AI call needed)
+    # For image notes: save immediately with defaults, categorize in background
+    if not body.image_base64:
+        initial_category = "Key Point"
+        initial_explanation = None
+    else:
+        initial_category = "Key Point"
+        initial_explanation = None
 
     try:
         res = await _execute_with_retry(
@@ -206,15 +243,21 @@ async def save_note(
                 "user_id": current_user.id,
                 "document_id": resolved_document_id,
                 "image_base64": body.image_base64,
-                "ai_explanation": ai_result["explanation"],
-                "category": ai_result["category"],
+                "ai_explanation": initial_explanation,
+                "category": initial_category,
                 "page_number": body.page_number,
                 "user_annotation": body.user_annotation,
             }).execute(),
             "Save document note",
         )
         saved = res.data[0]
-        # Fire-and-forget: correct typos in background, don't block the response
+
+        # Fire-and-forget background tasks — never block the response
+        if body.image_base64:
+            # Categorize image note in background and update DB when done
+            asyncio.create_task(_background_categorize_and_update(
+                saved["id"], body.image_base64, body.user_annotation, sb
+            ))
         if body.user_annotation and body.user_annotation.strip():
             asyncio.create_task(_background_fix_and_update(saved["id"], body.user_annotation))
         return saved
@@ -312,4 +355,3 @@ async def update_note(
     except Exception as e:
         logger.error(f"Update note error: {e}")
         raise HTTPException(status_code=500, detail="Unable to update note. Please try again.")
-
