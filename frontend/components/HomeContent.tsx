@@ -42,7 +42,7 @@ export default function HomeContent() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [, setMaintenanceMode] = useState(false);
-    // Progress: drive_file_id → { current_page, total_pages }
+    // Progress: drive_file_id â†’ { current_page, total_pages }
     const [progressMap, setProgressMap] = useState<Record<string, DocumentProgress>>({});
 
     // Navigation State (URL Driven)
@@ -83,7 +83,7 @@ export default function HomeContent() {
         setLoading(true);
         setError(null);
         const startTime = performance.now();
-        console.log("🚀 Starting Document Fetch...");
+        console.log("ðŸš€ Starting Document Fetch...");
 
         try {
             const response = await api.fetch('/documents');
@@ -98,7 +98,7 @@ export default function HomeContent() {
 
             const data = await response.json();
             const endTime = performance.now();
-            console.log(`⏱️ Documents Fetched in ${(endTime - startTime).toFixed(2)}ms`);
+            console.log(`â±ï¸ Documents Fetched in ${(endTime - startTime).toFixed(2)}ms`);
 
             setDocs(data || []);
             setDocuments((data || []) as ReaderDocument[]);
@@ -354,11 +354,16 @@ export default function HomeContent() {
                                         style={{ animationDelay: `${idx * 50}ms` }}
                                     >
                                         <div className="bg-card border border-border h-full p-6 rounded-2xl shadow-sm hover:shadow-md hover:border-primary/50 hover:-translate-y-1 active:translate-y-0 transition-all duration-300 relative overflow-hidden">
-                                            {/* Progress fill — green overlay behind all content */}
+                                            {/* Progress fill â€” green overlay behind all content */}
                                             {pct > 0 && (
                                                 <div
                                                     className="absolute inset-y-0 left-0 bg-primary/[0.12] pointer-events-none"
-                                                    style={{ width: `${pct}%` }}
+                                                    style={
+                                                        {
+                                                            '--progress-pct': `${pct}%`,
+                                                            animation: 'progress-fill-in 900ms cubic-bezier(0.22, 1, 0.36, 1) 80ms both',
+                                                        } as React.CSSProperties
+                                                    }
                                                 />
                                             )}
                                             {/* Hover shimmer */}

@@ -217,3 +217,9 @@ body {
 .auth-art-enter {
     animation: auth-art-enter 1100ms cubic-bezier(0.22, 1, 0.36, 1) 120ms both;
 }
+
+/* Document card progress fill — sweeps in from the left on mount */
+@keyframes progress-fill-in {
+    from { width: 0%; }
+    to   { width: var(--progress-pct); }
+}

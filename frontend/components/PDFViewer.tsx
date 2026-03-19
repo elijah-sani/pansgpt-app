@@ -803,7 +803,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 sysPrompt = "You are a helpful tutor. Provide a clear, real-world example.";
                 break;
             case "summarize":
-                prompt = `Summarize this text in detailed, simple bullet points:\n\n"${textToProcess}"`;
+                prompt = `Summarize this text in short, simple bullet points:\n\n"${textToProcess}"`;
                 sysPrompt = "Capture the key points in a concise bulleted list.";
                 break;
             case "answer":
