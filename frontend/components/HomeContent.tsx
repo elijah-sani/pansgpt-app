@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo } from 'react';
-import { BookOpen, ChevronRight, File, Library, FolderOpen, ArrowLeft, User, LogOut, LogIn, LayoutDashboard, PanelLeft } from 'lucide-react';
+import { CheckCircle2, ChevronRight, File, Library, FolderOpen, ArrowLeft, User, PanelLeft } from 'lucide-react';
 import Link from 'next/link';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { User as SupabaseUser } from '@supabase/supabase-js';
@@ -24,6 +24,11 @@ interface PDFDocument {
     file_size?: number;
 }
 
+interface DocumentProgress {
+    current_page: number;
+    total_pages: number;
+}
+
 export default function HomeContent() {
     const openSidebar = useSidebarTrigger();
     const {
@@ -37,6 +42,8 @@ export default function HomeContent() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [, setMaintenanceMode] = useState(false);
+    // Progress: drive_file_id → { current_page, total_pages }
+    const [progressMap, setProgressMap] = useState<Record<string, DocumentProgress>>({});
 
     // Navigation State (URL Driven)
     const router = useRouter();
@@ -113,6 +120,34 @@ export default function HomeContent() {
 
         void fetchDocs();
     }, [documents, hasLoadedDocuments]);
+
+    // Batch-fetch reading progress for all loaded documents in a single query
+    useEffect(() => {
+        if (!user || docs.length === 0) return;
+
+        const fileIds = docs.map((d) => d.drive_file_id);
+
+        const fetchProgress = async () => {
+            const { data, error: pgError } = await supabase
+                .from('document_progress')
+                .select('document_id, current_page, total_pages')
+                .eq('user_id', user.id)
+                .in('document_id', fileIds);
+
+            if (pgError || !data) return;
+
+            const map: Record<string, DocumentProgress> = {};
+            for (const row of data) {
+                map[row.document_id as string] = {
+                    current_page: row.current_page as number,
+                    total_pages: row.total_pages as number,
+                };
+            }
+            setProgressMap(map);
+        };
+
+        void fetchProgress();
+    }, [user, docs]);
 
     // Auth Check with DB Role
     useEffect(() => {
@@ -303,7 +338,19 @@ export default function HomeContent() {
                         {/* VIEW 2: TOPIC LIST */}
                         {viewMode === 'list' && (
                             <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                                {currentCourseDocs.map((doc, idx) => (
+                                {currentCourseDocs.map((doc, idx) => {
+                                    const prog = progressMap[doc.drive_file_id];
+                                    const pct = prog && prog.total_pages > 0
+                                        ? Math.min(100, Math.round((prog.current_page / prog.total_pages) * 100))
+                                        : 0;
+                                    const isComplete = pct >= 100;
+
+                                    // Background: sharp two-tone split based on read %; 0% = plain card bg
+                                    const cardBg = pct > 0
+                                        ? `linear-gradient(to right, hsl(var(--card) / 0.55) ${pct}%, hsl(var(--card)) ${pct}%)`
+                                        : undefined;
+
+                                    return (
                                     <Link
                                         href={`/reader/${doc.drive_file_id}?size=${doc.file_size || ''}&course=${selectedCourse}`}
                                         key={doc.id}
@@ -311,13 +358,24 @@ export default function HomeContent() {
                                         className="group relative"
                                         style={{ animationDelay: `${idx * 50}ms` }}
                                     >
-                                        <div className="bg-card border border-border h-full p-6 rounded-2xl shadow-sm hover:shadow-md hover:border-primary/50 hover:-translate-y-1 active:translate-y-0 transition-all duration-300 relative overflow-hidden">
+                                        <div
+                                            className="border border-border h-full p-6 rounded-2xl shadow-sm hover:shadow-md hover:border-primary/50 hover:-translate-y-1 active:translate-y-0 transition-all duration-300 relative overflow-hidden"
+                                            style={{ background: cardBg }}
+                                        >
+                                            {/* Hover shimmer — still sits on top of the split bg */}
                                             <div className="absolute inset-0 bg-gradient-to-br from-primary/0 via-primary/0 to-primary/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
 
                                             <div className="mb-4 flex items-center gap-3">
                                                 <div className="p-2.5 rounded-lg bg-primary/10 text-primary">
                                                     <File className="h-6 w-6" />
                                                 </div>
+                                                {/* Complete badge */}
+                                                {isComplete && (
+                                                    <span className="ml-auto flex items-center gap-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">
+                                                        <CheckCircle2 className="w-3.5 h-3.5" />
+                                                        Complete
+                                                    </span>
+                                                )}
                                             </div>
 
                                             <div className="space-y-3">
@@ -332,12 +390,20 @@ export default function HomeContent() {
 
                                                 <div className="pt-2 border-t border-border/50 flex items-center justify-between text-xs text-muted-foreground">
                                                     <span>{formatSize(doc.file_size)}</span>
-                                                    <span className="uppercase tracking-wider font-medium">{doc.created_at ? new Date(doc.created_at).toLocaleDateString() : 'PDF'}</span>
+                                                    {/* Page progress label */}
+                                                    {prog && prog.total_pages > 0 && !isComplete ? (
+                                                        <span className="font-medium tabular-nums">
+                                                            {prog.current_page}&thinsp;/&thinsp;{prog.total_pages} pages
+                                                        </span>
+                                                    ) : (
+                                                        <span className="uppercase tracking-wider font-medium">{doc.created_at ? new Date(doc.created_at).toLocaleDateString() : 'PDF'}</span>
+                                                    )}
                                                 </div>
                                             </div>
                                         </div>
                                     </Link>
-                                ))}
+                                    );
+                                })}
                             </div>
                         )}
                     </>
