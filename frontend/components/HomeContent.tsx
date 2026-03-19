@@ -345,11 +345,6 @@ export default function HomeContent() {
                                         : 0;
                                     const isComplete = pct >= 100;
 
-                                    // Background: sharp two-tone split based on read %; 0% = plain card bg
-                                    const cardBg = pct > 0
-                                        ? `linear-gradient(to right, hsl(var(--card) / 0.55) ${pct}%, hsl(var(--card)) ${pct}%)`
-                                        : undefined;
-
                                     return (
                                     <Link
                                         href={`/reader/${doc.drive_file_id}?size=${doc.file_size || ''}&course=${selectedCourse}`}
@@ -358,14 +353,18 @@ export default function HomeContent() {
                                         className="group relative"
                                         style={{ animationDelay: `${idx * 50}ms` }}
                                     >
-                                        <div
-                                            className="border border-border h-full p-6 rounded-2xl shadow-sm hover:shadow-md hover:border-primary/50 hover:-translate-y-1 active:translate-y-0 transition-all duration-300 relative overflow-hidden"
-                                            style={{ background: cardBg }}
-                                        >
-                                            {/* Hover shimmer — still sits on top of the split bg */}
+                                        <div className="bg-card border border-border h-full p-6 rounded-2xl shadow-sm hover:shadow-md hover:border-primary/50 hover:-translate-y-1 active:translate-y-0 transition-all duration-300 relative overflow-hidden">
+                                            {/* Progress fill — green overlay behind all content */}
+                                            {pct > 0 && (
+                                                <div
+                                                    className="absolute inset-y-0 left-0 bg-primary/[0.12] pointer-events-none"
+                                                    style={{ width: `${pct}%` }}
+                                                />
+                                            )}
+                                            {/* Hover shimmer */}
                                             <div className="absolute inset-0 bg-gradient-to-br from-primary/0 via-primary/0 to-primary/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
 
-                                            <div className="mb-4 flex items-center gap-3">
+                                            <div className="relative mb-4 flex items-center gap-3">
                                                 <div className="p-2.5 rounded-lg bg-primary/10 text-primary">
                                                     <File className="h-6 w-6" />
                                                 </div>
@@ -378,7 +377,7 @@ export default function HomeContent() {
                                                 )}
                                             </div>
 
-                                            <div className="space-y-3">
+                                            <div className="relative space-y-3">
                                                 <h3 className="text-xl font-bold text-card-foreground group-hover:text-primary transition-colors leading-tight">
                                                     {doc.topic}
                                                 </h3>
