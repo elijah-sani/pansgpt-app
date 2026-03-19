@@ -43,7 +43,11 @@ const PUBLIC_ROUTES = new Set([
 function isPublicPath(pathname: string | null): boolean {
     if (!pathname) return true;
     if (PUBLIC_ROUTES.has(pathname)) return true;
-    return pathname.startsWith('/auth/callback');
+    if (pathname.startsWith('/auth/callback')) return true;
+    // Admin routes have their own auth + role check in admin layout
+    // Skip ProfileGuard entirely to avoid double API round trips
+    if (pathname.startsWith('/admin')) return true;
+    return false;
 }
 
 function isProfileComplete(profile: ProfileResponse | null): boolean {

@@ -46,9 +46,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             setUserEmail(email);
         };
         checkAuth();
-    }, [router, supabase]);
+    }, [router]);
 
-    if (!userEmail) return null; // Wait for auth
+    if (!userEmail) return (
+        <div className="flex min-h-screen items-center justify-center bg-background">
+            <div className="flex flex-col items-center gap-3">
+                <img src="/icon.svg" alt="PansGPT" className="w-8 h-8 animate-pulse" />
+                <p className="text-xs text-muted-foreground font-medium">Verifying access...</p>
+            </div>
+        </div>
+    );
 
     return (
         <div className="flex min-h-screen bg-background text-foreground font-sans selection:bg-primary/30">
