@@ -2,13 +2,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Document, Page, pdfjs } from 'react-pdf';
-import { X, Sparkles, BookmarkPlus, BookOpen, Lightbulb, Brain, Loader2, FileText, MessageSquare, ZoomIn, ZoomOut, Scissors, Copy, Trash2, ListChecks, MoreHorizontal, ChevronDown, RefreshCw, Download, Send, Pencil, Check } from 'lucide-react';
+import { X, Sparkles, BookmarkPlus, BookOpen, Lightbulb, Brain, Loader2, FileText, MessageSquare, ZoomIn, ZoomOut, Scissors, Copy, Trash2, ListChecks, MoreHorizontal, ChevronDown, RefreshCw, Download, Send, Pencil, Check, HelpCircle } from 'lucide-react';
 import { useSimulatedProgress } from '../hooks/useSimulatedProgress';
 import { LoadingState } from './LoadingState';
 import { cropImageFromCanvas } from '../lib/pdf-utils';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 import SnippetMenu from './SnippetMenu';
+import { StudyModeTutorial } from './pdf/StudyModeTutorial';
 import ChatInterface from './ChatInterface';
 import { useChatHistory } from '../hooks/useChatHistory';
 import { api } from '../lib/api';
@@ -31,8 +32,11 @@ interface Message {
     content: string;
     id?: string;
     session_id?: string;
-    imageBase64?: string; // For vision messages: thumbnail of snipped area
+    imageBase64?: string;
+    images?: string[];
+    image_data?: string;
     isThinking?: boolean;
+    isStopped?: boolean;
 }
 
 const extractApiErrorMessage = (errorBody: unknown, fallback: string): string => {
@@ -334,6 +338,28 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     const [snipPopup, setSnipPopup] = useState<{ x: number; y: number; imageBase64: string } | null>(null);
     const [selectedImage, setSelectedImage] = useState<string | null>(null);
     const snipOverlayRef = useRef<HTMLDivElement>(null);
+
+    // Tutorial — show once per user
+    const [showTutorial, setShowTutorial] = useState(false);
+    useEffect(() => {
+        const seen = localStorage.getItem('pansgpt-reader-tutorial-seen');
+        if (!seen) setShowTutorial(true);
+    }, []);
+    const handleCloseTutorial = () => {
+        localStorage.setItem('pansgpt-reader-tutorial-seen', '1');
+        setShowTutorial(false);
+    };
+
+    // Mobile header auto-hide on scroll
+    const [mobileHeaderVisible, setMobileHeaderVisible] = useState(true);
+    const lastScrollY = useRef(0);
+    const handleMobileScroll = (e: React.UIEvent<HTMLDivElement>) => {
+        const currentY = e.currentTarget.scrollTop;
+        const diff = currentY - lastScrollY.current;
+        if (diff > 8) setMobileHeaderVisible(false);       // scrolling down → hide
+        else if (diff < -8) setMobileHeaderVisible(true);  // scrolling up → show
+        lastScrollY.current = currentY;
+    };
 
     // Chat State
     const [chatHistory, setChatHistory] = useState<Message[]>([]);
@@ -1045,7 +1071,10 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 role: 'user',
                 content: text,
                 session_id: currentSessionId || undefined,
-                ...(attachments.length > 0 && { imageBase64: attachments[0] }),
+                ...(attachments.length > 0 && {
+                    imageBase64: attachments[0],
+                    images: attachments, // all images for multi-image bubble display
+                }),
             };
             const assistantPlaceholder: Message = {
                 id: tempAssistantId,
@@ -1236,6 +1265,24 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         abortControllerRef.current = editController;
 
         try {
+            // If message still has a temp ID (stopped before AI started — real DB ID never arrived)
+            // route as a fresh send instead of edit to avoid 400 from backend
+            if (String(messageId).startsWith('temp-')) {
+                setChatHistory(prev => prev.filter(m => !String(m.id).startsWith('temp-')));
+                setIsLoading(false);
+                abortControllerRef.current = null;
+                if (currentSessionId) {
+                    try {
+                        await api.fetch('/chat/truncate-last-stopped', {
+                            method: 'POST',
+                            body: JSON.stringify({ session_id: currentSessionId }),
+                        });
+                    } catch { /* non-fatal */ }
+                }
+                void sendMessage(newText, []);
+                return;
+            }
+
             const response = await api.fetch('/chat/edit', {
                 method: 'POST',
                 signal: editController.signal,
@@ -1243,6 +1290,21 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                     session_id: currentSessionId,
                     message_id: messageId,
                     new_text: newText,
+                    // Carry forward all images from the original message
+                    ...((() => {
+                        const orig = chatHistory.find(m => String(m.id) === String(messageId));
+                        if (!orig) return {};
+                        const imgs: string[] = [];
+                        if (orig.images) imgs.push(...orig.images);
+                        if (orig.imageBase64 && !imgs.includes(orig.imageBase64)) imgs.push(orig.imageBase64);
+                        if (typeof orig.image_data === 'string' && orig.image_data) {
+                            try {
+                                const parsed = JSON.parse(orig.image_data);
+                                if (Array.isArray(parsed)) parsed.forEach((i: string) => { if (!imgs.includes(i)) imgs.push(i); });
+                            } catch { if (!imgs.includes(orig.image_data)) imgs.push(orig.image_data); }
+                        }
+                        return imgs.length > 0 ? { images: imgs } : {};
+                    })()),
                 }),
             });
 
@@ -1613,14 +1675,18 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
             className="flex flex-col h-[100dvh] bg-background relative overflow-hidden font-sans"
             onContextMenu={(e) => e.preventDefault()}
             onTouchStart={() => setSelectionMenu(null)}
+
         >
+            {/* Study mode tutorial — shows once per user */}
+            {showTutorial && <StudyModeTutorial onClose={handleCloseTutorial} />}
+
             {!isMounted ? (
                 <InitialLoading />
             ) : (
                 <>
 
 
-                    <div className="lg:hidden fixed top-0 w-full h-14 bg-background/80 backdrop-blur-md border-b border-border z-50 flex items-center justify-around shadow-sm">
+                    <div className={`lg:hidden fixed top-0 w-full h-14 bg-background/80 backdrop-blur-md border-b border-border z-50 flex items-center justify-around shadow-sm transition-transform duration-300 ${mobileHeaderVisible ? 'translate-y-0' : '-translate-y-full'}`}>
                         <button
                             onClick={() => { setActiveTab('document'); }}
                             className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-colors ${activeTab === 'document' ? 'text-primary' : 'text-muted-foreground'}`}
@@ -1635,6 +1701,13 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                             <MessageSquare className="w-4 h-4" />
                             Chat
                             {unreadMessages && <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full animate-pulse" />}
+                        </button>
+                        <button
+                            onClick={() => setShowTutorial(true)}
+                            className="p-2 text-muted-foreground hover:text-foreground transition-colors"
+                            title="How to use study mode"
+                        >
+                            <HelpCircle className="w-4 h-4" />
                         </button>
                     </div>
 
@@ -1730,11 +1803,20 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                 <Sparkles className="w-4 h-4" />
                                 AI Assistant
                             </button>
+
+                            {/* Help button — reopens tutorial */}
+                            <button
+                                onClick={() => setShowTutorial(true)}
+                                className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 border border-border transition-all"
+                                title="How to use study mode"
+                            >
+                                <HelpCircle className="w-4 h-4" />
+                            </button>
                         </div>
                     </div>
 
                     {/* Main Content Area */}
-                    <div className={`flex-1 flex pt-14 lg:pt-16 h-full overflow-hidden`}>
+                    <div className={`flex-1 flex lg:pt-16 h-full overflow-hidden transition-all duration-300 ${mobileHeaderVisible ? 'pt-14' : 'pt-0'}`}>
 
                         {/* PDF Container */}
                         <div
@@ -1747,6 +1829,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                         ${isSnipActive ? 'sm:overflow-y-auto overflow-hidden touch-none sm:touch-auto' : ''}
                     `}
                             onTouchStart={() => triggerMobilePill()}
+                            onScroll={handleMobileScroll}
                         >
                             {/* Snipping Mode Banner */}
                             {/* ─── Reading Progress Bar ─────────────────────────────── */}
@@ -1886,7 +1969,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                                         imageBlob={snipPopup.imageBase64}
                                                         isLoading={isLoading}
                                                         isSaving={isSavingNote}
-                                                        onClose={() => { setSnipPopup(null); setIsSnipActive(false); }}
+                                                        onClose={() => { setSnipPopup(null); setIsSnipActive(false); setIsSnippingMode(false); }}
                                                         onSend={handleMenuSend}
                                                         onAddToInput={handleMenuAddToInput}
                                                         onSaveNote={handleSaveNote}
@@ -1939,6 +2022,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                                     if (text) void handleSaveTextNote(text);
                                                     setSelectionMenu(null);
                                                     setShowMoreMenu(false);
+                                                    // Clear the text selection highlight
+                                                    window.getSelection()?.removeAllRanges();
                                                 }}
                                                 disabled={isSavingNote}
                                                 className="relative group p-1.5 rounded-md transition-colors text-zinc-400 hover:text-emerald-400 hover:bg-zinc-800 disabled:opacity-60"

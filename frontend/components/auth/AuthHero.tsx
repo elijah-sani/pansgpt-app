@@ -17,7 +17,7 @@ export function AuthHero({ taglineFading, taglineIndex, onSelectTagline }: AuthH
           </span>
         </div>
 
-        <div className="absolute top-[18%] left-[33%] -translate-x-1/2 w-[920px] h-[920px] pointer-events-none z-10 auth-art-enter">
+        <div className="absolute top-[18%] left-[33%] -translate-x-1/2 w-[920px] h-[920px] pointer-events-none z-10 auth-art-enter scale-75 lg:scale-75 xl:scale-90 2xl:scale-100 origin-top">
           <svg viewBox="0 0 827.58 887.58" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
             <defs>
               <filter id="glow">

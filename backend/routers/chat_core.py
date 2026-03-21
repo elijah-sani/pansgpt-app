@@ -149,6 +149,53 @@ def _is_small_talk_or_greeting(text: Optional[str]) -> bool:
     return False
 
 
+def is_off_topic_for_document(text: str) -> bool:
+    """
+    Study mode only: detect questions that are clearly general knowledge
+    and won't benefit from searching the open document.
+    These should be answered directly from the AI's knowledge.
+    """
+    normalized = _normalize_text(text).strip(".,!?")
+    tokens = normalized.split()
+
+    # Very short questions (< 3 words) without pharmacy context — likely general
+    if len(tokens) < 3:
+        return False  # too ambiguous, let RAG run
+
+    # Explicit pharmacy/academic indicators — always use RAG
+    _PHARMACY_INDICATORS = {
+        "drug", "drugs", "medication", "medicine", "dose", "dosage",
+        "pharmacology", "pharmacokinetics", "pharmacodynamics",
+        "mechanism", "moa", "receptor", "enzyme", "protein",
+        "synthesis", "metabol", "excret", "absorpt", "distribut",
+        "antibiotic", "antifungal", "antiviral", "analgesic",
+        "clinical", "therapeutic", "toxicity", "adverse", "contraindic",
+        "lecture", "course", "topic", "curriculum", "exam", "study",
+        "material", "notes", "slide", "page", "chapter", "group",
+        "presenter", "presentation", "define", "explain", "describe",
+        "formula", "structure", "synthesis", "reaction",
+    }
+    for indicator in _PHARMACY_INDICATORS:
+        if indicator in normalized:
+            return False  # pharmacy-related → use RAG
+
+    # Patterns that suggest pure general knowledge questions
+    _GENERAL_KNOWLEDGE_PATTERNS = [
+        "capital of", "population of", "president of", "prime minister of",
+        "who is the", "who was the", "when was", "where is", "where was",
+        "how tall", "how far", "how old", "what year did", "what country",
+        "currency of", "language of", "founded in", "invented by",
+        "born in", "died in", "who invented", "who discovered",
+        "what sport", "which team", "who won", "world cup",
+        "convert ", "calculate ", "translate ",
+    ]
+    for pattern in _GENERAL_KNOWLEDGE_PATTERNS:
+        if pattern in normalized:
+            return True
+
+    return False
+
+
 def is_conversational_message(text: str) -> bool:
     normalized = _normalize_text(text).strip(".,!?")
     if not normalized:
@@ -848,6 +895,13 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
         web_search_text = ""
         web_search_limit_reached = False
         should_skip_rag = is_conversational_message(request.text)
+
+        # In study mode: also skip RAG for clearly off-topic general knowledge questions
+        # so students can use the AI freely without every question hitting the document
+        if not should_skip_rag and request.document_id:
+            if is_off_topic_for_document(request.text):
+                should_skip_rag = True
+                logger.info("Study mode: skipping RAG — off-topic general knowledge question.")
         extracted_image_text = ""
         rag_query = request.text
 
@@ -954,6 +1008,17 @@ FACULTY & CURRICULUM KNOWLEDGE:
 
 STUDENT WEEKLY TIMETABLE:
 {timetable_info}
+"""
+        # Study mode — student is reading a specific document
+        # Keep responses short, direct, no greetings, no salutations
+        if request.document_id:
+            final_system_prompt += """
+STUDY MODE — STRICT RULES (these override ALL other tone and greeting rules above):
+- NEVER start with a greeting. Never say "Good morning", "Hi", "Hello", or the student's name. Start directly with the answer.
+- NEVER use filler openers like "Great question!", "Sure!", "Of course!", "Alright, let's break this down", "Let me explain".
+- Be CONCISE. Match response length to question complexity. Simple question = short answer. No padding.
+- Prefer bullet points and bold over long paragraphs.
+- Only elaborate if the student explicitly says "explain in detail" or "elaborate".
 """
 
         if context_text:

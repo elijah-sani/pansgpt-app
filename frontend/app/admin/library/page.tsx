@@ -3,10 +3,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 
 import {
-    Search, Filter, Plus, FileText, Trash2, Pencil,
+    Search, Filter, Plus, FileText, Trash2, Pencil, Square,
     AlertCircle, Loader2,
     UploadCloud, HardDrive, BookOpen, X, ChevronRight,
-    Sparkles, Clock, RefreshCw
+    Sparkles, Clock
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -65,7 +65,7 @@ export default function LibraryPage() {
     const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
     const [editingDoc, setEditingDoc] = useState<Document | null>(null);
     const [deleteTarget, setDeleteTarget] = useState<Document | null>(null); // Store full doc object
-    const [reembeddingIds, setReembeddingIds] = useState<Set<string>>(new Set());
+    const [cancellingIds, setCancellingIds] = useState<Set<string>>(new Set());
     const [documents, setDocuments] = useState<Document[]>([]);
     const [isLoadingData, setIsLoadingData] = useState(true);
 
@@ -294,28 +294,21 @@ export default function LibraryPage() {
         }
     };
 
-    const handleReembed = async (doc: Document) => {
-        if (reembeddingIds.has(doc.id)) return;
-        setReembeddingIds(prev => new Set(prev).add(doc.id));
-        setDocuments(prev => prev.map(d => d.id === doc.id
-            ? { ...d, embedding_status: 'processing', embedding_progress: 0, embedding_error: undefined }
-            : d
-        ));
+    const handleCancelIngestion = async (doc: Document) => {
+        if (cancellingIds.has(doc.id)) return;
+        setCancellingIds(prev => new Set(prev).add(doc.id));
         try {
-            const response = await api.fetch(`/admin/documents/${doc.id}/reembed`, { method: 'POST' });
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => null);
-                throw new Error(errorData?.detail || 'Reembed failed');
+            const response = await api.fetch(`/admin/documents/${doc.id}/cancel`, { method: 'POST' });
+            if (response.ok) {
+                setDocuments(prev => prev.map(d => d.id === doc.id
+                    ? { ...d, embedding_status: 'failed', embedding_error: 'Cancelled by admin.' }
+                    : d
+                ));
             }
         } catch (err) {
-            console.error("Reembed failed:", err);
-            alert('Failed to start re-embedding. Check console.');
-            setDocuments(prev => prev.map(d => d.id === doc.id
-                ? { ...d, embedding_status: 'failed' }
-                : d
-            ));
+            console.error('Cancel ingestion failed:', err);
         } finally {
-            setReembeddingIds(prev => { const s = new Set(prev); s.delete(doc.id); return s; });
+            setCancellingIds(prev => { const s = new Set(prev); s.delete(doc.id); return s; });
         }
     };
 
@@ -501,16 +494,16 @@ export default function LibraryPage() {
                                         </td>
                                         <td className="px-6 py-4 text-right whitespace-nowrap">
                                             <div className="flex items-center justify-end gap-2">
-                                                {(doc.embedding_status === 'failed' || (doc.embedding_status === 'completed' && doc.embedding_error)) && (
+                                                {doc.embedding_status === 'processing' && (
                                                     <button
-                                                        onClick={() => handleReembed(doc)}
-                                                        disabled={reembeddingIds.has(doc.id)}
-                                                        className="p-2 hover:bg-amber-500/10 hover:text-amber-500 rounded-lg text-muted-foreground transition-colors disabled:opacity-50"
-                                                        title="Retry embedding"
+                                                        onClick={() => handleCancelIngestion(doc)}
+                                                        disabled={cancellingIds.has(doc.id)}
+                                                        className="p-2 hover:bg-red-500/10 hover:text-red-500 rounded-lg text-muted-foreground transition-colors disabled:opacity-50"
+                                                        title="Cancel ingestion"
                                                     >
-                                                        {reembeddingIds.has(doc.id)
+                                                        {cancellingIds.has(doc.id)
                                                             ? <Loader2 className="w-4 h-4 animate-spin" />
-                                                            : <RefreshCw className="w-4 h-4" />
+                                                            : <Square className="w-4 h-4" />
                                                         }
                                                     </button>
                                                 )}
@@ -520,6 +513,13 @@ export default function LibraryPage() {
                                                     title="Quick Edit"
                                                 >
                                                     <Pencil className="w-4 h-4" />
+                                                </button>
+                                                <button
+                                                    onClick={() => setDeleteTarget(doc)}
+                                                    className="p-2 hover:bg-destructive/10 hover:text-destructive rounded-lg text-muted-foreground transition-colors"
+                                                    title="Delete"
+                                                >
+                                                    <Trash2 className="w-4 h-4" />
                                                 </button>
                                             </div>
                                         </td>

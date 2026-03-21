@@ -33,6 +33,9 @@ router = APIRouter(prefix="/admin", tags=["library"])
 drive_service = None
 supabase_client = None
 supabase_service_client = None
+
+# In-memory cancellation registry — add a document_id here to cancel its ingestion
+_cancelled_ingestions: set = set()
 verify_api_key_handler = None
 GOOGLE_DRIVE_FOLDER_ID = None
 
@@ -459,6 +462,18 @@ async def process_and_embed(file_content: bytes, document_id: str, file_name: st
         error_log = ""
         
         for idx, chunk_text in enumerate(chunks):
+            # Check if admin cancelled this ingestion
+            if document_id in _cancelled_ingestions:
+                _cancelled_ingestions.discard(document_id)
+                logger.info(f"[INFO] Ingestion cancelled by admin for {document_id} at chunk {idx}/{len(chunks)}")
+                await _execute_with_retry_async(
+                    lambda: db.table('pans_library').update({
+                        'embedding_status': 'failed',
+                        'embedding_error': f'Cancelled by admin at chunk {idx} of {len(chunks)}.',
+                    }).eq('id', document_id).execute(),
+                    "Mark ingestion as cancelled",
+                )
+                return
             # --- Rate-limit aware embedding with 429 retry ---
             MAX_EMBED_RETRIES = 5
             embed_success = False
@@ -877,6 +892,39 @@ async def admin_update_document(doc_id: str, updates: DocumentUpdate):
     except Exception as e:
         logger.error(f"Update Error: {e}")
         raise HTTPException(status_code=500, detail="Unable to update the document. Please try again.")
+
+@router.post("/documents/{document_id}/cancel", dependencies=[Depends(verify_api_key)])
+async def cancel_document_ingestion(
+    document_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Cancel an in-progress document ingestion.
+    Adds the document_id to the cancellation registry — the embedding loop
+    checks this on every chunk and stops cleanly when it sees the flag.
+    """
+    db = _db_client()
+    if not db:
+        raise HTTPException(status_code=503, detail="The service is temporarily unavailable.")
+
+    # Verify document exists and is currently processing
+    try:
+        res = db.table('pans_library').select('id, embedding_status').eq('id', document_id).limit(1).execute()
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Document not found.")
+        status = res.data[0].get('embedding_status')
+        if status != 'processing':
+            return {"status": "skipped", "reason": f"Document is not processing (current status: {status})"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Cancel ingestion check failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to cancel ingestion.")
+
+    _cancelled_ingestions.add(document_id)
+    logger.info(f"[INFO] Admin requested cancellation for document {document_id}")
+    return {"status": "cancellation_requested", "document_id": document_id}
+
 
 @router.get("/documents/{document_id}/status", dependencies=[Depends(verify_api_key)])
 async def get_document_status(document_id: str):

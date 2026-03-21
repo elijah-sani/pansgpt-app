@@ -1,8 +1,8 @@
 import React from 'react';
-import { Sparkles, MessageSquarePlus, X, Loader2, BookmarkPlus } from 'lucide-react';
+import { Sparkles, MessageSquarePlus, Loader2, BookmarkPlus } from 'lucide-react';
 
 interface SnippetMenuProps {
-    imageBlob: Blob | string; // Can be base64 string
+    imageBlob: Blob | string;
     isLoading?: boolean;
     isSaving?: boolean;
     onClose: () => void;
@@ -21,17 +21,11 @@ const SnippetMenu: React.FC<SnippetMenuProps> = ({
     onSaveNote
 }) => {
 
-    // 🟢 LOGIC: The "Fast Lane"
-    // This sends the image immediately with the hidden prompt
     const handleAskAI = () => {
-        // Ensure we have a string (base64)
         const attachment = typeof imageBlob === 'string' ? imageBlob : '';
         if (!attachment) return;
 
-        // 1. Visible Question
         const userVisibleText = "Can you explain this snippet for me?";
-
-        // 2. Hidden Instruction (The "Ghost" Prompt)
         const hiddenPrompt = `
       [SYSTEM: PHARMACY_VISUAL_ANALYSIS]
       Analyze the attached image.
@@ -43,7 +37,6 @@ const SnippetMenu: React.FC<SnippetMenuProps> = ({
       - Keep it concise (under 2 paragraphs).
     `;
 
-        // Trigger sending with both
         onSend({
             text: userVisibleText,
             attachments: [attachment],
@@ -52,8 +45,6 @@ const SnippetMenu: React.FC<SnippetMenuProps> = ({
         onClose();
     };
 
-    // 🟡 LOGIC: The "Control Lane"
-    // This just moves the image to the chat box
     const handleAddToChat = () => {
         const attachment = typeof imageBlob === 'string' ? imageBlob : '';
         if (attachment) {
@@ -63,7 +54,6 @@ const SnippetMenu: React.FC<SnippetMenuProps> = ({
     };
 
     return (
-        // Main Container: Floating pill shape, dark mode, subtle border
         <div
             className="flex items-center gap-1 p-1.5 bg-zinc-900 border border-zinc-700/50 rounded-full shadow-2xl animate-in fade-in zoom-in duration-200 backdrop-blur-md"
             onMouseDown={(e) => e.stopPropagation()}
@@ -71,15 +61,12 @@ const SnippetMenu: React.FC<SnippetMenuProps> = ({
             onClick={(e) => e.stopPropagation()}
             style={{ pointerEvents: 'auto' }}
         >
-
-            {/* --- BUTTON 1: ASK AI (Auto-Send) --- */}
+            {/* ASK AI */}
             <button
                 onClick={handleAskAI}
                 disabled={isLoading}
-                className={`flex items-center gap-2 px-4 py-2 rounded-full transition-all group active:scale-95 ${isLoading ? 'opacity-50 cursor-not-allowed bg-zinc-800' : 'hover:bg-zinc-800'
-                    }`}
+                className={`flex items-center gap-2 px-4 py-2 rounded-full transition-all group active:scale-95 ${isLoading ? 'opacity-50 cursor-not-allowed bg-zinc-800' : 'hover:bg-zinc-800'}`}
             >
-                {/* Brand Green Icon - using explicit hex for neon green */}
                 {isLoading ? (
                     <Loader2 className="w-4 h-4 text-zinc-400 animate-spin" />
                 ) : (
@@ -90,27 +77,23 @@ const SnippetMenu: React.FC<SnippetMenuProps> = ({
                 </span>
             </button>
 
-            {/* Divider */}
             <div className="w-px h-5 bg-zinc-700 mx-1" />
 
-            {/* --- BUTTON 2: ADD TO CHAT (Manual) --- */}
+            {/* ADD TO CHAT */}
             <button
                 onClick={handleAddToChat}
                 className="p-2 aspect-square rounded-full text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all relative group flex items-center justify-center active:scale-95"
                 title="Add to chat input"
             >
                 <MessageSquarePlus className="w-4 h-4" />
-
-                {/* Simple CSS Tooltip */}
                 <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-black text-xs text-white rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none shadow-lg border border-zinc-800">
                     Add to chat
                 </span>
             </button>
 
-            {/* Divider */}
             <div className="w-px h-5 bg-zinc-700 mx-1" />
 
-            {/* Save to Notes — icon only with tooltip */}
+            {/* ADD TO NOTES */}
             <button
                 onClick={() => {
                     const attachment = typeof imageBlob === 'string' ? imageBlob : '';
@@ -126,18 +109,9 @@ const SnippetMenu: React.FC<SnippetMenuProps> = ({
                 ) : (
                     <BookmarkPlus className="w-4 h-4" />
                 )}
-                {/* Tooltip */}
                 <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-black text-xs text-white rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none shadow-lg border border-zinc-800">
                     Add to notes
                 </span>
-            </button>
-
-            {/* Close Button (Optional but good UX) */}
-            <button
-                onClick={onClose}
-                className="ml-1 p-1.5 rounded-full text-zinc-500 hover:text-red-400 hover:bg-zinc-800/50 transition-colors flex items-center justify-center"
-            >
-                <X className="w-3.5 h-3.5" />
             </button>
         </div>
     );

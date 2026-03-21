@@ -638,7 +638,10 @@ export function useMainPageController() {
           role: 'user',
           content: text,
           session_id: currentSessionId || undefined,
-          ...(attachments.length > 0 && { imageBase64: attachments[0] }),
+          ...(attachments.length > 0 && {
+            imageBase64: attachments[0],
+            images: attachments, // all images for multi-image bubble display
+          }),
         };
         const assistantPlaceholder: Message = {
           id: tempAssistantId,
@@ -863,6 +866,28 @@ export function useMainPageController() {
           (message) => String(message.id) === String(messageId) && message.role === 'user'
         );
         const targetMessageId = targetMessage?.id ? String(targetMessage.id) : String(messageId);
+
+        // If message still has a temp ID (stopped before AI started — SSE user_message_id never arrived)
+        // the backend has no record of this ID. Route as a fresh send instead of edit.
+        if (targetMessageId.startsWith('temp-')) {
+          setMessages((previous) => previous.filter(
+            (m) => !String(m.id).startsWith('temp-')
+          ));
+          setIsLoading(false);
+          abortControllerRef.current = null;
+          // Clean up orphan from DB then send as new message
+          if (activeSessionId) {
+            try {
+              await api.fetch('/chat/truncate-last-stopped', {
+                method: 'POST',
+                body: JSON.stringify({ session_id: activeSessionId }),
+              });
+            } catch { /* non-fatal */ }
+          }
+          void sendMessageApi(newText, []);
+          return;
+        }
+
         let editImages: string[] | undefined;
         if (targetMessage) {
           const parsedBackendImages =

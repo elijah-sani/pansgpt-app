@@ -593,6 +593,20 @@ async def get_relevant_context(
         settings = await get_cached_settings()
         match_threshold = float(settings.get("rag_threshold", 0.50)) if settings and settings.get("rag_threshold") is not None else float(os.getenv("RAG_MATCH_THRESHOLD", "0.50"))
 
+        # Detect broad/listing queries — fetch more chunks at lower threshold
+        _BROAD_QUERY_KEYWORDS = {
+            "list all", "list the", "what are all", "what topics", "what does this cover",
+            "what is covered", "how many groups", "how many topics", "how many sections",
+            "all topics", "all groups", "all sections", "all chapters",
+            "complete list", "full list", "entire list",
+            "what groups", "who presented", "summarize the material",
+            "overview of this", "outline of this", "contents of this",
+        }
+        question_lower = user_question.lower()
+        is_broad_query = any(kw in question_lower for kw in _BROAD_QUERY_KEYWORDS)
+        rag_match_count = 20 if is_broad_query else 4
+        rag_threshold = 0.25 if is_broad_query else match_threshold
+
         # ----------------------------
         # Branch A: Local RAG (Study Mode) - keep existing behavior
         # ----------------------------
@@ -643,19 +657,52 @@ async def get_relevant_context(
                         logger.error(f"Document ID lookup failed: {lookup_err}")
                         return "", []
 
-            # Step 2: Call Supabase RPC for vector similarity search
-            response = await _execute_with_retry(
-                lambda: supabase_client.rpc(
-                    'match_documents',
-                    {
-                        'query_embedding': query_vector,
-                        'match_threshold': match_threshold,
-                        'match_count': 4,
-                        'filter_doc_id': supabase_doc_id  # Use converted UUID
-                    }
-                ).execute(),
-                "Match document embeddings",
-            )
+            # Step 2: Retrieve chunks
+            # For broad/listing queries in study mode: fetch ALL chunks for this document
+            # This is the key difference from normal RAG — we don't filter by similarity,
+            # we get everything so the AI can do exhaustive listing (like Gemini/Claude do
+            # with full context window ingestion).
+            if is_broad_query:
+                logger.info(f"Broad query detected in study mode — fetching ALL chunks for doc '{supabase_doc_id}'")
+                all_chunks_response = await _execute_with_retry(
+                    lambda: supabase_client.table("document_embeddings")
+                        .select("id, content")
+                        .eq("document_id", supabase_doc_id)
+                        .order("id", desc=False)
+                        .execute(),
+                    "Fetch all document chunks for broad query",
+                )
+                raw_chunks = all_chunks_response.data or []
+                # Sample evenly across the full document so no section is missed
+                # 40 samples × 80 chars = ~3200 chars = ~800 tokens — well under free tier
+                total = len(raw_chunks)
+                if total <= 40:
+                    sampled = raw_chunks
+                else:
+                    step = total / 40
+                    sampled = [raw_chunks[int(i * step)] for i in range(40)]
+                condensed_chunks = [
+                    {**row, 'content': (row.get('content') or '')[:80]}
+                    for row in sampled
+                ]
+                class _MergedResponse:
+                    def __init__(self, data): self.data = data
+                response = _MergedResponse(condensed_chunks)
+                logger.info(f"Fetched {len(condensed_chunks)} condensed chunks for exhaustive listing")
+            else:
+                # Normal focused query — use vector similarity search
+                response = await _execute_with_retry(
+                    lambda: supabase_client.rpc(
+                        'match_documents',
+                        {
+                            'query_embedding': query_vector,
+                            'match_threshold': rag_threshold,
+                            'match_count': rag_match_count,
+                            'filter_doc_id': supabase_doc_id
+                        }
+                    ).execute(),
+                    "Match document embeddings",
+                )
 
             # Step 3: Build enhanced context with metadata + chunks
             context_parts = []
@@ -679,9 +726,59 @@ async def get_relevant_context(
                     f"RAG returned no chunks for local document '{supabase_doc_id}'. "
                     f"Query: '{user_question[:80]}...' | Threshold: {match_threshold}"
                 )
+                # --- TEXT SEARCH FALLBACK ---
+                # Vector similarity found nothing. Try keyword search on chunk content.
+                # Extracts meaningful words from the query and searches for them directly.
+                fallback_chunks = []
+                try:
+                    # Build keyword list — strip common stop words, keep meaningful terms
+                    _STOP_WORDS = {
+                        "a","an","the","is","are","was","were","be","been","being",
+                        "have","has","had","do","does","did","will","would","could",
+                        "should","may","might","shall","can","need","dare","ought",
+                        "what","which","who","whom","whose","when","where","why","how",
+                        "this","that","these","those","i","you","he","she","it","we","they",
+                        "me","him","her","us","them","my","your","his","its","our","their",
+                        "and","or","but","if","as","at","by","for","in","of","on","to","up",
+                        "tell","give","show","list","about","explain","define","describe",
+                    }
+                    words = [
+                        w for w in user_question.lower().split()
+                        if len(w) > 2 and w not in _STOP_WORDS
+                    ]
+                    if words:
+                        # Search for chunks containing any of the top 3 keywords
+                        keywords = words[:3]
+                        logger.info(f"Text search fallback — keywords: {keywords}")
+                        fb_response = await _execute_with_retry(
+                            lambda: supabase_client.table("document_embeddings")
+                                .select("id, content")
+                                .eq("document_id", supabase_doc_id)
+                                .or_(",".join([f"content.ilike.%{kw}%" for kw in keywords]))
+                                .limit(4)
+                                .execute(),
+                            "Text search fallback",
+                        )
+                        fallback_chunks = fb_response.data or []
+                        if fallback_chunks:
+                            logger.info(f"Text search fallback found {len(fallback_chunks)} chunks")
+                except Exception as fb_err:
+                    logger.warning(f"Text search fallback failed: {fb_err}")
+
+                if fallback_chunks:
+                    context_parts.append("RELEVANT CONTENT FROM LECTURE:")
+                    context_parts.append("\n\n---\n\n".join(c['content'] for c in fallback_chunks))
+                    context_text = "\n\n".join(context_parts)
+                    citation = {
+                        "topic": (doc_metadata or {}).get("topic") or None,
+                        "title": (doc_metadata or {}).get("file_name") or "Unknown Document",
+                        "course": (doc_metadata or {}).get("course_code") or "N/A",
+                        "lecturer": (doc_metadata or {}).get("lecturer_name") or "N/A",
+                    }
+                    return context_text, [citation]
+
                 if doc_metadata:
-                    # Return just metadata if no chunks found
-                    logger.info(f"Using metadata only, no vector chunks found")
+                    logger.info(f"Using metadata only, no vector or text chunks found")
                     citation = {
                         "topic": doc_metadata.get("topic") or None,
                         "title": doc_metadata.get("file_name") or "Unknown Document",
@@ -766,8 +863,8 @@ async def get_relevant_context(
                 "match_documents_global",
                 {
                     "query_embedding": query_vector,
-                    "match_threshold": match_threshold,
-                    "match_count": 4,
+                    "match_threshold": rag_threshold,
+                    "match_count": rag_match_count,
                     "allowed_doc_ids": allowed_doc_ids,
                 },
             ).execute(),
