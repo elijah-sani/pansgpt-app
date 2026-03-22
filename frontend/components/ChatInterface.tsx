@@ -67,7 +67,7 @@ interface ChatInterfaceProps {
     deletingId?: string | null;
     contextId?: string;
     onRegenerate?: () => void;
-    onNoteAdded?: () => Promise<void> | void;
+    onNoteAdded?: (savedNote?: unknown) => Promise<void> | void;
 }
 
 // Helper to safely parse image_data (JSON or raw string)
@@ -336,7 +336,8 @@ export default function ChatInterface({
             throw new Error(`Failed to save note: ${res.status}`);
         }
 
-        await onNoteAdded?.();
+        const saved = await res.json();
+        await onNoteAdded?.(saved);
     };
 
     const handleScrollToBottom = () => {

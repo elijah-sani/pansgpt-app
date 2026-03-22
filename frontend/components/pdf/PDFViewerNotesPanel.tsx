@@ -33,6 +33,7 @@ type PDFViewerNotesPanelProps = {
   isSavingPersonal: boolean;
   notes: PDFNote[];
   showSavedFlash?: boolean;
+  noteSaveError?: string | null;
   onClose: () => void;
   onCopyNotes: () => void;
   onDeleteNote: (noteId: string | number) => void;
@@ -62,6 +63,7 @@ export function PDFViewerNotesPanel({
   isSavingPersonal,
   notes,
   showSavedFlash,
+  noteSaveError,
   onClose,
   onCopyNotes,
   onDeleteNote,
@@ -282,14 +284,25 @@ export function PDFViewerNotesPanel({
               <div ref={notesEndRef} />
             </>
           )}
-
-          {showSavedFlash && (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 text-xs font-medium animate-in fade-in slide-in-from-bottom-2 duration-200">
-              <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-              Note saved
-            </div>
-          )}
         </div>
+
+        {/* Toast notifications — fixed at bottom of panel, always visible */}
+        {(showSavedFlash || noteSaveError) && (
+          <div className="px-3 pb-2">
+            {showSavedFlash && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 text-xs font-medium animate-in fade-in duration-200">
+                <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                Note saved
+              </div>
+            )}
+            {noteSaveError && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-xs font-medium animate-in fade-in duration-200">
+                <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                {noteSaveError}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="px-3 py-3 border-t border-border space-y-2">
           <textarea

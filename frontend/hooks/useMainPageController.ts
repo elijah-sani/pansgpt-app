@@ -839,7 +839,11 @@ export function useMainPageController() {
       streamFullTextRef.current = '';
 
       const editIndex = messages.findIndex((message) => String(message.id) === String(messageId));
-      if (editIndex !== -1) {
+      const targetMessageId = editIndex !== -1 ? String(messages[editIndex].id) : String(messageId);
+
+      // If it's a temp ID, skip the optimistic update entirely —
+      // we'll clean up and send fresh so there's no disappear/reappear flash
+      if (!targetMessageId.startsWith('temp-') && editIndex !== -1) {
         const optimisticMessages = messages.slice(0, editIndex + 1);
         optimisticMessages[editIndex] = {
           ...optimisticMessages[editIndex],
@@ -865,13 +869,17 @@ export function useMainPageController() {
         const targetMessage = messages.find(
           (message) => String(message.id) === String(messageId) && message.role === 'user'
         );
-        const targetMessageId = targetMessage?.id ? String(targetMessage.id) : String(messageId);
+        // targetMessageId already computed above for optimistic update check
+        const resolvedTargetId = targetMessage?.id ? String(targetMessage.id) : targetMessageId;
 
         // If message still has a temp ID (stopped before AI started — SSE user_message_id never arrived)
         // the backend has no record of this ID. Route as a fresh send instead of edit.
-        if (targetMessageId.startsWith('temp-')) {
-          setMessages((previous) => previous.filter(
-            (m) => !String(m.id).startsWith('temp-')
+        if (resolvedTargetId.startsWith('temp-')) {
+          // Update the orphan user message content in place — no flash/disappear
+          setMessages((previous) => previous.map((m) =>
+            String(m.id) === resolvedTargetId
+              ? { ...m, content: newText }
+              : m
           ));
           setIsLoading(false);
           abortControllerRef.current = null;
@@ -915,7 +923,7 @@ export function useMainPageController() {
           signal: controller.signal,
           body: JSON.stringify({
             session_id: activeSessionId,
-            message_id: targetMessageId,
+            message_id: resolvedTargetId,
             new_text: newText,
             ...(editImages ? { images: editImages } : {}),
           }),
@@ -928,7 +936,7 @@ export function useMainPageController() {
         const finalAssistantMessageId = await consumeSSEStream(response, tempAssistantId, (newUserMessageId: string) => {
           setMessages((previous) =>
             previous.map((message) =>
-              String(message.id) === String(targetMessageId)
+              String(message.id) === String(resolvedTargetId)
                 ? { ...message, id: newUserMessageId }
                 : message
             )

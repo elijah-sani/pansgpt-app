@@ -78,6 +78,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     const [notes, setNotes] = useState<PDFNote[]>([]);
     const [isLoadingNotes, setIsLoadingNotes] = useState(false);
     const [isSavingNote, setIsSavingNote] = useState(false);
+    const [noteSaveError, setNoteSaveError] = useState<string | null>(null);
+    const [noteMobileFlash, setNoteMobileFlash] = useState<'saved' | 'error' | null>(null);
     const [noteSavedFlash, setNoteSavedFlash] = useState(false);
     // Mobile floating pill visibility
     const [showMobilePill, setShowMobilePill] = useState(false);
@@ -1431,6 +1433,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     const handleSaveNote = async (image: string, sourceText?: string) => {
         if (!meta.documentId) return;
         setIsSavingNote(true);
+        setNoteSaveError(null);
+        const isMobile = window.innerWidth < 1024;
         try {
             const res = await api.fetch('/notes', {
                 method: 'POST',
@@ -1444,12 +1448,18 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
             if (res.ok) {
                 const saved = await res.json();
                 setNotes(prev => [...prev, saved]);
-                setNotesOpen(true);
                 setNoteSavedFlash(true);
                 setTimeout(() => setNoteSavedFlash(false), 2500);
+                if (!isMobile) setNotesOpen(true); // only open panel on desktop
+            } else {
+                if (!isMobile) setNotesOpen(true);
+                setNoteSaveError('Failed to save note. Please try again.');
+                setTimeout(() => setNoteSaveError(null), 4000);
             }
         } catch {
-            // Ignore silently for now.
+            if (!isMobile) setNotesOpen(true);
+            setNoteSaveError('Network error — note not saved. Check your connection.');
+            setTimeout(() => setNoteSaveError(null), 4000);
         } finally {
             setIsSavingNote(false);
         }
@@ -1458,6 +1468,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     const handleSaveTextNote = async (text: string) => {
         if (!meta.documentId) return;
         setIsSavingNote(true);
+        setNoteSaveError(null);
+        const isMobile = window.innerWidth < 1024;
         try {
             const res = await api.fetch('/notes', {
                 method: 'POST',
@@ -1471,12 +1483,18 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
             if (res.ok) {
                 const saved = await res.json();
                 setNotes(prev => [...prev, saved]);
-                setNotesOpen(true);
                 setNoteSavedFlash(true);
                 setTimeout(() => setNoteSavedFlash(false), 2500);
+                if (!isMobile) setNotesOpen(true);
+            } else {
+                if (!isMobile) setNotesOpen(true);
+                setNoteSaveError('Failed to save note. Please try again.');
+                setTimeout(() => setNoteSaveError(null), 4000);
             }
         } catch {
-            // Ignore silently for now.
+            if (!isMobile) setNotesOpen(true);
+            setNoteSaveError('Network error — note not saved. Check your connection.');
+            setTimeout(() => setNoteSaveError(null), 4000);
         } finally {
             setIsSavingNote(false);
         }
@@ -1587,9 +1605,16 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 if (currentSessionId === id) handleNewChat();
             }}
             contextId={fileId}
-            onNoteAdded={async () => {
+            onNoteAdded={async (savedNote?: unknown) => {
                 setNotesOpen(true);
-                await fetchNotes();
+                setNoteSavedFlash(true);
+                setTimeout(() => setNoteSavedFlash(false), 2500);
+                if (savedNote && typeof savedNote === 'object') {
+                    // Optimistic append — same as highlight/snip save
+                    setNotes(prev => [...prev, savedNote as PDFNote]);
+                } else {
+                    await fetchNotes();
+                }
             }}
             onRegenerate={async () => {
                 // Regenerate Logic (Backend-driven):
@@ -2131,6 +2156,24 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
                         {/* Mobile Floating Pill — Snip & Notes (appears on tap, fades after 3s) */}
                         {activeTab === 'document' && (
+                            <>
+                                {/* Mobile note save toast — floats above the pill */}
+                                {(noteSavedFlash || noteSaveError) && (
+                                    <div className="lg:hidden fixed bottom-20 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-bottom-2 duration-200">
+                                        {noteSavedFlash && (
+                                            <div className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-emerald-600 text-white text-xs font-semibold shadow-lg">
+                                                <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                                                Note saved
+                                            </div>
+                                        )}
+                                        {noteSaveError && (
+                                            <div className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-destructive text-white text-xs font-semibold shadow-lg">
+                                                <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                                                {noteSaveError}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             <div
                                 className={`lg:hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-40 transition-all duration-500 ${showMobilePill ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2 pointer-events-none'}`}
                             >
@@ -2178,6 +2221,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                     </button>
                                 </div>
                             </div>
+                            </>
                         )}
 
                         <PDFViewerNotesPanel
@@ -2189,6 +2233,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                             isExporting={isExporting}
                             isLoadingNotes={isLoadingNotes}
                             isOpen={notesOpen}
+                            showSavedFlash={noteSavedFlash}
+                            noteSaveError={noteSaveError}
                             isSavingEdit={isSavingEdit}
                             isSavingNote={isSavingNote}
                             isSavingPersonal={isSavingPersonal}
