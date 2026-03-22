@@ -1,14 +1,27 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
-// Session lives in localStorage (Supabase default storage).
-// Server-side cookie checks always see no session → redirect loop.
-// Auth + admin gating is handled entirely client-side by:
-//   - (app)/layout.tsx for authenticated routes
-//   - admin/layout.tsx for admin role check
+// PansGPT uses Supabase with localStorage (not cookies), so we can't read
+// the full JWT server-side. Instead, admin layout sets a short-lived
+// `pansgpt-admin-verified` cookie after the backend confirms is_admin.
+// Middleware checks for this cookie as a first-pass guard on /admin/* routes.
+// The REAL security check is still the backend JWT + is_admin validation.
 export function middleware(request: NextRequest) {
+    const { pathname } = request.nextUrl;
+
+    // Guard /admin/* routes
+    if (pathname.startsWith('/admin')) {
+        const adminCookie = request.cookies.get('pansgpt-admin-verified');
+        if (!adminCookie?.value) {
+            // No admin cookie — redirect to login
+            const loginUrl = new URL('/login', request.url);
+            loginUrl.searchParams.set('redirect', pathname);
+            return NextResponse.redirect(loginUrl);
+        }
+    }
+
     return NextResponse.next();
 }
 
 export const config = {
-    matcher: [],
+    matcher: ['/admin/:path*'],
 };

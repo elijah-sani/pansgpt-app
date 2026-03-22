@@ -844,7 +844,16 @@ export function useMainPageController() {
       // If it's a temp ID, skip the optimistic update entirely —
       // we'll clean up and send fresh so there's no disappear/reappear flash
       if (!targetMessageId.startsWith('temp-') && editIndex !== -1) {
-        const optimisticMessages = messages.slice(0, editIndex + 1);
+        // Strip any trailing stopped/empty assistant bubble so the optimistic
+        // slice doesn't cause it to flash away and immediately reappear.
+        const baseMessages = messages.slice(0, editIndex + 1);
+        const lastBefore = messages[editIndex + 1];
+        const trailingStoppedBubble =
+          lastBefore?.role === 'assistant' &&
+          (lastBefore.isStopped === true || lastBefore.content === '');
+        const optimisticMessages = trailingStoppedBubble
+          ? baseMessages  // stopped bubble already excluded by the slice
+          : baseMessages;
         optimisticMessages[editIndex] = {
           ...optimisticMessages[editIndex],
           content: newText,
@@ -883,7 +892,8 @@ export function useMainPageController() {
           ));
           setIsLoading(false);
           abortControllerRef.current = null;
-          // Clean up orphan from DB then send as new message
+          // Clean up orphan from DB then send as new message.
+          // await truncate first (race: fire-and-forget can delete the new message instead).
           if (activeSessionId) {
             try {
               await api.fetch('/chat/truncate-last-stopped', {
@@ -892,6 +902,10 @@ export function useMainPageController() {
               });
             } catch { /* non-fatal */ }
           }
+          // await one microtask so React flushes setIsLoading(false) before
+          // sendMessageApi reads isLoading — otherwise the guard fires and
+          // the send is silently dropped.
+          await Promise.resolve();
           void sendMessageApi(newText, []);
           return;
         }

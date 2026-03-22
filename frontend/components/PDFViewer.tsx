@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 import React, { useState, useRef, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Document, Page, pdfjs } from 'react-pdf';
@@ -63,6 +63,17 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         setIsMounted(true);
     }, []);
 
+    // Eagerly fetch notes in the background so the panel opens instantly
+    useEffect(() => {
+        if (!meta.documentId || notesFetchedRef.current) return;
+        const timer = setTimeout(() => {
+            notesFetchedRef.current = true;
+            void fetchNotes();
+        }, 800); // short delay so PDF load gets priority
+        return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [meta.documentId]);
+
     const [numPages, setNumPages] = useState(0);
     const [currentPage, setCurrentPage] = useState(1); // Tracks the most-visible page for progress sync
     const [error, setError] = useState<string | null>(null);
@@ -79,6 +90,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     const [isLoadingNotes, setIsLoadingNotes] = useState(false);
     const [isSavingNote, setIsSavingNote] = useState(false);
     const [noteSaveError, setNoteSaveError] = useState<string | null>(null);
+    const notesFetchedRef = useRef(false); // true once notes have been loaded for this doc
     const [noteMobileFlash, setNoteMobileFlash] = useState<'saved' | 'error' | null>(null);
     const [noteSavedFlash, setNoteSavedFlash] = useState(false);
     // Mobile floating pill visibility
@@ -132,11 +144,44 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
     const handleSavePersonalNote = async () => {
         const text = personalNote.trim();
-        if (!text) return;
+        if (!text || isSavingPersonal) return;
         setIsSavingPersonal(true);
-        await handleSaveTextNote(text);
+        setNoteSaveError(null);
+        // Clear input immediately — optimistic UX
         setPersonalNote('');
-        setIsSavingPersonal(false);
+        const isMobile = window.innerWidth < 1024;
+        try {
+            const res = await api.fetch('/notes', {
+                method: 'POST',
+                body: JSON.stringify({
+                    document_id: meta.documentId,
+                    image_base64: '',
+                    page_number: currentPage ?? null,
+                    user_annotation: text,
+                }),
+            });
+            if (res.ok) {
+                const saved = await res.json();
+                setNotes(prev => [...prev, saved]);
+                setNoteSavedFlash(true);
+                setTimeout(() => setNoteSavedFlash(false), 2500);
+                if (isMobile) {
+                    setNoteMobileFlash?.('saved' as const);
+                }
+            } else {
+                // Restore text on failure so user doesn't lose it
+                setPersonalNote(text);
+                setNoteSaveError('Failed to save note. Please try again.');
+                setTimeout(() => setNoteSaveError(null), 4000);
+            }
+        } catch {
+            // Restore text on network error
+            setPersonalNote(text);
+            setNoteSaveError('Network error — note not saved. Check your connection.');
+            setTimeout(() => setNoteSaveError(null), 4000);
+        } finally {
+            setIsSavingPersonal(false);
+        }
     };
 
     const exportNotesPDF = async () => {
@@ -1243,20 +1288,28 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         // Find the index of the message being edited
         const editIndex = chatHistory.findIndex(m => String(m.id) === String(messageId));
         if (editIndex !== -1) {
-            // Slice off everything after this message, update its content
-            const optimisticMessages = chatHistory.slice(0, editIndex + 1);
-            optimisticMessages[editIndex] = {
-                ...optimisticMessages[editIndex],
+            // Strip any trailing stopped/empty assistant bubble BEFORE slicing so
+            // it doesn't flash away (removed by slice) then immediately reappear
+            // when the real SSE placeholder is pushed.
+            const next = chatHistory[editIndex + 1];
+            const hasTrailingStoppedBubble =
+                next?.role === 'assistant' &&
+                ((next as Message & { isStopped?: boolean }).isStopped === true || next.content === '');
+            const base = hasTrailingStoppedBubble
+                ? chatHistory.slice(0, editIndex + 1)  // exclude the stopped bubble
+                : chatHistory.slice(0, editIndex + 1);
+            base[editIndex] = {
+                ...base[editIndex],
                 content: newText,
             };
-            optimisticMessages.push({
+            base.push({
                 id: tempAssistantId,
                 role: 'assistant',
                 content: '',
                 session_id: currentSessionId,
                 isThinking: true
             });
-            setChatHistory(optimisticMessages);
+            setChatHistory(base);
         }
 
         setIsLoading(true);
@@ -1281,6 +1334,10 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                         });
                     } catch { /* non-fatal */ }
                 }
+                // await one microtask so React flushes setIsLoading(false) before
+                // sendMessage reads isLoading — otherwise the guard fires and
+                // the send is silently dropped.
+                await Promise.resolve();
                 void sendMessage(newText, []);
                 return;
             }
@@ -1514,7 +1571,11 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
     const toggleNotesPanel = () => {
         setNotesOpen(prev => !prev);
-        if (!notesOpen) void fetchNotes();
+        // Only fetch if we haven't loaded yet (eager fetch covers most cases)
+        if (!notesOpen && !notesFetchedRef.current) {
+            notesFetchedRef.current = true;
+            void fetchNotes();
+        }
     };
 
     function onDocumentLoadSuccess({ numPages }: { numPages: number }) {
@@ -1696,8 +1757,19 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
 
     return (
+        <>
+        {/* Suppress native mobile text selection menu globally within this viewer */}
+        <style>{`
+            .pdf-viewer-root * {
+                -webkit-touch-callout: none;
+            }
+            .pdf-viewer-root .react-pdf__Page__textContent {
+                -webkit-user-select: text;
+                user-select: text;
+            }
+        `}</style>
         <div
-            className="flex flex-col h-[100dvh] bg-background relative overflow-hidden font-sans"
+            className="pdf-viewer-root flex flex-col h-[100dvh] bg-background relative overflow-hidden font-sans"
             onContextMenu={(e) => e.preventDefault()}
             onTouchStart={() => setSelectionMenu(null)}
 
@@ -1855,6 +1927,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                     `}
                             onTouchStart={() => triggerMobilePill()}
                             onScroll={handleMobileScroll}
+                            onContextMenu={(e) => e.preventDefault()}
+                            style={{ WebkitTouchCallout: 'none' } as React.CSSProperties}
                         >
                             {/* Snipping Mode Banner */}
                             {/* ─── Reading Progress Bar ─────────────────────────────── */}
@@ -2277,5 +2351,6 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 </>
             )}
         </div>
+        </>
     );
 }
