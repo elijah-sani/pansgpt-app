@@ -13,6 +13,7 @@ import { StudyModeTutorial } from './pdf/StudyModeTutorial';
 import ChatInterface from './ChatInterface';
 import { useChatHistory } from '../hooks/useChatHistory';
 import { api } from '../lib/api';
+import { stripMarkdown } from '../lib/stripMarkdown';
 import { PDFViewerNotesPanel } from './pdf/PDFViewerNotesPanel';
 import { PDFViewerSelectedImageModal } from './pdf/PDFViewerSelectedImageModal';
 import type { PDFNote } from './pdf/types';
@@ -42,16 +43,14 @@ interface Message {
 const extractApiErrorMessage = (errorBody: unknown, fallback: string): string => {
     if (!errorBody || typeof errorBody !== 'object') return fallback;
     const payload = errorBody as Record<string, unknown>;
-    if (typeof payload.detail === 'string' && payload.detail.trim().length > 0) {
-        return payload.detail;
-    }
-    if (typeof payload.message === 'string' && payload.message.trim().length > 0) {
-        return payload.message;
-    }
-    if (typeof payload.error === 'string' && payload.error.trim().length > 0) {
-        return payload.error;
-    }
-    return fallback;
+    const raw =
+        (typeof payload.detail === 'string' && payload.detail.trim()) ||
+        (typeof payload.message === 'string' && payload.message.trim()) ||
+        (typeof payload.error === 'string' && payload.error.trim()) ||
+        '';
+    if (!raw) return fallback;
+    // Truncate long technical errors to a user-friendly length
+    return raw.length > 120 ? raw.slice(0, 117) + '…' : raw;
 };
 
 export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
@@ -133,7 +132,11 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 method: 'PATCH',
                 body: JSON.stringify({ user_annotation: text }),
             });
-            setNotes(prev => prev.map(n => String(n.id) === noteId ? { ...n, user_annotation: text } : n));
+            setNotes(prev => {
+                const updated = prev.map(n => String(n.id) === noteId ? { ...n, user_annotation: text } : n);
+                void persistNotesToCache(updated);
+                return updated;
+            });
             setEditingNoteId(null);
         } catch (e) {
             console.error('Update note failed', e);
@@ -762,24 +765,22 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
     // ... (rest of code)
 
-    // Fetch Metadata
+    // Fetch Metadata — runs in parallel with PDF download, never blocks render
     const [meta, setMeta] = useState<{ topic?: string; lecturer?: string; filename: string; documentId?: string }>({ filename: "Document" });
     const [showMoreMenu, setShowMoreMenu] = useState(false);
 
     useEffect(() => {
-        // if (!process.env.NEXT_PUBLIC_API_URL || !process.env.NEXT_PUBLIC_API_KEY) return;
-
-        api.fetch(`/documents/${fileId}`)
-            .then(res => res.json())
-            .then(data => {
+        // Fire both metadata and PDF load simultaneously — don't await metadata before rendering
+        Promise.all([
+            api.fetch(`/documents/${fileId}`).then(res => res.json()).then(data => {
                 setMeta({
                     filename: data.name ? data.name.replace('.pdf', '') : "Document",
                     topic: data.topic,
                     lecturer: data.lecturer_name,
                     documentId: data.id,
                 });
-            })
-            .catch(err => console.error("Metadata Fetch Error:", err));
+            }).catch(err => console.error("Metadata Fetch Error:", err)),
+        ]);
     }, [fileId]);
 
     // --- TEXT SELECTION LISTENER (RESTORED) ---
@@ -1471,17 +1472,75 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         });
     };
 
-    const fetchNotes = async () => {
+    // Cache name for notes — mirrors the PDF cache pattern
+    const NOTES_CACHE_NAME = 'pans-notes-v1';
+
+    /** Persist the current notes array to the Cache API for this document. */
+    const persistNotesToCache = async (notesList: PDFNote[]) => {
+        if (!fileId || typeof caches === 'undefined') return;
+        try {
+            const cache = await caches.open(NOTES_CACHE_NAME);
+            const cacheKey = `notes-${fileId}`;
+            await cache.put(
+                cacheKey,
+                new Response(JSON.stringify(notesList), {
+                    headers: { 'Content-Type': 'application/json' },
+                })
+            );
+        } catch (e) {
+            console.warn('[Notes Cache] write failed (non-fatal):', e);
+        }
+    };
+
+    /**
+     * fetchNotes — stale-while-revalidate via Cache API
+     *
+     * 1. If a cache entry exists, populate the UI instantly (0 ms).
+     * 2. Always fetch fresh data from the network in the background.
+     * 3. Update UI + cache once the network responds.
+     *
+     * `background` — when true (re-fetch triggered automatically), skips
+     *    the loading spinner so the UI doesn’t flash if we already have data.
+     */
+    const fetchNotes = async (background = false) => {
         if (!meta.documentId) return;
-        setIsLoadingNotes(true);
+
+        const canUseCache = typeof caches !== 'undefined';
+        const cacheKey = `notes-${fileId}`;
+        let servedFromCache = false;
+
+        // --- Step 1: serve cached data immediately ---
+        if (canUseCache) {
+            try {
+                const cache = await caches.open(NOTES_CACHE_NAME);
+                const cached = await cache.match(cacheKey);
+                if (cached) {
+                    const data = await cached.json() as PDFNote[];
+                    if (Array.isArray(data) && data.length > 0) {
+                        setNotes(data);
+                        servedFromCache = true;
+                    }
+                }
+            } catch (e) {
+                console.warn('[Notes Cache] read failed (non-fatal):', e);
+            }
+        }
+
+        // Show loading spinner only when we have nothing to show yet
+        if (!servedFromCache && !background) setIsLoadingNotes(true);
+
+        // --- Step 2: always refresh from network ---
         try {
             const res = await api.fetch(`/notes/${meta.documentId}`);
             if (res.ok) {
                 const data = await res.json();
-                setNotes(data.notes || []);
+                const fresh = (data.notes || []) as PDFNote[];
+                setNotes(fresh);
+                // Update the cache with the latest data
+                void persistNotesToCache(fresh);
             }
         } catch {
-            // Ignore silently for now.
+            // Network failure — cached data (if any) is already shown, so stay silent
         } finally {
             setIsLoadingNotes(false);
         }
@@ -1504,7 +1563,11 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
             });
             if (res.ok) {
                 const saved = await res.json();
-                setNotes(prev => [...prev, saved]);
+                setNotes(prev => {
+                    const updated = [...prev, saved];
+                    void persistNotesToCache(updated);
+                    return updated;
+                });
                 setNoteSavedFlash(true);
                 setTimeout(() => setNoteSavedFlash(false), 2500);
                 if (!isMobile) setNotesOpen(true); // only open panel on desktop
@@ -1539,7 +1602,11 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
             });
             if (res.ok) {
                 const saved = await res.json();
-                setNotes(prev => [...prev, saved]);
+                setNotes(prev => {
+                    const updated = [...prev, saved];
+                    void persistNotesToCache(updated);
+                    return updated;
+                });
                 setNoteSavedFlash(true);
                 setTimeout(() => setNoteSavedFlash(false), 2500);
                 if (!isMobile) setNotesOpen(true);
@@ -1561,7 +1628,11 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         setDeletingNoteId(noteId);
         try {
             await api.fetch(`/notes/${noteId}`, { method: 'DELETE' });
-            setNotes(prev => prev.filter(n => String(n.id) !== noteId));
+            setNotes(prev => {
+                const updated = prev.filter(n => String(n.id) !== noteId);
+                void persistNotesToCache(updated);
+                return updated;
+            });
         } catch {
             // Ignore silently for now.
         } finally {
@@ -1571,12 +1642,23 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
     const toggleNotesPanel = () => {
         setNotesOpen(prev => !prev);
-        // Only fetch if we haven't loaded yet (eager fetch covers most cases)
+        // Only fetch if we haven't loaded yet (eager fetch covers most cases).
+        // Re-opens never re-fetch — notes are already in state and cached.
         if (!notesOpen && !notesFetchedRef.current) {
             notesFetchedRef.current = true;
             void fetchNotes();
         }
     };
+
+    // --- Option 3: Prefetch notes eagerly as soon as the document UUID is known ---
+    // This way the first panel open is nearly instant: data is already in state.
+    useEffect(() => {
+        if (!meta.documentId || notesFetchedRef.current) return;
+        notesFetchedRef.current = true;
+        // Run silently in background — don’t show loading spinner (background=true)
+        void fetchNotes(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [meta.documentId]);
 
     function onDocumentLoadSuccess({ numPages }: { numPages: number }) {
         setNumPages(numPages);
@@ -2318,7 +2400,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                 const text = notes
                                     .map(
                                         (note) =>
-                                            `[${note.category || 'Key Point'}] ${note.ai_explanation || note.user_annotation || ''}${note.page_number ? ` (p.${note.page_number})` : ''}`
+                                            `[${note.category || 'Key Point'}] ${stripMarkdown(note.ai_explanation || note.user_annotation || '')}${note.page_number ? ` (p.${note.page_number})` : ''}`
                                     )
                                     .join('\n\n');
                                 navigator.clipboard.writeText(text).then(() => {

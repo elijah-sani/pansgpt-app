@@ -1,6 +1,7 @@
 import { BookOpen, Check, Copy, Download, Loader2, Pencil, Send, Trash2, X } from 'lucide-react';
 import { useRef, useEffect, type KeyboardEvent } from 'react';
 import type { PDFNote } from './types';
+import { stripMarkdown } from '@/lib/stripMarkdown';
 
 const NoteCardSkeleton = () => (
   <div className="bg-background border border-border rounded-xl overflow-hidden animate-pulse">

@@ -605,12 +605,11 @@ export function useMainPageController() {
     const payload = errorBody as Record<string, unknown>;
     // Only surface backend message for user-actionable errors (4xx except auth)
     if (status && status >= 400 && status < 500 && status !== 401 && status !== 403) {
-      if (typeof payload.detail === 'string' && payload.detail.trim().length > 0) {
-        return payload.detail;
-      }
-      if (typeof payload.message === 'string' && payload.message.trim().length > 0) {
-        return payload.message;
-      }
+      const raw =
+        (typeof payload.detail === 'string' && payload.detail.trim()) ||
+        (typeof payload.message === 'string' && payload.message.trim()) ||
+        '';
+      if (raw) return raw.length > 120 ? raw.slice(0, 117) + '…' : raw;
     }
     return status ? friendlyErrorMessage(status) : fallback;
   };

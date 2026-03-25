@@ -18,6 +18,10 @@ from .shared import (
 
 router = APIRouter(prefix="/notes", tags=["notes"])
 
+# Module-level cache: drive_file_id (or any non-UUID) → resolved UUID
+# Avoids a redundant DB lookup on every notes request after the first.
+_doc_uuid_cache: dict[str, str] = {}
+
 
 # ---------- Models ----------
 class SaveNoteRequest(BaseModel):
@@ -39,12 +43,21 @@ class NoteResponse(BaseModel):
 
 
 async def _resolve_document_uuid(sb, document_id: str) -> str:
-    """Accept either a pans_library UUID or a Drive file ID and return UUID."""
+    """Accept either a pans_library UUID or a Drive file ID and return UUID.
+    Results are cached in _doc_uuid_cache so the extra DB lookup runs at most
+    once per server start per unique document ID.
+    """
+    # Fast path 1: already a valid UUID — no lookup needed
     try:
         return str(uuid.UUID(document_id))
     except Exception:
         pass
 
+    # Fast path 2: cached from a previous request
+    if document_id in _doc_uuid_cache:
+        return _doc_uuid_cache[document_id]
+
+    # Slow path: hit the DB, then cache the result
     try:
         res = await _execute_with_retry(
             lambda: sb.table("pans_library")
@@ -61,7 +74,9 @@ async def _resolve_document_uuid(sb, document_id: str) -> str:
     if not res.data or len(res.data) == 0:
         raise HTTPException(status_code=404, detail="Document not found.")
 
-    return res.data[0]["id"]
+    resolved = res.data[0]["id"]
+    _doc_uuid_cache[document_id] = resolved  # cache for all future requests
+    return resolved
 
 
 # ---------- AI Categorization ----------

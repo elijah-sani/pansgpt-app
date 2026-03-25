@@ -10,6 +10,7 @@ import { ThumbsUp, ThumbsDown, Copy, Check, RotateCcw, StopCircle, Quote, Bookma
 import FeedbackModal from './FeedbackModal';
 import { api } from '@/lib/api';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
+import { stripMarkdown } from '@/lib/stripMarkdown';
 
 export interface Message {
     role: 'system' | 'user' | 'assistant' | 'ai';
@@ -91,7 +92,7 @@ export default function MessageBubble({
 
     const handleCopy = async () => {
         try {
-            await navigator.clipboard.writeText(message.content);
+            await navigator.clipboard.writeText(stripMarkdown(message.content));
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
         } catch (err) {
@@ -157,7 +158,7 @@ export default function MessageBubble({
 
         try {
             setIsSavingNote(true);
-            await onAddToNote(message.content);
+            await onAddToNote(stripMarkdown(message.content));
             setNoteSaved(true);
             window.setTimeout(() => setNoteSaved(false), 2000);
         } catch (err) {
