@@ -62,6 +62,10 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         setIsMounted(true);
     }, []);
 
+    // Fetch Metadata — declared early so it can be used in effects below
+    const [meta, setMeta] = useState<{ topic?: string; lecturer?: string; filename: string; documentId?: string }>({ filename: "Document" });
+    const [showMoreMenu, setShowMoreMenu] = useState(false);
+
     // Eagerly fetch notes in the background so the panel opens instantly
     useEffect(() => {
         if (!meta.documentId || notesFetchedRef.current) return;
@@ -766,8 +770,6 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     // ... (rest of code)
 
     // Fetch Metadata — runs in parallel with PDF download, never blocks render
-    const [meta, setMeta] = useState<{ topic?: string; lecturer?: string; filename: string; documentId?: string }>({ filename: "Document" });
-    const [showMoreMenu, setShowMoreMenu] = useState(false);
 
     useEffect(() => {
         // Fire both metadata and PDF load simultaneously — don't await metadata before rendering
