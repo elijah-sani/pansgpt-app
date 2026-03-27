@@ -50,6 +50,7 @@ export function useMainPageController() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isSyncingBackend, setIsSyncingBackend] = useState(true);
   const [isError, setIsError] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [isLoadingChat, setIsLoadingChat] = useState(false);
@@ -156,6 +157,7 @@ export function useMainPageController() {
         setIsAdmin(mainBootstrapCache.isAdmin);
         setWebSearchAvailable(mainBootstrapCache.webSearchAvailable);
         setAuthLoading(false);
+        setIsSyncingBackend(false);
       } else {
         // Drop the "Loading PansGPT..." spinner instantly!
         setUser(optimisticUser);
@@ -163,6 +165,7 @@ export function useMainPageController() {
 
         // Run the real network fetches silently in the background
         try {
+          setIsSyncingBackend(true);
           const bootstrapResponse = await api.get('/me/bootstrap');
           const bootstrap = bootstrapResponse.ok ? await bootstrapResponse.json() : null;
           const profile = bootstrap?.profile;
@@ -209,6 +212,8 @@ export function useMainPageController() {
           }
         } catch (err) {
           console.error("Failed to sync backend user data silently:", err);
+        } finally {
+          setIsSyncingBackend(false);
         }
       }
 
@@ -847,8 +852,8 @@ export function useMainPageController() {
     setInputMessage('');
     setPendingAttachments([]);
 
-    if (isLoading) {
-      // Queue the message for after the current response finishes
+    if (isLoading || isSyncingBackend) {
+      // Queue the message for after the current response finishes or sync completes
       const queued = { text: messageText, attachments };
       messageQueueRef.current = [...messageQueueRef.current, queued];
       setMessageQueue([...messageQueueRef.current]);
@@ -856,18 +861,18 @@ export function useMainPageController() {
     }
 
     void sendMessageApi(messageText, attachments);
-  }, [inputMessage, isLoading, pendingAttachments, sendMessageApi]);
+  }, [inputMessage, isLoading, isSyncingBackend, pendingAttachments, sendMessageApi]);
 
   // Drain the queue: when isLoading goes false and there are queued messages, send the next one
   useEffect(() => {
-    if (isLoading || messageQueueRef.current.length === 0) return;
+    if (isLoading || isSyncingBackend || messageQueueRef.current.length === 0) return;
     const next = messageQueueRef.current[0];
     messageQueueRef.current = messageQueueRef.current.slice(1);
     setMessageQueue([...messageQueueRef.current]);
     void sendMessageApi(next.text, next.attachments);
-  // Only re-run when isLoading changes — sendMessageApi is stable via useCallback
+  // Only re-run when isLoading/isSyncingBackend changes — sendMessageApi is stable via useCallback
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoading]);
+  }, [isLoading, isSyncingBackend]);
 
   const handleStopGeneration = useCallback(() => {
     // Track whether any text was streamed before the stop
@@ -1322,5 +1327,6 @@ export function useMainPageController() {
     webSearchUsage,
     messageQueue,
     queuedMessageCount: messageQueue.length,
+    isSyncingBackend,
   };
 }

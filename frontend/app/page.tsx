@@ -1,26 +1,42 @@
 "use client";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 export default function RootPage() {
   const router = useRouter();
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    // onAuthStateChange fires INITIAL_SESSION on mount with the real
-    // persisted session — more reliable than getSession() for redirects.
+    setMounted(true);
+    
+    // 1. Optimistic cold-start hint check
+    const hint = window.localStorage.getItem("pansgpt-auth-hint");
+    if (hint === "true") {
+      router.replace("/main");
+    } else if (hint === "false") {
+      router.replace("/login");
+    }
+
+    // 2. Real auth state sync
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (_event, session) => {
-        router.replace(session ? "/main" : "/login");
+        if (session) {
+          window.localStorage.setItem("pansgpt-auth-hint", "true");
+          // If we didn't have a hint, redirect now
+          if (hint !== "true") router.replace("/main");
+        } else {
+          window.localStorage.setItem("pansgpt-auth-hint", "false");
+          if (hint !== "false") router.replace("/login");
+        }
       }
     );
 
     return () => subscription.unsubscribe();
   }, [router]);
 
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
-      <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-    </div>
-  );
+  // Return null instead of a spinner to eliminate the "flash of loading" completely.
+  // The immediate client-side redirect will seamlessly swap to the correct shell.
+  if (!mounted) return null;
+  return null;
 }

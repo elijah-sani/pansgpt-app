@@ -30,16 +30,9 @@ export default function MaintenanceGuard({ children }: { children: React.ReactNo
         checkAuth();
     }, []);
 
-    // Loading State: We deleted `statusLoading` from this condition to make the app
-    // render optimistically. Only if the status check finishes AND confirms maintenanceMode
-    // is active, do we show the loading spinner (while waiting for admin auth check).
-    if (maintenanceMode && authLoading) {
-        return (
-            <div className="flex h-screen items-center justify-center bg-background">
-                <Loader2 className="w-8 h-8 animate-spin text-primary" />
-            </div>
-        );
-    }
+    // We deleted the loading spinner condition to make the app render optimistically.
+    // If maintenanceMode is explicitly active and the user is NOT an admin, 
+    // it will smoothly transition to the MaintenanceScreen below.
 
     const isExcludedRoute = pathname?.startsWith('/login') || pathname?.startsWith('/admin');
 

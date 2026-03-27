@@ -256,13 +256,20 @@ export default function ChatInput({
                 <Mic className="w-5 h-5" />
               </button>
             ) : (
-              <button
-                type="button"
-                onClick={onSendMessage}
-                className="p-2.5 bg-primary text-primary-foreground rounded-full hover:bg-primary/90 transition-all shadow-md flex items-center justify-center aspect-square animate-in zoom-in duration-200"
-              >
-                <Send className="w-4 h-4" />
-              </button>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={onSendMessage}
+                  className="p-2.5 bg-primary text-primary-foreground rounded-full hover:bg-primary/90 transition-all shadow-md flex items-center justify-center aspect-square animate-in zoom-in duration-200"
+                >
+                  <Send className="w-4 h-4" />
+                </button>
+                {queuedMessageCount > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 shadow-sm animate-in zoom-in duration-200">
+                    {queuedMessageCount}
+                  </span>
+                )}
+              </div>
             )}
           </div>
         </div>

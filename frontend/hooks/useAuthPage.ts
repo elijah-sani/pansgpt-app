@@ -155,6 +155,7 @@ export function useAuthPage() {
         throw error;
       }
 
+      window.localStorage.setItem('pansgpt-auth-hint', 'true');
       router.push('/main');
 
     } catch (error: unknown) {
