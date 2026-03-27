@@ -119,13 +119,16 @@ export function useMainPageController() {
     } catch { }
   }, []);
 
-  useEffect(() => {
-    async function loadUser() {
-      if (user) {
-        setAuthLoading(false);
-        return;
-      }
+  // Guard: loadUser must only run ONCE per mount. Having state (e.g. `user`)
+  // in the deps array causes it to re-run every time setUser() fires, which
+  // floods the backend with /me/bootstrap calls (~every 8 seconds).
+  const hasBootstrappedRef = useRef(false);
 
+  useEffect(() => {
+    if (hasBootstrappedRef.current) return;
+    hasBootstrappedRef.current = true;
+
+    async function loadUser() {
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -141,6 +144,7 @@ export function useMainPageController() {
       let bootstrap = null;
       let profile = null;
 
+      // Read welcome param directly so we don't need searchParams in deps
       const isWelcomeFlow = new URLSearchParams(window.location.search).get('welcome') === 'true';
       if (mainBootstrapCache?.user.id === id && !isWelcomeFlow) {
         setUser(mainBootstrapCache.user);
@@ -183,7 +187,7 @@ export function useMainPageController() {
       // Show welcome modal if:
       // 1. Fresh signup (?welcome=true in URL), OR
       // 2. Existing user who hasn't seen it yet (has_seen_welcome = false)
-      const isWelcomeParam = searchParams.get('welcome') === 'true';
+      const isWelcomeParam = isWelcomeFlow;
       const pendingWelcome = window.localStorage.getItem('pansgpt-show-welcome') === 'true';
 
       if (isWelcomeParam) {
@@ -217,7 +221,8 @@ export function useMainPageController() {
     });
 
     return () => subscription.unsubscribe();
-  }, [fetchWebSearchUsage, router, searchParams, user]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const handleWebSearchDefaultUpdated = (event: Event) => {
