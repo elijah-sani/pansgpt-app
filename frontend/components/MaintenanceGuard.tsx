@@ -28,10 +28,12 @@ export default function MaintenanceGuard({ children }: { children: React.ReactNo
             setAuthLoading(false);
         };
         checkAuth();
-    }, [supabase]);
+    }, []);
 
-    // Loading State (Prevent flash of content)
-    if (statusLoading || (maintenanceMode && authLoading)) {
+    // Loading State: We deleted `statusLoading` from this condition to make the app
+    // render optimistically. Only if the status check finishes AND confirms maintenanceMode
+    // is active, do we show the loading spinner (while waiting for admin auth check).
+    if (maintenanceMode && authLoading) {
         return (
             <div className="flex h-screen items-center justify-center bg-background">
                 <Loader2 className="w-8 h-8 animate-spin text-primary" />
@@ -39,12 +41,6 @@ export default function MaintenanceGuard({ children }: { children: React.ReactNo
         );
     }
 
-    // Logic: 
-    // IF maintenance_mode is true
-    // AND user is NOT logged in (or is a regular student - wait, user said "allows Admins". If session exists but role check failed, assumes student)
-    // AND current path is NOT /login or /admin/...
-
-    // Note: pathname can be null on first server render match, but this is client component.
     const isExcludedRoute = pathname?.startsWith('/login') || pathname?.startsWith('/admin');
 
     if (maintenanceMode && !isAdmin && !isExcludedRoute) {

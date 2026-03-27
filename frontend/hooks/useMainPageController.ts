@@ -38,7 +38,9 @@ export function useMainPageController() {
   const searchParams = useSearchParams();
 
   const [user, setUser] = useState<MainUser>(null);
-  const [authLoading, setAuthLoading] = useState(true);
+  // Initialize with false to prevent the "Loading PansGPT" spinner from
+  // flashing during the very first React render frame on cold launch.
+  const [authLoading, setAuthLoading] = useState(false);
   const [showWelcomeModal, setShowWelcomeModal] = useState(false);
   const [webSearchUsage, setWebSearchUsage] = useState<WebSearchUsage>(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -119,15 +121,7 @@ export function useMainPageController() {
     } catch { }
   }, []);
 
-  // Guard: loadUser must only run ONCE per mount. Having state (e.g. `user`)
-  // in the deps array causes it to re-run every time setUser() fires, which
-  // floods the backend with /me/bootstrap calls (~every 8 seconds).
-  const hasBootstrappedRef = useRef(false);
-
   useEffect(() => {
-    if (hasBootstrappedRef.current) return;
-    hasBootstrappedRef.current = true;
-
     async function loadUser() {
       const {
         data: { session },
