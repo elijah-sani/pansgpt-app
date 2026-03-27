@@ -8,6 +8,10 @@ const withPWAConfig = withPWA({
   aggressiveFrontEndNavCaching: true,
   reloadOnOnline: true,
   disable: process.env.NODE_ENV === "development",
+  // Cache the root URL as the app shell so the PWA opens instantly
+  cacheStartUrl: true,
+  // Unique identifier so the SW distinguishes new builds
+  dynamicStartUrl: true,
   fallbacks: {
     document: "/~offline",
   },
@@ -18,6 +22,8 @@ const withPWAConfig = withPWA({
     skipWaiting: true,
     // Claim all open tabs immediately after activation
     clientsClaim: true,
+    // Raise the maximum pre-cache file size limit (default 2MB is too small for some JS chunks)
+    maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MB
   },
 });
 

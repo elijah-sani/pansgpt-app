@@ -20,8 +20,25 @@ async function buildHeaders(options: FetchOptions, token?: string): Promise<Reco
     return headers;
 }
 
+/** Wait ms milliseconds before resolving. */
+function delay(ms: number) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
 async function handleExpiredSession(): Promise<void> {
-    console.warn('[API] Session expired — signing out and redirecting to login.');
+    console.warn('[API] Session expired — attempting one final refresh before redirect...');
+
+    // Give the network 2 seconds to recover and try one more refresh
+    await delay(2000);
+    const { data: retryData } = await supabase.auth.refreshSession().catch(() => ({ data: { session: null }, error: null }));
+
+    if (retryData?.session) {
+        // Recovered — dispatch an event so auth listeners update
+        console.info('[API] Session recovered on second attempt.');
+        window.dispatchEvent(new CustomEvent('pansgpt-token-refreshed'));
+        return;
+    }
+
+    // Truly dead — sign out and redirect
+    console.warn('[API] Session confirmed expired — signing out and redirecting to login.');
     await supabase.auth.signOut();
     window.location.replace('/login');
 }

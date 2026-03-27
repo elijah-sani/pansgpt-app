@@ -76,6 +76,7 @@ export default function MainPage() {
     volume,
     webSearchAvailable,
     webSearchUsage,
+    queuedMessageCount,
   } = useMainPageController();
 
   if (authLoading) {
@@ -150,6 +151,7 @@ export default function MainPage() {
           volume={volume}
           webSearchAvailable={webSearchAvailable}
           webSearchUsage={webSearchUsage}
+          queuedMessageCount={queuedMessageCount}
         />
       </div>
 

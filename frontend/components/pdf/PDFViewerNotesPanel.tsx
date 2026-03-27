@@ -35,6 +35,7 @@ type PDFViewerNotesPanelProps = {
   notes: PDFNote[];
   showSavedFlash?: boolean;
   noteSaveError?: string | null;
+  onRetryLoadNotes?: () => void;
   onClose: () => void;
   onCopyNotes: () => void;
   onDeleteNote: (noteId: string | number) => void;
@@ -78,6 +79,7 @@ export function PDFViewerNotesPanel({
   onStartEdit,
   onToggleExpanded,
   personalNote,
+  onRetryLoadNotes,
 }: PDFViewerNotesPanelProps) {
   const notesEndRef = useRef<HTMLDivElement>(null);
 
@@ -297,9 +299,17 @@ export function PDFViewerNotesPanel({
               </div>
             )}
             {noteSaveError && (
-              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-xs font-medium animate-in fade-in duration-200">
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-500/20 border border-red-500/50 text-red-500 text-xs font-medium animate-in fade-in duration-200">
                 <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                {noteSaveError}
+                <span className="flex-1">{noteSaveError}</span>
+                {onRetryLoadNotes && (
+                  <button
+                    onClick={onRetryLoadNotes}
+                    className="shrink-0 px-2 py-0.5 rounded-md bg-red-500 text-white text-[10px] font-semibold hover:bg-red-600 transition-colors"
+                  >
+                    Retry
+                  </button>
+                )}
               </div>
             )}
           </div>

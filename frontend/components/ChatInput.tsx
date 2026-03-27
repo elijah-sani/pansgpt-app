@@ -28,6 +28,8 @@ type ChatInputProps = {
   onStopGeneration: () => void;
   onSendMessage: () => void;
   onDropImage: (base64: string) => void;
+  /** Number of messages queued while a response is in-flight. Shows a badge on the stop button. */
+  queuedMessageCount?: number;
 };
 
 export default function ChatInput({
@@ -53,6 +55,7 @@ export default function ChatInput({
   onStopGeneration,
   onSendMessage,
   onDropImage,
+  queuedMessageCount = 0,
 }: ChatInputProps) {
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const dragCounter = useRef(0);
@@ -215,14 +218,21 @@ export default function ChatInput({
           </div>
           <div className="flex items-center gap-2">
             {isLoading ? (
-              <button
-                type="button"
-                onClick={onStopGeneration}
-                className="p-2.5 bg-primary text-primary-foreground rounded-full hover:bg-primary/90 transition-all shadow-md flex items-center justify-center aspect-square animate-in zoom-in duration-200"
-                title="Stop generation"
-              >
-                <Square className="w-4 h-4 fill-current" />
-              </button>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={onStopGeneration}
+                  className="p-2.5 bg-primary text-primary-foreground rounded-full hover:bg-primary/90 transition-all shadow-md flex items-center justify-center aspect-square animate-in zoom-in duration-200"
+                  title={queuedMessageCount > 0 ? `Stop generation (${queuedMessageCount} queued)` : 'Stop generation'}
+                >
+                  <Square className="w-4 h-4 fill-current" />
+                </button>
+                {queuedMessageCount > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 shadow-sm animate-in zoom-in duration-200">
+                    {queuedMessageCount}
+                  </span>
+                )}
+              </div>
             ) : isProcessing ? (
               <div className="w-10 h-10" />
             ) : isListening ? (

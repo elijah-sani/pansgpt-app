@@ -188,8 +188,8 @@ export default function MessageBubble({
                 <div className="flex items-center gap-3 mb-1">
                     <div className="relative flex items-center justify-center w-10 h-10 shrink-0 -ml-1.5">
                         <div className="relative flex h-8 w-8 items-center justify-center">
-                            {isThinking && (
-                                <span className="absolute inset-0 w-full h-full rounded-full border-2 border-t-[#057400] border-r-[#1e811a] border-b-transparent border-l-transparent animate-spin animate-pulse" />
+                            {(isThinking || isStreaming) && (
+                                <span className="absolute inset-0 w-full h-full rounded-full border-2 border-t-[#057400] border-r-[#1e811a] border-b-transparent border-l-transparent animate-spin" />
                             )}
                             <img
                                 src="/avatar.png"

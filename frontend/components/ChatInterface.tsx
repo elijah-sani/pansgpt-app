@@ -66,6 +66,7 @@ interface ChatInterfaceProps {
     onDeleteSession?: (id: string) => void;
     deletingId?: string | null;
     contextId?: string;
+    currentSessionId?: string | null;
     onRegenerate?: () => void;
     onNoteAdded?: (savedNote?: unknown) => Promise<void> | void;
 }
@@ -110,6 +111,7 @@ export default function ChatInterface({
     onDeleteSession,
     deletingId,
     contextId,
+    currentSessionId,
     onRegenerate,
     onNoteAdded
 }: ChatInterfaceProps) {
@@ -570,6 +572,7 @@ export default function ChatInterface({
                                     <MessageBubble
                                         message={msg}
                                         isThinking={Boolean(msg.isThinking)}
+                                        isStreaming={isLoading && i === messages.filter(m => m.role !== 'system').length - 1 && !msg.isThinking}
                                         showCitationsButton={false}
                                         onAddToNote={contextId ? handleAddResponseToNote : undefined}
                                         onRegenerate={
@@ -798,6 +801,7 @@ export default function ChatInterface({
                                         <div className="text-sm text-muted-foreground p-2 italic">No history yet.</div>
                                     ) : (
                                         sessions.map(chat => {
+                                            const isActive = currentSessionId === chat.id;
                                             return (
                                                 <div
                                                     key={chat.id}
@@ -805,9 +809,13 @@ export default function ChatInterface({
                                                         onLoadSession(chat.id);
                                                         setIsHistoryOpen(false);
                                                     }}
-                                                    className="relative p-3 hover:bg-muted/50 rounded-lg cursor-pointer text-sm font-medium transition-colors flex items-center gap-2 group w-full"
+                                                    className={`relative p-3 rounded-lg cursor-pointer text-sm font-medium transition-colors flex items-center gap-2 group w-full ${
+                                                        isActive
+                                                            ? 'bg-primary/10 border-l-2 border-primary text-foreground'
+                                                            : 'hover:bg-muted/50 border-l-2 border-transparent'
+                                                    }`}
                                                 >
-                                                    <MessageSquare className="w-4 h-4 text-muted-foreground group-hover:text-primary shrink-0" />
+                                                    <MessageSquare className={`w-4 h-4 shrink-0 ${isActive ? 'text-primary' : 'text-muted-foreground group-hover:text-primary'}`} />
                                                     <span className="truncate flex-1 min-w-0 text-left">{chat.title}</span>
 
                                                     {/* Three-dot trigger */}

@@ -59,6 +59,23 @@ export const useChatHistory = () => {
         return [];
     }, []);
 
+    /**
+     * Fetch ALL messages for a session — used for silent background preloading
+     * after the initial fast load (7 messages). Once resolved, the caller
+     * replaces the visible messages so scrolling up is instant with no network call.
+     */
+    const loadSessionFull = useCallback(async (id: string): Promise<Message[]> => {
+        try {
+            const res = await api.fetch(`/history/${id}?limit=9999`);
+            if (res.ok) {
+                return await res.json();
+            }
+        } catch (error) {
+            console.error("[Preload] Failed to fully load session:", error);
+        }
+        return [];
+    }, []);
+
     const loadOlderMessages = useCallback(async (id: string, beforeTimestamp: string, limit: number = 30): Promise<Message[]> => {
         try {
             const res = await api.fetch(`/history/${id}?limit=${limit}&before=${encodeURIComponent(beforeTimestamp)}`);
@@ -73,7 +90,6 @@ export const useChatHistory = () => {
 
     const createSession = useCallback(async (title?: string, contextId?: string): Promise<ChatSession | null> => {
         try {
-            // Note: api.post automatically handles token injection
             const body: Record<string, string> = {};
             if (title) body.title = title;
             if (contextId) body.context_id = contextId;
@@ -141,11 +157,12 @@ export const useChatHistory = () => {
         hasLoadedHistory,
         fetchHistory,
         loadSession,
+        loadSessionFull,
         loadOlderMessages,
         createSession,
         clearHistory,
         deleteSession,
         deletingId,
-        updateSessionTitle
+        updateSessionTitle,
     };
 };

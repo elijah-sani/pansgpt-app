@@ -78,6 +78,8 @@ type MainConversationProps = {
   volume: number;
   webSearchAvailable: boolean;
   webSearchUsage: WebSearchUsage;
+  /** Number of messages queued while isLoading — shown as a badge on the stop button. */
+  queuedMessageCount?: number;
 };
 
 export function MainConversation({
@@ -125,6 +127,7 @@ export function MainConversation({
   volume,
   webSearchAvailable,
   webSearchUsage,
+  queuedMessageCount = 0,
 }: MainConversationProps) {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [chatTextSize, setChatTextSize] = useState<ChatTextSize>('medium');
@@ -434,6 +437,7 @@ export function MainConversation({
         onStopGeneration={handleStopGeneration}
         onSendMessage={handleSendMessage}
         onDropImage={onDropImage}
+        queuedMessageCount={queuedMessageCount}
       />
     </div>
   );

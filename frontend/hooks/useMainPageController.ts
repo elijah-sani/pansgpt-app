@@ -20,7 +20,9 @@ type FailedRequest =
   | null;
 
 const MAX_IMAGES = 4;
-const INITIAL_MESSAGE_LIMIT = 40;
+// Number of messages shown immediately when a session is opened.
+// The rest are fetched in the background and prepended silently.
+const INITIAL_MESSAGE_LIMIT = 7;
 
 let mainBootstrapCache:
   | {
@@ -64,6 +66,9 @@ export function useMainPageController() {
   const [expandedMessages, setExpandedMessages] = useState<Set<string>>(new Set());
   const [hasOlderMessages, setHasOlderMessages] = useState(false);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  // Message queue: holds messages typed while a response is in-flight
+  const [messageQueue, setMessageQueue] = useState<Array<{ text: string; attachments: string[] }>>([]);
+  const messageQueueRef = useRef<Array<{ text: string; attachments: string[] }>>([]);
 
   const {
     sessions,
@@ -72,6 +77,7 @@ export function useMainPageController() {
     hasLoadedHistory,
     fetchHistory,
     loadSession,
+    loadSessionFull,
     createSession,
   } = useChatSession();
   const { loadOlderMessages } = useChatHistory();
@@ -522,17 +528,37 @@ export function useMainPageController() {
       isUserScrolledUpRef.current = false;
       setIsLoadingChat(true);
       try {
-        const loadedMessages = await loadSession(id);
-        setMessages(loadedMessages as Message[]);
+        // Phase 1: fetch the 7 most recent messages — shows instantly
+        const recent = await loadSession(id, INITIAL_MESSAGE_LIMIT);
+        setMessages(recent as Message[]);
         setActiveSessionId(id);
         setIsError(false);
         setChatError(null);
-        setHasOlderMessages(loadedMessages.length >= INITIAL_MESSAGE_LIMIT);
+        // Signal there may be older messages (we'll know for sure after background load)
+        setHasOlderMessages(recent.length >= INITIAL_MESSAGE_LIMIT);
       } finally {
         setIsLoadingChat(false);
       }
+
+      // Phase 2: silently fetch ALL messages in the background
+      // When done, replace the visible messages so scrolling up is instant
+      loadSessionFull(id).then((all) => {
+        if (all.length > INITIAL_MESSAGE_LIMIT) {
+          // Preserve scroll position: stay at the bottom after prepend
+          const scrollEl = chatScrollRef.current;
+          const prevHeight = scrollEl?.scrollHeight ?? 0;
+          setMessages(all as Message[]);
+          setHasOlderMessages(false); // everything is now in memory
+          requestAnimationFrame(() => {
+            if (scrollEl) {
+              // Keep user at the same relative position
+              scrollEl.scrollTop = scrollEl.scrollHeight - prevHeight + scrollEl.scrollTop;
+            }
+          });
+        }
+      }).catch(() => { /* silently ignore background preload failures */ });
     },
-    [loadSession, setActiveSessionId]
+    [loadSession, loadSessionFull, setActiveSessionId]
   );
 
   useEffect(() => {
@@ -780,6 +806,9 @@ export function useMainPageController() {
           setIsError(true);
           setChatError(error instanceof Error && error.message.length < 120 ? error.message : 'Something went wrong. Please try again.');
           lastFailedRequestRef.current = { type: 'send', text, attachments, isRetry };
+          // Restore message to input so user doesn't lose it
+          setInputMessage(text);
+          if (attachments.length > 0) setPendingAttachments(attachments);
         }
       } finally {
         setIsLoading(false);
@@ -790,15 +819,33 @@ export function useMainPageController() {
   );
 
   const handleSendMessage = useCallback(() => {
-    if ((!inputMessage.trim() && pendingAttachments.length === 0) || isLoading) {
-      return;
-    }
+    if (!inputMessage.trim() && pendingAttachments.length === 0) return;
     const messageText = inputMessage.trim();
     const attachments = [...pendingAttachments];
     setInputMessage('');
     setPendingAttachments([]);
+
+    if (isLoading) {
+      // Queue the message for after the current response finishes
+      const queued = { text: messageText, attachments };
+      messageQueueRef.current = [...messageQueueRef.current, queued];
+      setMessageQueue([...messageQueueRef.current]);
+      return;
+    }
+
     void sendMessageApi(messageText, attachments);
   }, [inputMessage, isLoading, pendingAttachments, sendMessageApi]);
+
+  // Drain the queue: when isLoading goes false and there are queued messages, send the next one
+  useEffect(() => {
+    if (isLoading || messageQueueRef.current.length === 0) return;
+    const next = messageQueueRef.current[0];
+    messageQueueRef.current = messageQueueRef.current.slice(1);
+    setMessageQueue([...messageQueueRef.current]);
+    void sendMessageApi(next.text, next.attachments);
+  // Only re-run when isLoading changes — sendMessageApi is stable via useCallback
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading]);
 
   const handleStopGeneration = useCallback(() => {
     // Track whether any text was streamed before the stop
@@ -1251,5 +1298,7 @@ export function useMainPageController() {
     volume,
     webSearchAvailable,
     webSearchUsage,
+    messageQueue,
+    queuedMessageCount: messageQueue.length,
   };
 }

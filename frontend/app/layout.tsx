@@ -7,6 +7,7 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import ProfileGuard from "@/components/ProfileGuard";
 import { QuizCacheProvider } from "@/lib/QuizCacheContext";
 import { ReaderCacheProvider } from "@/lib/ReaderCacheContext";
+import { SessionRefresher } from "@/components/SessionRefresher";
 
 const BRAND_COLOR = "#53d22d";
 
@@ -80,6 +81,7 @@ export default function RootLayout({
           <ErrorBoundary>
             <MaintenanceGuard>
               <ProfileGuard>
+                <SessionRefresher />
                 <ReaderCacheProvider>
                   <QuizCacheProvider>{children}</QuizCacheProvider>
                 </ReaderCacheProvider>

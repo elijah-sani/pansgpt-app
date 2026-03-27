@@ -15,7 +15,8 @@ interface ChatSessionContextType {
     createSession: (title: string, contextId?: string) => Promise<any>;
     deleteSession: (id: string) => Promise<void>;
     deletingId: string | null;
-    loadSession: (id: string) => Promise<any[]>;
+    loadSession: (id: string, limit?: number) => Promise<any[]>;
+    loadSessionFull: (id: string) => Promise<any[]>;
     clearHistory: () => void;
 }
 

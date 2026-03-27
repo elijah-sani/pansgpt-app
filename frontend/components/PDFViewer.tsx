@@ -527,7 +527,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     };
 
     // --- SESSION MANAGEMENT ---
-    const { sessions, isLoadingHistory, fetchHistory, loadSession, createSession, clearHistory, deleteSession, deletingId } = useChatHistory();
+    const { sessions, isLoadingHistory, fetchHistory, loadSession, loadSessionFull, createSession, clearHistory, deleteSession, deletingId } = useChatHistory();
     const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 
     // Reset error state when switching chat sessions
@@ -577,42 +577,66 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     }, [numPages]);
 
     // --- FETCH SAVED PROGRESS & AUTO-RESUME ---
-    // Once the PDF finishes loading (numPages > 0), fetch the user's last-saved page
-    // and smoothly scroll to it. The guard ref ensures this only runs once per document.
+    // localStorage key: pansgpt_progress_{fileId} => { current_page, total_pages }
+    const LS_PROGRESS_KEY = `pansgpt_progress_${fileId}`;
+
+    const saveProgressToLS = (page: number, total: number) => {
+        try {
+            localStorage.setItem(LS_PROGRESS_KEY, JSON.stringify({ current_page: page, total_pages: total }));
+        } catch { /* quota exceeded - ignore */ }
+    };
+
+    const restoreProgress = async () => {
+        // Phase 1: try localStorage immediately (zero network wait)
+        let restoredPage = 1;
+        try {
+            const raw = localStorage.getItem(LS_PROGRESS_KEY);
+            if (raw) {
+                const cached = JSON.parse(raw) as { current_page: number };
+                if (cached.current_page > 1) {
+                    restoredPage = cached.current_page;
+                    setTimeout(() => {
+                        const target = document.getElementById(`page-container-${restoredPage}`);
+                        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }, 400);
+                }
+            }
+        } catch { /* ignore */ }
+
+        // Phase 2: sync from network and update localStorage
+        try {
+            const res = await api.fetch(`/admin/documents/${fileId}/progress`);
+            if (!res.ok) return;
+            const data = await res.json();
+            const savedPage: number = data?.current_page ?? 1;
+            // Update LS with the authoritative server value
+            saveProgressToLS(savedPage, data?.total_pages ?? numPages ?? 1);
+            // Only scroll if network value differs meaningfully from what we already restored
+            if (savedPage > 1 && savedPage !== restoredPage) {
+                setTimeout(() => {
+                    const target = document.getElementById(`page-container-${savedPage}`);
+                    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }, 400);
+            }
+        } catch {
+            // Network failure — localStorage restore already done, no-op
+        }
+    };
+
     useEffect(() => {
         if (!numPages || !fileId || progressRestoredRef.current) return;
         progressRestoredRef.current = true;
-
-        const restoreProgress = async () => {
-            try {
-                const res = await api.fetch(`/admin/documents/${fileId}/progress`);
-                if (!res.ok) return; // Silently fail (e.g. unauthenticated)
-
-                const data = await res.json();
-                const savedPage: number = data?.current_page ?? 1;
-
-                if (savedPage > 1) {
-                    // Brief delay so react-pdf finishes painting pages before we scroll
-                    setTimeout(() => {
-                        const target = document.getElementById(`page-container-${savedPage}`);
-                        if (target) {
-                            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                        }
-                    }, 400);
-                }
-            } catch {
-                // Network failure — non-fatal, user starts at page 1
-            }
-        };
-
         restoreProgress();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [numPages, fileId]);
 
     // --- DEBOUNCED PROGRESS SAVE ---
-    // After the user stops scrolling for 2.5s, saves currentPage to the backend.
-    // Resets the timer on every page change to prevent flooding the database.
+    // Saves to localStorage immediately (synchronous), then to the backend after 2.5s idle.
     useEffect(() => {
         if (!numPages || !fileId) return;
+
+        // Instant local save — works even without network
+        saveProgressToLS(currentPage, numPages);
 
         if (progressSaveTimer.current) {
             clearTimeout(progressSaveTimer.current);
@@ -628,14 +652,37 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                     }),
                 });
             } catch {
-                // Non-fatal — user simply loses this progress tick
+                // Non-fatal — localStorage already saved the progress
             }
         }, 2500);
 
         return () => {
             if (progressSaveTimer.current) clearTimeout(progressSaveTimer.current);
         };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [currentPage, numPages, fileId]);
+
+    // --- KEYBOARD ARROW KEY — PDF PAGE NAVIGATION ---
+    // ArrowRight / ArrowLeft scroll to next/prev page.
+    // Guard: skip when focus is inside a text input to avoid breaking note-writing.
+    useEffect(() => {
+        if (!numPages) return;
+        const handleKeyDown = (e: KeyboardEvent) => {
+            const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+            const isEditable = tag === 'textarea' || tag === 'input' || (e.target as HTMLElement)?.isContentEditable;
+            if (isEditable) return;
+
+            if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                const next = Math.min(currentPage + 1, numPages);
+                document.getElementById(`page-container-${next}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                const prev = Math.max(currentPage - 1, 1);
+                document.getElementById(`page-container-${prev}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        };
+        document.addEventListener('keydown', handleKeyDown);
+        return () => document.removeEventListener('keydown', handleKeyDown);
+    }, [currentPage, numPages]);
 
     // Load history on mount (scoped to file)
     useEffect(() => {
@@ -1111,6 +1158,13 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                     }
                 }
                 // Mid-stream stop: baseHistory unchanged — new message appends below naturally
+            } else if (isError) {
+                // Previous send failed — remove the orphan user message so the new send replaces it
+                const prevMsg = baseHistory[baseHistory.length - 1];
+                if (prevMsg?.role === 'user') {
+                    baseHistory = baseHistory.slice(0, -1);
+                    setChatHistory(baseHistory);
+                }
             }
         }
 
@@ -1223,6 +1277,9 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 setChatHistory(prev => prev.filter(msg => String(msg.id) !== tempAssistantId));
                 setIsError(true);
                 setChatError(err instanceof Error && err.message.length < 120 ? err.message : 'Something went wrong. Please try again.');
+                // Restore message to input so user doesn't lose it
+                setInputMessage(text);
+                if (attachments.length > 0) setPendingAttachments(attachments);
             }
         } finally {
             setIsLoading(false);
@@ -1474,17 +1531,24 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         });
     };
 
-    // Cache name for notes — mirrors the PDF cache pattern
     const NOTES_CACHE_NAME = 'pans-notes-v1';
+    const NOTES_LS_KEY = `pansgpt_notes_${fileId}`;
 
-    /** Persist the current notes array to the Cache API for this document. */
+    /** Persist notes to Cache API AND localStorage (dual-layer for offline/incognito resilience). */
     const persistNotesToCache = async (notesList: PDFNote[]) => {
+        // Layer 1: localStorage (synchronous, works everywhere)
+        try {
+            // Strip large image blobs from localStorage to save quota
+            const slim = notesList.map(n => ({ ...n, image_base64: '' }));
+            localStorage.setItem(NOTES_LS_KEY, JSON.stringify(slim));
+        } catch { /* quota exceeded - ignore */ }
+
+        // Layer 2: Cache API (stores full data including images, HTTPS only)
         if (!fileId || typeof caches === 'undefined') return;
         try {
             const cache = await caches.open(NOTES_CACHE_NAME);
-            const cacheKey = `notes-${fileId}`;
             await cache.put(
-                cacheKey,
+                `notes-${fileId}`,
                 new Response(JSON.stringify(notesList), {
                     headers: { 'Content-Type': 'application/json' },
                 })
@@ -1495,27 +1559,35 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     };
 
     /**
-     * fetchNotes — stale-while-revalidate via Cache API
+     * fetchNotes — 3-layer stale-while-revalidate
      *
-     * 1. If a cache entry exists, populate the UI instantly (0 ms).
-     * 2. Always fetch fresh data from the network in the background.
-     * 3. Update UI + cache once the network responds.
-     *
-     * `background` — when true (re-fetch triggered automatically), skips
-     *    the loading spinner so the UI doesn’t flash if we already have data.
+     * 1. localStorage (instant, always available — strips images)
+     * 2. Cache API (full data including images, HTTPS only)
+     * 3. Network (always refreshes and updates both caches)
      */
     const fetchNotes = async (background = false) => {
         if (!meta.documentId) return;
 
-        const canUseCache = typeof caches !== 'undefined';
-        const cacheKey = `notes-${fileId}`;
         let servedFromCache = false;
 
-        // --- Step 1: serve cached data immediately ---
+        // --- Layer 1: localStorage (zero-wait, no Cache API needed) ---
+        try {
+            const raw = localStorage.getItem(NOTES_LS_KEY);
+            if (raw) {
+                const data = JSON.parse(raw) as PDFNote[];
+                if (Array.isArray(data) && data.length > 0) {
+                    setNotes(data);
+                    servedFromCache = true;
+                }
+            }
+        } catch { /* ignore */ }
+
+        // --- Layer 2: Cache API (has full images, overrides LS if available) ---
+        const canUseCache = typeof caches !== 'undefined';
         if (canUseCache) {
             try {
                 const cache = await caches.open(NOTES_CACHE_NAME);
-                const cached = await cache.match(cacheKey);
+                const cached = await cache.match(`notes-${fileId}`);
                 if (cached) {
                     const data = await cached.json() as PDFNote[];
                     if (Array.isArray(data) && data.length > 0) {
@@ -1531,18 +1603,17 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         // Show loading spinner only when we have nothing to show yet
         if (!servedFromCache && !background) setIsLoadingNotes(true);
 
-        // --- Step 2: always refresh from network ---
+        // --- Layer 3: always refresh from network ---
         try {
             const res = await api.fetch(`/notes/${meta.documentId}`);
             if (res.ok) {
                 const data = await res.json();
                 const fresh = (data.notes || []) as PDFNote[];
                 setNotes(fresh);
-                // Update the cache with the latest data
                 void persistNotesToCache(fresh);
             }
         } catch {
-            // Network failure — cached data (if any) is already shown, so stay silent
+            // Network failure — cached/LS data already shown, stay silent
         } finally {
             setIsLoadingNotes(false);
         }
@@ -1678,9 +1749,9 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     const handleLoadSession = async (sessionId: string) => {
         setIsLoadingChat(true);
         try {
-            // Don't trigger "Thinking" bubble. Just load data.
-            const msgs = await loadSession(sessionId);
-            setChatHistory(msgs as Message[]);
+            // Phase 1: fetch the 7 most recent messages — shows instantly
+            const recent = await loadSession(sessionId, 7);
+            setChatHistory(recent as Message[]);
             setCurrentSessionId(sessionId);
             setPendingAttachments([]);
             setIsError(false);
@@ -1693,6 +1764,13 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         } finally {
             setIsLoadingChat(false);
         }
+
+        // Phase 2: silently background-preload ALL messages so scrolling up is instant
+        loadSessionFull(sessionId).then((all) => {
+            if (all.length > 7) {
+                setChatHistory(all as Message[]);
+            }
+        }).catch(() => { /* silently ignore */ });
     };
 
     const handleNewChat = () => {
@@ -1745,6 +1823,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
             isLoadingHistory={isLoadingHistory}
             onLoadSession={handleLoadSession}
             onClearHistory={handleClearHistory}
+            currentSessionId={currentSessionId}
             onDeleteSession={(id) => {
                 deleteSession(id);
                 if (currentSessionId === id) handleNewChat();
@@ -2426,6 +2505,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                             }}
                             onToggleExpanded={toggleNoteExpanded}
                             personalNote={personalNote}
+                            onRetryLoadNotes={() => void fetchNotes(true)}
                         />
                     </div>
                     <PDFViewerSelectedImageModal
