@@ -141,70 +141,86 @@ export function useMainPageController() {
       }
 
       const { id, email, user_metadata: userMetadata } = session.user;
-      let bootstrap = null;
-      let profile = null;
 
-      // Read welcome param directly so we don't need searchParams in deps
+      // OPTIMISTIC RENDER: Populate user instantly from Supabase session metadata.
+      // This allows us to drop the "Loading PansGPT..." spinner instantly so the 
+      // Sidebar and Chat structure map out immediately.
+      const optimisticUser = {
+        id,
+        email: email || '',
+        name: userMetadata?.full_name || '',
+        avatarUrl: userMetadata?.avatar_url || '',
+        level: userMetadata?.level || '',
+        university: userMetadata?.university || '',
+        subscriptionTier: 'free',
+      };
+
       const isWelcomeFlow = new URLSearchParams(window.location.search).get('welcome') === 'true';
+
       if (mainBootstrapCache?.user.id === id && !isWelcomeFlow) {
+        // Fast path: completely cached
         setUser(mainBootstrapCache.user);
         setIsAdmin(mainBootstrapCache.isAdmin);
         setWebSearchAvailable(mainBootstrapCache.webSearchAvailable);
-        profile = { has_seen_welcome: mainBootstrapCache.hasSeenWelcome };
+        setAuthLoading(false);
       } else {
-        const bootstrapResponse = await api.get('/me/bootstrap');
-        bootstrap = bootstrapResponse.ok ? await bootstrapResponse.json() : null;
-        profile = bootstrap?.profile;
+        // Optimistic path: render UI instantly using local session metadata
+        setUser(optimisticUser);
+        setAuthLoading(false);
 
-        const nextUser = {
-          id,
-          email: email || '',
-          name:
-            profile?.full_name ||
-            [profile?.first_name, profile?.other_names].filter(Boolean).join(' ').trim() ||
-            userMetadata?.full_name ||
-            '',
-          avatarUrl: profile?.avatar_url || userMetadata?.avatar_url || '',
-          level: profile?.level || userMetadata?.level || '',
-          university: profile?.university || userMetadata?.university || '',
-          subscriptionTier: profile?.subscription_tier || 'free',
-        };
+        // Fetch the real database profile silently in the background
+        try {
+          const bootstrapResponse = await api.get('/me/bootstrap');
+          const bootstrap = bootstrapResponse.ok ? await bootstrapResponse.json() : null;
+          const profile = bootstrap?.profile;
 
-        mainBootstrapCache = {
-          user: nextUser,
-          isAdmin: Boolean(bootstrap?.is_admin),
-          webSearchAvailable: bootstrap?.system_settings?.web_search_enabled ?? true,
-          hasSeenWelcome: Boolean(profile?.has_seen_welcome),
-        };
+          const nextUser = {
+            id,
+            email: email || '',
+            name:
+              profile?.full_name ||
+              [profile?.first_name, profile?.other_names].filter(Boolean).join(' ').trim() ||
+              optimisticUser.name,
+            avatarUrl: profile?.avatar_url || optimisticUser.avatarUrl,
+            level: profile?.level || optimisticUser.level,
+            university: profile?.university || optimisticUser.university,
+            subscriptionTier: profile?.subscription_tier || 'free',
+          };
 
-        setUser(nextUser);
-        setIsAdmin(mainBootstrapCache.isAdmin);
-        setWebSearchAvailable(mainBootstrapCache.webSearchAvailable);
-      }
+          mainBootstrapCache = {
+            user: nextUser,
+            isAdmin: Boolean(bootstrap?.is_admin),
+            webSearchAvailable: bootstrap?.system_settings?.web_search_enabled ?? true,
+            hasSeenWelcome: Boolean(profile?.has_seen_welcome),
+          };
 
-      await fetchWebSearchUsage();
+          // Silently upgrade the UI with the real data
+          setUser(nextUser);
+          setIsAdmin(mainBootstrapCache.isAdmin);
+          setWebSearchAvailable(mainBootstrapCache.webSearchAvailable);
 
-      // Show welcome modal if:
-      // 1. Fresh signup (?welcome=true in URL), OR
-      // 2. Existing user who hasn't seen it yet (has_seen_welcome = false)
-      const isWelcomeParam = isWelcomeFlow;
-      const pendingWelcome = window.localStorage.getItem('pansgpt-show-welcome') === 'true';
+          // Background welcome modal checks
+          const pendingWelcome = window.localStorage.getItem('pansgpt-show-welcome') === 'true';
+          if (isWelcomeFlow) {
+            window.localStorage.setItem('pansgpt-show-welcome', 'true');
+            window.history.replaceState({}, '', '/main');
+          }
 
-      if (isWelcomeParam) {
-        window.localStorage.setItem('pansgpt-show-welcome', 'true');
-        window.history.replaceState({}, '', '/main');
-      }
-
-      if ((isWelcomeParam || pendingWelcome || !profile?.has_seen_welcome)) {
-        window.localStorage.removeItem('pansgpt-show-welcome');
-        setShowWelcomeModal(true);
-        await api.patch('/me/profile', { has_seen_welcome: true });
-        if (mainBootstrapCache) {
-          mainBootstrapCache.hasSeenWelcome = true;
+          if ((isWelcomeFlow || pendingWelcome || !profile?.has_seen_welcome)) {
+            window.localStorage.removeItem('pansgpt-show-welcome');
+            setShowWelcomeModal(true);
+            api.patch('/me/profile', { has_seen_welcome: true }).catch(() => {});
+            if (mainBootstrapCache) {
+              mainBootstrapCache.hasSeenWelcome = true;
+            }
+          }
+        } catch (err) {
+          console.error('Background profile sync failed:', err);
         }
       }
 
-      setAuthLoading(false);
+      // Fetch usage stats silently in the background
+      fetchWebSearchUsage().catch(() => {});
     }
 
     void loadUser();

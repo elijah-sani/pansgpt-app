@@ -123,6 +123,12 @@ export default function ProfileGuard({ children }: { children: React.ReactNode }
                     return;
                 }
 
+                // Drop the full-screen blocking loader early so the app UI can render!
+                // We let the /me/profile check continue silently in the background.
+                if (!cancelled) {
+                    setCheckingProfile(false);
+                }
+
                 const response = await api.get('/me/profile');
                 if (!response.ok) {
                     throw new Error('Failed to fetch profile');
@@ -136,7 +142,6 @@ export default function ProfileGuard({ children }: { children: React.ReactNode }
                 if (!cancelled) {
                     setGuardUser(nextUser);
                     setProfileRequired(!complete);
-                    setCheckingProfile(false);
                 }
             } catch (error) {
                 console.error('Profile guard check failed:', error);
