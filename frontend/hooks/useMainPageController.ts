@@ -558,8 +558,14 @@ export function useMainPageController() {
         }
       }).catch(() => { /* silently ignore background preload failures */ });
     },
-    [loadSession, loadSessionFull, setActiveSessionId]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [loadSession, loadSessionFull]
   );
+
+  // Keep a stable ref to handleLoadSession so the effect below only fires
+  // when activeSessionId changes — NOT when the callback identity changes.
+  const handleLoadSessionRef = useRef(handleLoadSession);
+  useEffect(() => { handleLoadSessionRef.current = handleLoadSession; }, [handleLoadSession]);
 
   useEffect(() => {
     if (activeSessionId) {
@@ -567,13 +573,15 @@ export function useMainPageController() {
         isCreatingSessionRef.current = false;
         return;
       }
-      void handleLoadSession(activeSessionId);
+      void handleLoadSessionRef.current(activeSessionId);
     } else {
       setMessages([]);
       setIsError(false);
       setChatError(null);
     }
-  }, [activeSessionId, handleLoadSession]);
+  // Only re-run when activeSessionId changes — NOT when the callback identity changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSessionId]);
 
   const handleLoadOlderMessages = useCallback(async () => {
     if (!activeSessionId || isLoadingOlder || messages.length === 0) {
