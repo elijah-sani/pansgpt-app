@@ -1,6 +1,6 @@
 'use client';
 
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, ClipboardEvent } from 'react';
 import type { Message } from '@/components/MessageBubble';
@@ -35,7 +35,6 @@ let mainBootstrapCache:
 
 export function useMainPageController() {
   const router = useRouter();
-  const searchParams = useSearchParams();
 
   const [user, setUser] = useState<MainUser>(null);
   // Initialize with false to prevent the "Loading PansGPT" spinner from
