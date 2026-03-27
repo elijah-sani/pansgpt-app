@@ -87,7 +87,7 @@ export default function ProfileGuard({ children }: { children: React.ReactNode }
     const pathname = usePathname();
     const isPublicRoute = useMemo(() => isPublicPath(pathname), [pathname]);
 
-    const [checkingProfile, setCheckingProfile] = useState(!isPublicRoute);
+    const [checkingProfile, setCheckingProfile] = useState(false);
     const [profileRequired, setProfileRequired] = useState(false);
     const [guardUser, setGuardUser] = useState<GuardUser>({
         name: '',
@@ -104,29 +104,19 @@ export default function ProfileGuard({ children }: { children: React.ReactNode }
         const run = async () => {
             if (isPublicRoute) {
                 if (!cancelled) {
-                    setCheckingProfile(false);
                     setProfileRequired(false);
                 }
                 return;
             }
-
-            setCheckingProfile(true);
 
             try {
                 const { data: { session } } = await supabase.auth.getSession();
 
                 if (!session?.user) {
                     if (!cancelled) {
-                        setCheckingProfile(false);
                         setProfileRequired(false);
                     }
                     return;
-                }
-
-                // Drop the full-screen blocking loader early so the app UI can render!
-                // We let the /me/profile check continue silently in the background.
-                if (!cancelled) {
-                    setCheckingProfile(false);
                 }
 
                 const response = await api.get('/me/profile');
@@ -146,7 +136,6 @@ export default function ProfileGuard({ children }: { children: React.ReactNode }
             } catch (error) {
                 console.error('Profile guard check failed:', error);
                 if (!cancelled) {
-                    setCheckingProfile(false);
                     setProfileRequired(false);
                 }
             }
@@ -161,14 +150,6 @@ export default function ProfileGuard({ children }: { children: React.ReactNode }
 
     if (isPublicRoute) {
         return <>{children}</>;
-    }
-
-    if (checkingProfile) {
-        return (
-            <div className="flex min-h-screen items-center justify-center bg-background">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            </div>
-        );
     }
 
     if (profileRequired) {

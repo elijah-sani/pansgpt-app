@@ -158,17 +158,17 @@ export function useMainPageController() {
       const isWelcomeFlow = new URLSearchParams(window.location.search).get('welcome') === 'true';
 
       if (mainBootstrapCache?.user.id === id && !isWelcomeFlow) {
-        // Fast path: completely cached
+        // Fast path: fully cached memory layer
         setUser(mainBootstrapCache.user);
         setIsAdmin(mainBootstrapCache.isAdmin);
         setWebSearchAvailable(mainBootstrapCache.webSearchAvailable);
         setAuthLoading(false);
       } else {
-        // Optimistic path: render UI instantly using local session metadata
+        // Drop the "Loading PansGPT..." spinner instantly!
         setUser(optimisticUser);
         setAuthLoading(false);
 
-        // Fetch the real database profile silently in the background
+        // Run the real network fetches silently in the background
         try {
           const bootstrapResponse = await api.get('/me/bootstrap');
           const bootstrap = bootstrapResponse.ok ? await bootstrapResponse.json() : null;
@@ -194,13 +194,13 @@ export function useMainPageController() {
             hasSeenWelcome: Boolean(profile?.has_seen_welcome),
           };
 
-          // Silently upgrade the UI with the real data
+          // Silently upgrade the UI with the final database values
           setUser(nextUser);
           setIsAdmin(mainBootstrapCache.isAdmin);
           setWebSearchAvailable(mainBootstrapCache.webSearchAvailable);
 
-          // Background welcome modal checks
           const pendingWelcome = window.localStorage.getItem('pansgpt-show-welcome') === 'true';
+
           if (isWelcomeFlow) {
             window.localStorage.setItem('pansgpt-show-welcome', 'true');
             window.history.replaceState({}, '', '/main');
@@ -215,7 +215,7 @@ export function useMainPageController() {
             }
           }
         } catch (err) {
-          console.error('Background profile sync failed:', err);
+          console.error("Failed to sync backend user data silently:", err);
         }
       }
 
