@@ -56,7 +56,14 @@ export default function RootLayout({
         {/* Auto-reload when a new service worker takes over (silent update).
             controllerchange fires after skipWaiting + clientsClaim activate
             the new SW — reloading ensures users always get the latest bundle. */}
-        {/* Removed destructive controllerchange automatic reloader due to extreme iOS Safari infinite reload bugs */}
+        {/* Suppress automatic reload on service worker controllerchange to prevent iOS login loop */}
+        <script dangerouslySetInnerHTML={{ __html: `
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.addEventListener('controllerchange', function() {
+              // No-op: prevent page reload on SW update
+            });
+          }
+        `}} />
       </head>
       <body
         className={albertSans.variable}

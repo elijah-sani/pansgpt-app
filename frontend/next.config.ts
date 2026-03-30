@@ -6,7 +6,8 @@ const withPWAConfig = withPWA({
   register: true,
   cacheOnFrontEndNav: true,
   aggressiveFrontEndNavCaching: true,
-  reloadOnOnline: true,
+  // Prevent automatic reload when network comes back online, which can cause loops on mobile login
+  reloadOnOnline: false,
   disable: process.env.NODE_ENV === "development",
   // Cache the root URL as the app shell so the PWA opens instantly
   cacheStartUrl: true,
@@ -17,11 +18,10 @@ const withPWAConfig = withPWA({
   },
   workboxOptions: {
     disableDevLogs: true,
-    // New service worker takes over immediately without waiting for
-    // all tabs to close — enables silent background updates.
-    skipWaiting: true,
-    // Claim all open tabs immediately after activation
-    clientsClaim: true,
+    // Disable automatic SW takeover to avoid reload loops on iOS login page
+    skipWaiting: false,
+    // Do not claim clients automatically; navigation will handle updates gracefully
+    clientsClaim: false,
     // Raise the maximum pre-cache file size limit (default 2MB is too small for some JS chunks)
     maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MB
   },

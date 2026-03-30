@@ -10,8 +10,18 @@ import { SignupWizard } from '@/components/auth/SignupWizard';
 import { TAGLINES } from '@/components/auth/authConstants';
 import { useAuthPage } from '@/hooks/useAuthPage';
 import { MobileAuthLayout } from '@/components/auth/MobileAuthLayout';
+import { useEffect } from 'react';
 
 export default function AuthPage() {
+  // Unregister any service workers on login page load to prevent automatic reload loops on iOS
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then((regs) => {
+        regs.forEach((reg) => reg.unregister());
+      });
+    }
+  }, []);
+
   const {
     forgotEmail,
     forgotSent,
