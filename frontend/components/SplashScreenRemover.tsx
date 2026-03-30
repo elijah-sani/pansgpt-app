@@ -8,12 +8,13 @@ export default function SplashScreenRemover() {
         // meaning all CSS gradients, themes, and shell components are safely mounted.
         const splash = document.getElementById('pwa-splash');
         if (splash) {
-            // Trigger the CSS opacity transition
+            // Trigger the CSS opacity transition and disable interactions
             splash.style.opacity = '0';
+            splash.style.pointerEvents = 'none';
             
-            // Wait for the transition to finish (.5s) before removing from DOM
+            // Wait for the transition to finish (.5s) before hiding it
             setTimeout(() => {
-                splash.remove();
+                splash.style.display = 'none';
             }, 500);
         }
     }, []);
