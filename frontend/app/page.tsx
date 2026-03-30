@@ -8,31 +8,42 @@ export default function RootPage() {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
-    
-    // 1. Optimistic cold-start hint check
-    const hint = window.localStorage.getItem("pansgpt-auth-hint");
-    if (hint === "true") {
-      router.replace("/main");
-    } else if (hint === "false") {
-      router.replace("/login");
-    }
+    let isActive = true;
 
-    // 2. Real auth state sync
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        if (session) {
-          window.localStorage.setItem("pansgpt-auth-hint", "true");
-          // If we didn't have a hint, redirect now
-          if (hint !== "true") router.replace("/main");
-        } else {
-          window.localStorage.setItem("pansgpt-auth-hint", "false");
-          if (hint !== "false") router.replace("/login");
-        }
+    const syncRouteWithSession = (hasSession: boolean) => {
+      window.localStorage.setItem("pansgpt-auth-hint", hasSession ? "true" : "false");
+      router.replace(hasSession ? "/main" : "/login");
+    };
+
+    const resolveInitialSession = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!isActive) {
+        return;
       }
-    );
 
-    return () => subscription.unsubscribe();
+      syncRouteWithSession(Boolean(session));
+      setMounted(true);
+    };
+
+    void resolveInitialSession();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!isActive) {
+        return;
+      }
+
+      syncRouteWithSession(Boolean(session));
+    });
+
+    return () => {
+      isActive = false;
+      subscription.unsubscribe();
+    };
   }, [router]);
 
   // Return null instead of a spinner to eliminate the "flash of loading" completely.

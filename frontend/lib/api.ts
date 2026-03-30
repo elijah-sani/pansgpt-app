@@ -24,21 +24,21 @@ async function buildHeaders(options: FetchOptions, token?: string): Promise<Reco
 function delay(ms: number) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
 async function handleExpiredSession(): Promise<void> {
-    console.warn('[API] Session expired — attempting one final refresh before redirect...');
+    console.warn('[API] Session expired - attempting one final refresh before redirect...');
 
     // Give the network 2 seconds to recover and try one more refresh
     await delay(2000);
     const { data: retryData } = await supabase.auth.refreshSession().catch(() => ({ data: { session: null }, error: null }));
 
     if (retryData?.session) {
-        // Recovered — dispatch an event so auth listeners update
+        // Recovered - dispatch an event so auth listeners update
         console.info('[API] Session recovered on second attempt.');
         window.dispatchEvent(new CustomEvent('pansgpt-token-refreshed'));
         return;
     }
 
-    // Truly dead — sign out and redirect
-    console.warn('[API] Session confirmed expired — signing out and redirecting to login.');
+    // Truly dead - sign out and redirect
+    console.warn('[API] Session confirmed expired - signing out and redirecting to login.');
     await supabase.auth.signOut();
     window.location.replace('/login');
 }
@@ -55,23 +55,25 @@ export const api = {
 
         const response = await fetch(url, { ...options, headers });
 
-        // 3. Handle 401 — try refresh once, then retry
+        // Only try a refresh when the request was actually authenticated.
         if (response.status === 401 && !options._isRetry) {
-            console.warn('[API] 401 received — attempting session refresh...');
+            if (!token) {
+                console.warn(`[API] 401 received without a session token for ${endpoint}; skipping refresh/redirect.`);
+                return response;
+            }
+
+            console.warn('[API] 401 received - attempting session refresh...');
             const { data, error } = await supabase.auth.refreshSession();
 
             if (error || !data.session) {
-                // Refresh failed — session is dead, kick to login
                 await handleExpiredSession();
-                // Return a synthetic response so callers don't crash
                 return new Response(
                     JSON.stringify({ detail: 'Your session has expired. Please log in again.' }),
                     { status: 401, headers: { 'Content-Type': 'application/json' } }
                 );
             }
 
-            // Refresh succeeded — retry the original request once with new token
-            console.info('[API] Session refreshed — retrying request...');
+            console.info('[API] Session refreshed - retrying request...');
             const retryHeaders = await buildHeaders(options, data.session.access_token);
             return fetch(url, { ...options, headers: retryHeaders });
         }
@@ -79,7 +81,7 @@ export const api = {
         // 4. Log non-OK responses for debugging (never expose raw errors to UI)
         if (!response.ok) {
             const rawText = await response.clone().text();
-            console.error(`[API Error] ${response.status} ${response.statusText} — ${endpoint}`);
+            console.error(`[API Error] ${response.status} ${response.statusText} - ${endpoint}`);
             try {
                 console.error('[API Error] Details:', JSON.parse(rawText));
             } catch {

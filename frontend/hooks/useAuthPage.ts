@@ -52,6 +52,46 @@ export function useAuthPage() {
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotSent, setForgotSent] = useState(false);
 
+  useEffect(() => {
+    let isActive = true;
+
+    const redirectIfAuthenticated = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!isActive || !session) {
+        return;
+      }
+
+      window.localStorage.setItem('pansgpt-auth-hint', 'true');
+      router.replace('/main');
+    };
+
+    void redirectIfAuthenticated();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!isActive) {
+        return;
+      }
+
+      if (session) {
+        window.localStorage.setItem('pansgpt-auth-hint', 'true');
+        router.replace('/main');
+        return;
+      }
+
+      window.localStorage.setItem('pansgpt-auth-hint', 'false');
+    });
+
+    return () => {
+      isActive = false;
+      subscription.unsubscribe();
+    };
+  }, [router]);
+
   // Read URL params and hash on mount to show friendly messages
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -156,7 +196,7 @@ export function useAuthPage() {
       }
 
       window.localStorage.setItem('pansgpt-auth-hint', 'true');
-      router.push('/main');
+      router.replace('/main');
 
     } catch (error: unknown) {
       setMessage({

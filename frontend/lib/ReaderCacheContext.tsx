@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/api';
+import { supabase } from '@/lib/supabase';
 
 export interface ReaderDocument {
   id?: number;
@@ -91,6 +92,14 @@ export function ReaderCacheProvider({ children }: { children: React.ReactNode })
 
     const revalidate = async () => {
       try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (!session) {
+          return;
+        }
+
         const res = await api.fetch('/documents');
         if (!res.ok) return;
         const fresh: ReaderDocument[] = await res.json();
