@@ -87,8 +87,14 @@ export default function RootLayout({
             transition: 'opacity 0.4s ease-out'
           }}
         >
-          {/* The authentic PansGPT SVG Logo matching the 32px admin verification dimension */}
-          <svg width="32" height="32" viewBox="0 0 291.7 312.9">
+          <style dangerouslySetInnerHTML={{ __html: `
+            @keyframes pwa-pulse {
+              0%, 100% { opacity: 1; }
+              50% { opacity: 0.5; }
+            }
+          `}} />
+          {/* The authentic PansGPT SVG Logo matching the 32px admin verification dimension with pulse animation */}
+          <svg width="32" height="32" viewBox="0 0 291.7 312.9" style={{ animation: 'pwa-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' }}>
             <g>
               <path d="M198.71,198.83c-2.64,2.51-17.78-19.09-39.65-20.05-23.8-1.05-42.35,22.9-45.12,20.05-2.77-2.84,21.56-20.64,20.99-44.05-.54-22.26-23.3-38.35-20.99-40.72,2.32-2.38,19.09,20.03,41.78,20.21,23.14.18,40.38-22.85,43-20.21,2.5,2.53-18.79,18.04-19.6,40.11-.87,23.72,22.4,42,19.6,44.67Z" fill="#fff"/>
               <path d="M291.7,33.99v230.75c0,2.21-2.68,3.32-4.24,1.76l-32.7-32.7c-3.2-3.2-4.99-7.53-4.99-12.05v-11.76c0-4,4.83-6,7.66-3.17l10.68,10.68c.97.97,2.63.28,2.63-1.09V33.87c0-7.13-5.78-12.9-12.9-12.9H78.99c-2.73,0-4.1,3.31-2.17,5.24l24.61,24.61c1.9,1.9,4.48,2.97,7.17,2.97h133.72c4.12,0,7.45,3.34,7.45,7.45v6.06c0,4.12-3.34,7.45-7.45,7.45H97.65c-1.24,0-2.43-.49-3.31-1.37L30.07,9.11c-3.36-3.36-.98-9.11,3.77-9.11h223.87c18.77,0,33.99,15.22,33.99,33.99Z" fill="#fff"/>
