@@ -40,7 +40,7 @@ sentry_sdk.init(
     profiles_sample_rate=0.1 if is_production else 1.0,
 )
 
-from routers import settings, system, library, chat, quiz
+from routers import settings, system, library, chat, quiz, lecturer
 from routers.chat_core import router as chat_core_router
 from routers.chat_core import chat_limiter
 from routers.chat_sessions import router as chat_sessions_router
@@ -166,6 +166,7 @@ chat.set_dependencies(supabase_client, verify_api_key, supabase_service_client)
 system.set_dependencies(supabase_client)
 settings.set_dependencies(supabase_client, verify_api_key, supabase_service_client)
 quiz.set_dependencies(supabase_client, verify_api_key, supabase_service_client)
+lecturer.set_dependencies(supabase_client, verify_api_key, supabase_service_client, drive_service)
 
 # Include routers
 app.include_router(library.router)
@@ -176,6 +177,7 @@ app.include_router(admin_router)
 app.include_router(feedback_router)
 app.include_router(quiz.router)
 app.include_router(notes_router)
+app.include_router(lecturer.router)
 
 # --- Routes ---
 @app.get("/health")

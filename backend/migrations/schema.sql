@@ -839,3 +839,132 @@ create policy "web_search_usage_service_role_delete"
 on public.web_search_usage for delete
 to service_role
 using (true);
+-- Migration: 01_lecturer_schema_update
+-- Adds the lecturers and exam_restrictions tables to support the Lecturer Admin features.
+
+create table if not exists public.lecturers (
+  id uuid default gen_random_uuid() primary key,
+  user_id uuid references auth.users(id) on delete cascade not null,
+  name text not null,
+  faculty text not null,
+  created_at timestamp with time zone not null default timezone('utc'::text, now()),
+  updated_at timestamp with time zone not null default timezone('utc'::text, now())
+);
+
+create index if not exists lecturers_user_id_idx on public.lecturers(user_id);
+create index if not exists lecturers_faculty_idx on public.lecturers(faculty);
+
+drop trigger if exists set_lecturers_updated_at on public.lecturers;
+create trigger set_lecturers_updated_at
+before update on public.lecturers
+for each row execute function public.set_updated_at();
+
+alter table public.lecturers enable row level security;
+
+drop policy if exists "lecturers_select_policy" on public.lecturers;
+drop policy if exists "lecturers_insert_policy" on public.lecturers;
+drop policy if exists "lecturers_update_policy" on public.lecturers;
+drop policy if exists "lecturers_delete_policy" on public.lecturers;
+drop policy if exists "lecturers_service_role_policy" on public.lecturers;
+
+create policy "lecturers_select_policy"
+on public.lecturers for select
+to authenticated
+using (true);
+
+create policy "lecturers_insert_policy"
+on public.lecturers for insert
+to authenticated
+with check (user_id = auth.uid() or public.is_super_admin());
+
+create policy "lecturers_update_policy"
+on public.lecturers for update
+to authenticated
+using (user_id = auth.uid() or public.is_super_admin())
+with check (user_id = auth.uid() or public.is_super_admin());
+
+create policy "lecturers_delete_policy"
+on public.lecturers for delete
+to authenticated
+using (user_id = auth.uid() or public.is_super_admin());
+
+create policy "lecturers_service_role_policy"
+on public.lecturers for all
+to service_role
+using (true)
+with check (true);
+
+
+create table if not exists public.exam_restrictions (
+  id uuid default gen_random_uuid() primary key,
+  lecturer_id uuid references public.lecturers(id) on delete cascade not null,
+  level text not null,
+  is_active boolean not null default false,
+  restricted_features jsonb not null default '{}'::jsonb,
+  created_at timestamp with time zone not null default timezone('utc'::text, now()),
+  updated_at timestamp with time zone not null default timezone('utc'::text, now())
+);
+
+create index if not exists exam_restrictions_level_idx on public.exam_restrictions(level);
+create index if not exists exam_restrictions_lecturer_idx on public.exam_restrictions(lecturer_id);
+create index if not exists exam_restrictions_active_idx on public.exam_restrictions(is_active);
+
+drop trigger if exists set_exam_restrictions_updated_at on public.exam_restrictions;
+create trigger set_exam_restrictions_updated_at
+before update on public.exam_restrictions
+for each row execute function public.set_updated_at();
+
+alter table public.exam_restrictions enable row level security;
+
+drop policy if exists "exam_restrictions_select_policy" on public.exam_restrictions;
+drop policy if exists "exam_restrictions_insert_policy" on public.exam_restrictions;
+drop policy if exists "exam_restrictions_update_policy" on public.exam_restrictions;
+drop policy if exists "exam_restrictions_delete_policy" on public.exam_restrictions;
+drop policy if exists "exam_restrictions_service_role_policy" on public.exam_restrictions;
+
+create policy "exam_restrictions_select_policy"
+on public.exam_restrictions for select
+to authenticated
+using (true);
+
+create policy "exam_restrictions_insert_policy"
+on public.exam_restrictions for insert
+to authenticated
+with check (
+  exists (
+    select 1 from public.lecturers l
+    where l.id = lecturer_id and l.user_id = auth.uid()
+  ) or public.is_super_admin()
+);
+
+create policy "exam_restrictions_update_policy"
+on public.exam_restrictions for update
+to authenticated
+using (
+  exists (
+    select 1 from public.lecturers l
+    where l.id = lecturer_id and l.user_id = auth.uid()
+  ) or public.is_super_admin()
+)
+with check (
+  exists (
+    select 1 from public.lecturers l
+    where l.id = lecturer_id and l.user_id = auth.uid()
+  ) or public.is_super_admin()
+);
+
+create policy "exam_restrictions_delete_policy"
+on public.exam_restrictions for delete
+to authenticated
+using (
+  exists (
+    select 1 from public.lecturers l
+    where l.id = lecturer_id and l.user_id = auth.uid()
+  ) or public.is_super_admin()
+);
+
+create policy "exam_restrictions_service_role_policy"
+on public.exam_restrictions for all
+to service_role
+using (true)
+with check (true);

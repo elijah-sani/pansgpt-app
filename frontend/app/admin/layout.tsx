@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, Library, Users, Settings, ArrowRight, MessageSquareWarning, GraduationCap, CalendarDays } from 'lucide-react';
+import { LayoutDashboard, Library, Users, Settings, ArrowRight, MessageSquareWarning, GraduationCap, CalendarDays, BookUser } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { api } from '@/lib/api';
@@ -84,6 +84,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                     <SidebarItem icon={Users} label="Students" href="/admin/students" active={pathname === '/admin/students'} />
                     <SidebarItem icon={CalendarDays} label="Timetables" href="/admin/timetable" active={pathname === '/admin/timetable'} />
                     <SidebarItem icon={GraduationCap} label="Faculty Knowledge" href="/admin/faculty-knowledge" active={pathname === '/admin/faculty-knowledge'} />
+                    <SidebarItem icon={BookUser} label="Lecturers" href="/admin/lecturers" active={pathname.startsWith('/admin/lecturers')} />
                     <SidebarItem icon={Users} label="Personnel" href="/admin/users" active={pathname === '/admin/users'} />
                     <SidebarItem icon={MessageSquareWarning} label="User Feedback" href="/admin/feedback" active={pathname === '/admin/feedback'} />
                     <SidebarItem icon={Settings} label="Settings" href="/admin/settings" active={pathname === '/admin/settings'} />
