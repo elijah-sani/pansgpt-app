@@ -31,6 +31,44 @@ interface UserAnswer {
   answer: string | string[];
 }
 
+function stripOptionLabel(text: string): string {
+  return text.replace(/^\s*[\(\[]?[A-Ea-e1-5][\)\].:-]\s*/, '').trim();
+}
+
+function getQuestionStem(questionText: string, options?: string[]): string {
+  const raw = (questionText || '').trim();
+  if (!raw) return raw;
+
+  let cutIndex = raw.length;
+
+  const markerPatterns = [
+    /\bselect\s+one\s+or\s+more\b/i,
+    /\bselect\s+all\s+that\s+apply\b/i,
+    /\b[a-e]\s*[.)]\s+/i,
+  ];
+
+  for (const pattern of markerPatterns) {
+    const match = pattern.exec(raw);
+    if (match && typeof match.index === 'number' && match.index > 0) {
+      cutIndex = Math.min(cutIndex, match.index);
+    }
+  }
+
+  if (Array.isArray(options)) {
+    const questionLower = raw.toLowerCase();
+    for (const option of options) {
+      const optionCore = stripOptionLabel(String(option || ''));
+      if (!optionCore) continue;
+      const idx = questionLower.indexOf(optionCore.toLowerCase());
+      if (idx > 0) {
+        cutIndex = Math.min(cutIndex, idx);
+      }
+    }
+  }
+
+  return raw.slice(0, cutIndex).trim();
+}
+
 export default function QuizTaking({ quizId }: { quizId: string }) {
   const router = useRouter();
   const [quiz, setQuiz] = useState<Quiz | null>(null);
@@ -129,7 +167,10 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
         userId: userId || "",
         answers: userAnswers.map(a => ({
           questionId: a.questionId,
-          selectedAnswer: Array.isArray(a.answer) ? a.answer.join(',') : a.answer
+          // Backward-compatible payload:
+          // send checkbox selections as JSON string so older backends (str-only)
+          // don't reject with 422, while newer backend parses it losslessly.
+          selectedAnswer: Array.isArray(a.answer) ? JSON.stringify(a.answer) : a.answer
         })),
         timeTaken
       });
@@ -227,6 +268,7 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
 
   const currentQuestion = quiz.questions[currentQuestionIndex];
   const currentAnswer = userAnswers.find(a => a.questionId === currentQuestion.id)?.answer || '';
+  const currentQuestionStem = getQuestionStem(currentQuestion.question_text, currentQuestion.options);
 
   return (
     <div className="min-h-screen overflow-y-auto text-gray-900 dark:text-white py-8 bg-gray-50 dark:[background-color:#0C120C]">
@@ -297,7 +339,7 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
             <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
               Question {currentQuestion.question_order}
             </h2>
-            <p className="text-lg text-gray-900 dark:text-white mb-6">{currentQuestion.question_text}</p>
+            <p className="text-lg text-gray-900 dark:text-white mb-6">{currentQuestionStem}</p>
 
             {/* Answer Options */}
             {currentQuestion.question_type === 'MCQ' && currentQuestion.options && (
