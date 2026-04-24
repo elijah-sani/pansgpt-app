@@ -28,7 +28,7 @@ export function PDFViewerSelectedImageModal({
         <img
           src={`data:image/png;base64,${image}`}
           alt="Full screen snip"
-          className="max-w-full max-h-[85vh] object-contain rounded-xl shadow-2xl border border-border bg-white"
+          className="max-w-full max-h-[85vh] object-contain rounded-xl shadow-sm border border-border bg-white"
           onClick={(event) => event.stopPropagation()}
         />
       </div>

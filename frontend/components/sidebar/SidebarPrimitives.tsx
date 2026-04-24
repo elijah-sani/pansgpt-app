@@ -43,7 +43,7 @@ export function SidebarLink({
 }
 
 export function scoreColor(percentage: number) {
-  if (percentage >= 80) return 'text-emerald-500';
+  if (percentage >= 80) return 'text-primary';
   if (percentage >= 60) return 'text-amber-500';
   return 'text-red-500';
 }

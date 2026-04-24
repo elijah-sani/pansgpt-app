@@ -214,7 +214,7 @@ export function MainConversation({
               <div className="relative mb-6">
                 <div className="absolute inset-0 w-16 h-16 rounded-full bg-primary/20 blur-xl" />
                 <div className="relative w-16 h-16 flex items-center justify-center">
-                  <img src="/avatar.png" alt="PansGPT" className="w-10 h-10 object-contain drop-shadow-lg" />
+                  <img src="/avatar.png" alt="PansGPT" className="w-10 h-10 object-contain drop-shadow-sm" />
                 </div>
               </div>
               <h2 className="text-2xl sm:text-3xl font-medium text-foreground">What can I help with?</h2>
@@ -353,7 +353,7 @@ export function MainConversation({
                                 title="Copy message"
                               >
                                 {copiedMessageId === messageKey ? (
-                                  <Check className="w-3.5 h-3.5 text-green-500" />
+                                  <Check className="w-3.5 h-3.5 text-primary" />
                                 ) : (
                                   <Copy className="w-3.5 h-3.5" />
                                 )}
@@ -408,7 +408,7 @@ export function MainConversation({
           type="button"
           onClick={handleScrollToBottom}
           aria-label="Scroll to bottom"
-          className="pointer-events-auto bg-background border border-border rounded-full shadow-lg p-2"
+          className="pointer-events-auto bg-background border border-border rounded-full shadow-sm p-2"
         >
           <ChevronDown className="w-5 h-5" />
         </button>

@@ -73,7 +73,7 @@ const AvatarSelectionModal = ({ isOpen, onClose, onConfirm }: AvatarSelectionMod
                     initial={{ scale: 0.95, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
                     exit={{ scale: 0.95, opacity: 0 }}
-                    className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]"
+                    className="bg-card border border-border rounded-2xl shadow-sm w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]"
                     onClick={(e) => e.stopPropagation()}
                 >
                     {/* Header */}
@@ -98,7 +98,7 @@ const AvatarSelectionModal = ({ isOpen, onClose, onConfirm }: AvatarSelectionMod
                                     transition={{ delay: i * 0.05 }}
                                     onClick={() => setSelectedSeed(seed)}
                                     className={`relative aspect-square rounded-xl overflow-hidden border-2 transition-all group ${selectedSeed === seed
-                                        ? 'border-primary ring-2 ring-primary/30 ring-offset-2 ring-offset-card scale-105 shadow-lg'
+                                        ? 'border-primary ring-2 ring-primary/30 ring-offset-2 ring-offset-card scale-105 shadow-sm'
                                         : 'border-border hover:border-primary/50 hover:scale-105'
                                         }`}
                                 >
@@ -132,7 +132,7 @@ const AvatarSelectionModal = ({ isOpen, onClose, onConfirm }: AvatarSelectionMod
                         <button
                             onClick={() => selectedSeed && onConfirm(getAvatarUrl(selectedSeed))}
                             disabled={!selectedSeed}
-                            className="flex-1 px-6 py-2.5 bg-primary hover:bg-primary/90 text-primary-foreground font-bold rounded-xl shadow-lg shadow-primary/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                            className="flex-1 px-6 py-2.5 bg-primary hover:bg-primary/90 text-primary-foreground font-bold rounded-xl shadow-sm  disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                         >
                             Confirm Identity
                         </button>
@@ -317,7 +317,7 @@ const AIEditor = ({ systemConfig, setSystemConfig, userEmail }: AIEditorProps) =
 
             <div className="flex items-center justify-between pt-4 border-t border-border">
                 {promptMessage ? (
-                    <div className={`flex items-center gap-2 text-sm font-medium ${promptMessage.type === 'success' ? 'text-green-500' : 'text-destructive'}`}>
+                    <div className={`flex items-center gap-2 text-sm font-medium ${promptMessage.type === 'success' ? 'text-primary' : 'text-destructive'}`}>
                         {promptMessage.type === 'success' ? <CheckCircle2 className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
                         {promptMessage.text}
                     </div>
@@ -504,7 +504,7 @@ export default function SettingsPage() {
                 <div className="absolute top-0 inset-x-0 h-24 bg-gradient-to-b from-primary/10 to-transparent pointer-events-none" />
 
                 <div className="relative group mb-4">
-                    <div className="w-24 h-24 rounded-full bg-muted border-4 border-card shadow-xl overflow-hidden flex items-center justify-center relative z-10">
+                    <div className="w-24 h-24 rounded-full bg-muted border-4 border-card shadow-sm overflow-hidden flex items-center justify-center relative z-10">
                         <img
                             src={currentAvatar}
                             alt="Avatar"
@@ -580,7 +580,7 @@ export default function SettingsPage() {
                         animate={{ y: 0 }}
                         exit={{ y: '100%' }}
                         transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                        className="fixed inset-x-0 bottom-0 h-[85vh] bg-background border-t border-border rounded-t-3xl z-50 md:hidden overflow-hidden flex flex-col shadow-2xl"
+                        className="fixed inset-x-0 bottom-0 h-[85vh] bg-background border-t border-border rounded-t-3xl z-50 md:hidden overflow-hidden flex flex-col shadow-sm"
                     >
                         <div className="p-4 border-b border-border flex items-center justify-between bg-card/50 backdrop-blur-md">
                             <h2 className="text-lg font-bold text-foreground">{title}</h2>
@@ -803,7 +803,7 @@ export default function SettingsPage() {
             />
             {showWebSearchConfirm && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-                    <div className="bg-background border border-border rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+                    <div className="bg-background border border-border rounded-2xl p-6 max-w-sm w-full shadow-sm">
                         <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center mb-4">
                             <Globe className="w-6 h-6 text-red-500" />
                         </div>

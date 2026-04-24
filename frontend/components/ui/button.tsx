@@ -22,16 +22,16 @@ export function Button({
 
     const variantClasses = {
         default:
-            "bg-green-600 hover:bg-green-700 text-white shadow-sm",
+            "bg-primary hover:bg-primary/90 text-primary-foreground",
         outline:
-            "border border-gray-300 dark:border-gray-600 bg-transparent hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-900 dark:text-white",
+            "border border-border bg-transparent hover:bg-accent text-foreground",
         ghost:
-            "bg-transparent hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-900 dark:text-white",
+            "bg-transparent hover:bg-accent text-foreground",
     };
 
     return (
         <button
-            className={`inline-flex items-center justify-center rounded-lg font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500 disabled:opacity-50 disabled:pointer-events-none ${sizeClasses[size]} ${variantClasses[variant]} ${className}`}
+            className={`inline-flex items-center justify-center rounded-lg font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-50 disabled:pointer-events-none ${sizeClasses[size]} ${variantClasses[variant]} ${className}`}
             {...props}
         >
             {children}

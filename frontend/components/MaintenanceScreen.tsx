@@ -9,7 +9,7 @@ export default function MaintenanceScreen() {
             <div className="max-w-md w-full text-center space-y-6 animate-in fade-in zoom-in duration-500">
                 <div className="relative mx-auto w-24 h-24">
                     <div className="absolute inset-0 bg-primary/20 rounded-full animate-ping duration-[3s]" />
-                    <div className="relative bg-card rounded-full p-6 shadow-xl border border-border">
+                    <div className="relative bg-card rounded-full p-6 shadow-sm border border-border">
                         <Construction className="w-12 h-12 text-primary animate-pulse" />
                     </div>
                 </div>

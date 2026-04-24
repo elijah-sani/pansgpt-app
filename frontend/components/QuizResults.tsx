@@ -39,6 +39,7 @@ interface QuizResult {
 }
 
 export default function QuizResults({ quizId }: { quizId: string }) {
+  void quizId;
   const router = useRouter();
   const searchParams = useSearchParams();
   const resultId = searchParams.get('resultId');
@@ -65,8 +66,9 @@ export default function QuizResults({ quizId }: { quizId: string }) {
         console.log('[QuizResults] API response:', { keys: Object.keys(data), hasQuiz: !!data.quiz, quizKeys: data.quiz ? Object.keys(data.quiz) : 'none' });
         // API returns { result, quiz } as siblings — merge quiz into result
         setResult({ ...data.result, quiz: data.quiz });
-      } catch (err: any) {
-        setError(err.message);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Failed to load result';
+        setError(message);
       } finally {
         setLoading(false);
       }
@@ -84,7 +86,7 @@ export default function QuizResults({ quizId }: { quizId: string }) {
   }, [showShareCard]);
 
   const getScoreColor = (percentage: number) => {
-    if (percentage >= 80) return '#00A400';
+    if (percentage >= 80) return 'var(--primary)';
     if (percentage >= 60) return '#fbbf24';
     return '#dc2626';
   };
@@ -118,21 +120,21 @@ export default function QuizResults({ quizId }: { quizId: string }) {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-50 dark:[background-color:#0C120C]">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-green-600 dark:border-[#00A400]"></div>
+      <div className="flex items-center justify-center min-h-screen bg-background">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary dark:border-primary/40"></div>
       </div>
     );
   }
 
   if (error || !result) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-50 dark:[background-color:#0C120C]">
+      <div className="flex items-center justify-center min-h-screen bg-background">
         <div className="text-center">
           <h2 className="text-2xl font-bold mb-4 text-red-600 dark:text-[#dc2626]">Error</h2>
-          <p className="text-gray-600 dark:text-white/70">{error || 'Result not found'}</p>
+          <p className="text-muted-foreground">{error || 'Result not found'}</p>
           <button
             onClick={() => router.push('/quiz')}
-            className="mt-4 px-4 py-2 text-white rounded transition-colors bg-green-600 dark:bg-[#00A400] hover:bg-green-700 dark:hover:bg-[#008300]"
+            className="mt-4 px-4 py-2 text-white rounded transition-colors bg-primary dark:bg-primary hover:bg-primary/90 dark:hover:bg-primary/90"
           >
             Back to Quiz Selection
           </button>
@@ -142,25 +144,25 @@ export default function QuizResults({ quizId }: { quizId: string }) {
   }
 
   return (
-    <div className="text-gray-900 dark:text-white">
+    <div className="text-foreground">
       <div className="max-w-4xl mx-auto px-4">
         {/* Score Summary */}
-        <div className="rounded-lg p-8 mb-6 text-center border bg-white dark:[background-color:#2D3A2D] border-gray-200 dark:border-white/10">
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">Quiz Results</h1>
+        <div className="rounded-lg p-8 mb-6 text-center border bg-card border-border">
+          <h1 className="text-3xl font-bold text-foreground mb-4">Quiz Results</h1>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
             <div className="text-center">
               <div className="text-4xl font-bold" style={{ color: getScoreColor(result.percentage) }}>
                 {result.percentage.toFixed(1)}%
               </div>
-              <div className="text-gray-600 dark:text-white/70">Score</div>
+              <div className="text-muted-foreground">Score</div>
             </div>
 
             <div className="text-center">
-              <div className="text-4xl font-bold text-green-600 dark:text-[#00A400]">
+              <div className="text-4xl font-bold text-primary dark:text-primary">
                 {result.score}/{result.max_score}
               </div>
-              <div className="text-gray-600 dark:text-white/70">Points</div>
+              <div className="text-muted-foreground">Points</div>
             </div>
           </div>
 
@@ -171,12 +173,12 @@ export default function QuizResults({ quizId }: { quizId: string }) {
           </div>
 
           {result.time_taken && (
-            <div className="text-gray-600 dark:text-white/70">
+            <div className="text-muted-foreground">
               Time taken: {formatTime(result.time_taken)}
             </div>
           )}
 
-          <div className="text-sm text-gray-600 dark:text-white/60 mt-2">
+          <div className="text-sm text-muted-foreground mt-2">
             Completed on {new Date(result.completed_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
           </div>
 
@@ -184,7 +186,7 @@ export default function QuizResults({ quizId }: { quizId: string }) {
           <div className="mt-6">
             <button
               onClick={() => setShowShareCard(!showShareCard)}
-              className="px-6 py-3 text-white rounded-lg font-medium transition-colors bg-green-600 dark:bg-[#00A400] hover:bg-green-700 dark:hover:bg-[#008300]"
+              className="px-6 py-3 text-white rounded-lg font-medium transition-colors bg-primary dark:bg-primary hover:bg-primary/90 dark:hover:bg-primary/90"
             >
               {showShareCard ? 'Hide Share Card' : '📱 Share Results'}
             </button>
@@ -193,8 +195,8 @@ export default function QuizResults({ quizId }: { quizId: string }) {
 
         {/* Share Card */}
         {showShareCard && (
-          <div ref={shareCardRef} className="rounded-lg p-8 mb-6 border bg-white dark:[background-color:#2D3A2D] border-gray-200 dark:border-white/10">
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4 text-center">Share Your Results</h2>
+          <div ref={shareCardRef} className="rounded-lg p-8 mb-6 border bg-card border-border">
+            <h2 className="text-xl font-semibold text-foreground mb-4 text-center">Share Your Results</h2>
             <QuizShareCard
               result={{
                 score: result.score,
@@ -214,43 +216,43 @@ export default function QuizResults({ quizId }: { quizId: string }) {
         )}
 
         {/* Performance Breakdown */}
-        <div className="rounded-lg p-6 mb-6 border bg-white dark:[background-color:#2D3A2D] border-gray-200 dark:border-white/10">
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">Performance Breakdown</h2>
+        <div className="rounded-lg p-6 mb-6 border bg-card border-border">
+          <h2 className="text-xl font-semibold text-foreground mb-4">Performance Breakdown</h2>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="flex items-center justify-between p-4 rounded-lg border bg-green-50 dark:bg-[rgba(0,164,0,0.2)] border-green-200 dark:border-[rgba(0,164,0,0.5)]">
+            <div className="flex items-center justify-between p-4 rounded-lg border bg-primary/10 dark:bg-primary/15 border-primary/30 dark:border-primary/40">
               <div className="flex items-center">
-                <div className="w-3 h-3 rounded-full mr-3 bg-green-600 dark:bg-[#00A400]"></div>
-                <span className="text-gray-900 dark:text-white font-medium">Correct</span>
+                <div className="w-3 h-3 rounded-full mr-3 bg-primary dark:bg-primary"></div>
+                <span className="text-foreground font-medium">Correct</span>
               </div>
-              <span className="font-semibold text-lg text-gray-900 dark:text-white">{getCorrectCount()}</span>
+              <span className="font-semibold text-lg text-foreground">{getCorrectCount()}</span>
             </div>
 
             <div className="flex items-center justify-between p-4 rounded-lg border bg-yellow-50 dark:bg-[rgba(251,191,36,0.2)] border-yellow-200 dark:border-[rgba(251,191,36,0.5)]">
               <div className="flex items-center">
                 <div className="w-3 h-3 rounded-full mr-3 bg-yellow-600 dark:bg-[#fbbf24]"></div>
-                <span className="text-gray-900 dark:text-white font-medium">Partial</span>
+                <span className="text-foreground font-medium">Partial</span>
               </div>
-              <span className="font-semibold text-lg text-gray-900 dark:text-white">{getPartiallyCorrectCount()}</span>
+              <span className="font-semibold text-lg text-foreground">{getPartiallyCorrectCount()}</span>
             </div>
 
             <div className="flex items-center justify-between p-4 rounded-lg border bg-red-50 dark:bg-[rgba(220,38,38,0.2)] border-red-200 dark:border-[rgba(220,38,38,0.5)]">
               <div className="flex items-center">
                 <div className="w-3 h-3 rounded-full mr-3 bg-red-600 dark:bg-[#dc2626]"></div>
-                <span className="text-gray-900 dark:text-white font-medium">Incorrect</span>
+                <span className="text-foreground font-medium">Incorrect</span>
               </div>
-              <span className="font-semibold text-lg text-gray-900 dark:text-white">{getIncorrectCount()}</span>
+              <span className="font-semibold text-lg text-foreground">{getIncorrectCount()}</span>
             </div>
           </div>
         </div>
 
         {/* Question Review */}
-        <div className="rounded-lg p-6 mb-6 border bg-white dark:[background-color:#2D3A2D] border-gray-200 dark:border-white/10">
+        <div className="rounded-lg p-6 mb-6 border bg-card border-border">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Question Review</h2>
+            <h2 className="text-xl font-semibold text-foreground">Question Review</h2>
             <button
               onClick={() => setShowExplanations(!showExplanations)}
-              className="px-4 py-2 text-sm text-white rounded transition-colors bg-green-600 dark:bg-[#00A400] hover:bg-green-700 dark:hover:bg-[#008300]"
+              className="px-4 py-2 text-sm text-white rounded transition-colors bg-primary dark:bg-primary hover:bg-primary/90 dark:hover:bg-primary/90"
             >
               {showExplanations ? 'Hide Explanations' : 'Show Explanations'}
             </button>
@@ -258,50 +260,50 @@ export default function QuizResults({ quizId }: { quizId: string }) {
 
           <div className="space-y-6">
             {result.feedback.map((question, index) => (
-              <div key={question.questionId} className="border rounded-lg p-4 bg-white dark:[background-color:#2D3A2D] border-gray-200 dark:border-white/20">
+              <div key={question.questionId} className="border rounded-lg p-4 bg-card border-border/60">
                 <div className="flex items-start justify-between mb-3">
-                  <h3 className="text-lg font-medium text-gray-900 dark:text-white">
+                  <h3 className="text-lg font-medium text-foreground">
                     Question {index + 1}
                   </h3>
                   <div className="flex items-center">
                     {question.isCorrect ? (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-gray-900 dark:text-white bg-green-100 dark:bg-[rgba(0,164,0,0.3)] border-[0.5px] border-green-300 dark:border-[rgba(0,164,0,0.5)]">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-foreground bg-primary/10 dark:bg-primary/20 border-[0.5px] border-primary/30 dark:border-primary/40">
                         ✓ Correct
                       </span>
                     ) : question.partiallyCorrect ? (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-gray-900 dark:text-white bg-yellow-100 dark:bg-[rgba(251,191,36,0.3)] border-[0.5px] border-yellow-300 dark:border-[rgba(251,191,36,0.5)]">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-foreground bg-yellow-100 dark:bg-[rgba(251,191,36,0.3)] border-[0.5px] border-yellow-300 dark:border-[rgba(251,191,36,0.5)]">
                         ~ Partially Correct
                       </span>
                     ) : (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-gray-900 dark:text-white bg-red-100 dark:bg-[rgba(220,38,38,0.3)] border-[0.5px] border-red-300 dark:border-[rgba(220,38,38,0.5)]">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-foreground bg-red-100 dark:bg-[rgba(220,38,38,0.3)] border-[0.5px] border-red-300 dark:border-[rgba(220,38,38,0.5)]">
                         ✗ Incorrect
                       </span>
                     )}
                   </div>
                 </div>
 
-                <p className="text-gray-900 dark:text-white mb-4">{question.questionText}</p>
+                <p className="text-foreground mb-4">{question.questionText}</p>
 
                 {/* Per-option breakdown for MCQ */}
                 {Array.isArray(question.optionDetails) && question.optionDetails.length > 0 ? (
                   <div className="space-y-2 mb-3">
-                    <label className="block text-sm font-medium text-gray-900 dark:text-white mb-1">Option Breakdown:</label>
+                    <label className="block text-sm font-medium text-foreground mb-1">Option Breakdown:</label>
                     <ul className="space-y-2">
                       {question.optionDetails.map((opt, i) => (
                         <li
                           key={i}
                           className={`flex items-start justify-between p-3 rounded-lg border ${opt.score === 1
-                            ? 'bg-green-50 dark:bg-[rgba(0,164,0,0.2)] border-green-200 dark:border-[rgba(0,164,0,0.5)]'
+                            ? 'bg-primary/10 dark:bg-primary/15 border-primary/30 dark:border-primary/40'
                             : 'bg-red-50 dark:bg-[rgba(220,38,38,0.2)] border-red-200 dark:border-[rgba(220,38,38,0.5)]'
                             }`}
                         >
                           <div className="flex-1 pr-3">
-                            <div className="text-sm text-gray-900 dark:text-white font-medium">{opt.option}</div>
-                            <div className="text-xs text-gray-700 dark:text-white/90 mt-1">
+                            <div className="text-sm text-foreground font-medium">{opt.option}</div>
+                            <div className="text-xs text-foreground/90 mt-1">
                               {opt.userSelected ? 'You selected this' : 'You did not select this'} · {opt.isCorrect ? 'True option' : 'False option'}
                             </div>
                           </div>
-                          <div className="ml-3 text-sm font-semibold text-gray-900 dark:text-white">
+                          <div className="ml-3 text-sm font-semibold text-foreground">
                             {opt.score === 1 ? '+1' : '-1'}
                           </div>
                         </li>
@@ -311,12 +313,12 @@ export default function QuizResults({ quizId }: { quizId: string }) {
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
                     <div>
-                      <label className="block text-sm font-medium text-gray-900 dark:text-white mb-1">
+                      <label className="block text-sm font-medium text-foreground mb-1">
                         Your Answer:
                       </label>
                       <div
-                        className={`p-3 rounded-lg border text-gray-900 dark:text-white ${question.isCorrect
-                          ? 'bg-green-50 dark:bg-[rgba(0,164,0,0.2)] border-green-200 dark:border-[rgba(0,164,0,0.5)]'
+                        className={`p-3 rounded-lg border text-foreground ${question.isCorrect
+                          ? 'bg-primary/10 dark:bg-primary/15 border-primary/30 dark:border-primary/40'
                           : question.partiallyCorrect
                             ? 'bg-yellow-50 dark:bg-[rgba(251,191,36,0.2)] border-yellow-200 dark:border-[rgba(251,191,36,0.5)]'
                             : 'bg-red-50 dark:bg-[rgba(220,38,38,0.2)] border-red-200 dark:border-[rgba(220,38,38,0.5)]'
@@ -328,10 +330,10 @@ export default function QuizResults({ quizId }: { quizId: string }) {
 
                     {!question.isCorrect && (
                       <div>
-                        <label className="block text-sm font-medium text-gray-900 dark:text-white mb-1">
+                        <label className="block text-sm font-medium text-foreground mb-1">
                           Correct Answer:
                         </label>
-                        <div className="p-3 rounded-lg border text-gray-900 dark:text-white bg-green-50 dark:bg-[rgba(0,164,0,0.2)] border-green-200 dark:border-[rgba(0,164,0,0.5)]">
+                        <div className="p-3 rounded-lg border text-foreground bg-primary/10 dark:bg-primary/15 border-primary/30 dark:border-primary/40">
                           {question.correctAnswer}
                         </div>
                       </div>
@@ -341,11 +343,11 @@ export default function QuizResults({ quizId }: { quizId: string }) {
 
                 {/* Show AI feedback only when explanations are toggled */}
                 {showExplanations && question.explanation && (
-                  <div className="mt-3 p-3 border rounded-lg bg-green-50 dark:bg-[rgba(0,164,0,0.15)] border-green-200 dark:border-[rgba(0,164,0,0.4)]">
-                    <label className="block text-sm font-medium mb-1 text-green-600 dark:text-[#00A400]">
+                  <div className="mt-3 p-3 border rounded-lg bg-primary/10 dark:bg-primary/10 border-primary/30 dark:border-primary/30">
+                    <label className="block text-sm font-medium mb-1 text-primary dark:text-primary">
                       Feedback:
                     </label>
-                    <p className="text-gray-900 dark:text-white/90">{question.explanation}</p>
+                    <p className="text-foreground/90">{question.explanation}</p>
                   </div>
                 )}
               </div>
@@ -357,7 +359,7 @@ export default function QuizResults({ quizId }: { quizId: string }) {
         <div className="flex justify-center pb-8">
           <button
             onClick={() => router.push('/quiz')}
-            className="px-6 py-3 text-white rounded-lg font-medium transition-colors bg-green-600 dark:bg-[#00A400] hover:bg-green-700 dark:hover:bg-[#008300]"
+            className="px-6 py-3 text-white rounded-lg font-medium transition-colors bg-primary dark:bg-primary hover:bg-primary/90 dark:hover:bg-primary/90"
           >
             Take Another Quiz
           </button>
@@ -366,3 +368,7 @@ export default function QuizResults({ quizId }: { quizId: string }) {
     </div>
   );
 } 
+
+
+
+

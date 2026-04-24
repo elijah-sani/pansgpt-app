@@ -32,7 +32,7 @@ export function StudyModeMockup() {
                                 Phase I and Phase II reactions
                             </span>
                             {/* Highlight Popup */}
-                            <span className="absolute -top-12 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-card border border-border rounded-lg px-2 py-1.5 shadow-lg whitespace-nowrap z-10">
+                            <span className="absolute -top-12 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-card border border-border rounded-lg px-2 py-1.5 shadow-sm whitespace-nowrap z-10">
                                 <button className="flex items-center gap-1.5 text-xs text-foreground hover:text-primary transition-colors px-2 py-1 rounded hover:bg-muted">
                                     <Lightbulb className="w-3.5 h-3.5" />
                                     Explain

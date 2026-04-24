@@ -31,7 +31,7 @@ export function QuizFilterModal({
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
 
       <div
-        className="relative z-10 w-full sm:w-80 sm:ml-[76px] bg-card border border-border rounded-t-2xl sm:rounded-2xl shadow-2xl p-5 animate-in slide-in-from-bottom-4 sm:slide-in-from-left-4 duration-250"
+        className="relative z-10 w-full sm:w-80 sm:ml-[76px] bg-card border border-border rounded-t-2xl sm:rounded-2xl shadow-sm p-5 animate-in slide-in-from-bottom-4 sm:slide-in-from-left-4 duration-250"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-5">

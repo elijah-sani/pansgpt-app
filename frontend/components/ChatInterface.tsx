@@ -511,7 +511,7 @@ export default function ChatInterface({
                                                 /* Normal Display Mode */
                                                 <>
                                                     <div className="max-w-[85%]">
-                                                        <div className="bg-[#253920] text-white px-5 py-3 rounded-2xl rounded-tr-sm shadow-sm border border-[#253920] text-[15px] leading-relaxed">
+                                                        <div className="bg-[var(--surface-secondary)] text-white px-5 py-3 rounded-2xl rounded-tr-sm shadow-sm border border-[var(--surface-secondary)] text-[15px] leading-relaxed">
                                                             <div className={isLongUserMessage && !isExpanded ? 'line-clamp-3' : ''}>
                                                                 {msg.content}
                                                             </div>
@@ -618,7 +618,7 @@ export default function ChatInterface({
                     type="button"
                     onClick={handleScrollToBottom}
                     aria-label="Scroll to bottom"
-                    className="pointer-events-auto bg-background border border-border rounded-full shadow-lg p-2"
+                    className="pointer-events-auto bg-background border border-border rounded-full shadow-sm p-2"
                 >
                     <ChevronDown className="w-5 h-5" />
                 </button>
@@ -636,7 +636,7 @@ export default function ChatInterface({
                                     <img
                                         src={`data:image/png;base64,${att}`}
                                         alt={`Attachment ${idx + 1}`}
-                                        className="h-20 w-20 object-cover rounded-xl border border-border shadow-lg bg-background"
+                                        className="h-20 w-20 object-cover rounded-xl border border-border shadow-sm bg-background"
                                     />
                                     <button
                                         onClick={() => {
@@ -654,7 +654,7 @@ export default function ChatInterface({
                     )}
 
                     {/* Input Card — matching main chat layout */}
-                    <div className={`relative flex flex-col bg-card border border-border rounded-3xl p-3 shadow-lg transition-all duration-300 ${isListening ? 'ring-2 ring-primary/20' : ''}`}>
+                    <div className={`relative flex flex-col bg-card border border-border rounded-3xl p-3 shadow-sm transition-all duration-300 ${isListening ? 'ring-2 ring-primary/20' : ''}`}>
                         {/* Textarea / Waveform / Processing */}
                         {isListening ? (
                             <div className="w-full flex items-center justify-center py-3 px-2">
@@ -779,7 +779,7 @@ export default function ChatInterface({
                     />
 
                     {/* Drawer Panel (Absolute to ChatInterface) */}
-                    <div className="absolute inset-y-0 left-0 w-80 bg-background shadow-2xl z-50 transform transition-transform duration-300 flex flex-col border-r border-border animate-in slide-in-from-left">
+                    <div className="absolute inset-y-0 left-0 w-80 bg-background shadow-sm z-50 transform transition-transform duration-300 flex flex-col border-r border-border animate-in slide-in-from-left">
                         <div className="flex items-center justify-between p-4 border-b border-border">
                             <h2 className="font-semibold text-lg">Recent Chats</h2>
                             <button
@@ -833,7 +833,7 @@ export default function ChatInterface({
                                                     {/* Dropdown */}
                                                     {openMenuId === chat.id && (
                                                         <div
-                                                            className="absolute right-0 top-full mt-1 z-50 w-40 bg-card border border-border rounded-xl shadow-xl py-1 animate-in fade-in zoom-in-95 duration-150"
+                                                            className="absolute right-0 top-full mt-1 z-50 w-40 bg-card border border-border rounded-xl shadow-sm py-1 animate-in fade-in zoom-in-95 duration-150"
                                                             onClick={(e) => e.stopPropagation()}
                                                         >
                                                             <button
@@ -891,7 +891,7 @@ export default function ChatInterface({
                     <img
                         src={`data:image/jpeg;base64,${selectedImage}`}
                         alt="Full View"
-                        className="max-w-full max-h-[90vh] rounded-lg shadow-2xl object-contain"
+                        className="max-w-full max-h-[90vh] rounded-lg shadow-sm object-contain"
                         onClick={(e) => e.stopPropagation()}
                     />
                 </div>
@@ -900,7 +900,7 @@ export default function ChatInterface({
             {isDeleteModalOpen && (
                 <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-in fade-in duration-200">
                     <div
-                        className="bg-card text-card-foreground rounded-xl p-6 shadow-2xl max-w-sm w-full mx-4 border border-border"
+                        className="bg-card text-card-foreground rounded-xl p-6 shadow-sm max-w-sm w-full mx-4 border border-border"
                         onClick={(e) => e.stopPropagation()}
                     >
                         <h3 className="text-lg font-semibold mb-2">Delete Conversation?</h3>

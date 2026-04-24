@@ -405,7 +405,7 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
                             initial={{ scale: 0.95, opacity: 0 }}
                             animate={{ scale: 1, opacity: 1 }}
                             exit={{ scale: 0.95, opacity: 0 }}
-                            className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]"
+                            className="bg-card border border-border rounded-2xl shadow-sm w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]"
                             onClick={(e) => e.stopPropagation()}
                         >
                             {modalContent}

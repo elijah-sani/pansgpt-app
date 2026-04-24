@@ -39,7 +39,7 @@ export function AuthPanelHeader({
                   <div className="h-1 overflow-hidden rounded-full bg-slate-100">
                     <div
                       className={`h-full rounded-full transition-all duration-300 ${
-                        isDone ? 'w-full bg-green-500' : isActive ? 'w-2/3 bg-green-500' : 'w-0 bg-slate-200'
+                        isDone ? 'w-full bg-primary' : isActive ? 'w-2/3 bg-primary' : 'w-0 bg-slate-200'
                       }`}
                     />
                   </div>

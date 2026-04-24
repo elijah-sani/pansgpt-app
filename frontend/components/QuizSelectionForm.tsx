@@ -1,24 +1,17 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import type { Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { api } from '@/lib/api';
 import { useRouter } from 'next/navigation';
 import QuizLoadingModal from './QuizLoadingModal';
 import { useQuizCache } from '@/lib/QuizCacheContext';
 import {
-  AcademicCapIcon,
-  BookOpenIcon,
-  TagIcon,
-  ClockIcon,
-  QuestionMarkCircleIcon,
-  ChartBarIcon,
   CheckCircleIcon,
   XMarkIcon,
-  SparklesIcon
+  SparklesIcon,
 } from '@heroicons/react/24/outline';
-
-// Add import for combobox
 import { Combobox } from '@headlessui/react';
 
 interface QuizFormData {
@@ -33,8 +26,12 @@ interface QuizFormData {
 }
 
 export default function QuizSelectionForm() {
-  const [session, setSession] = useState<any>(null);
-  useEffect(() => { supabase.auth.getSession().then(({ data: { session: s } }) => setSession(s)); }, []);
+  const [session, setSession] = useState<Session | null>(null);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session: s } }) => setSession(s));
+  }, []);
+
   const router = useRouter();
   const [isGenerating, setIsGenerating] = useState(false);
   const [showLoadingModal, setShowLoadingModal] = useState(false);
@@ -42,6 +39,7 @@ export default function QuizSelectionForm() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
+
   const [formData, setFormData] = useState<QuizFormData>({
     courseCode: '',
     courseTitle: '',
@@ -50,11 +48,13 @@ export default function QuizSelectionForm() {
     numQuestions: 10,
     questionType: 'MCQ',
     difficulty: 'medium',
-    timeLimit: undefined
+    timeLimit: undefined,
   });
+
   const [topicOptions, setTopicOptions] = useState<string[]>([]);
   const [filteredTopics, setFilteredTopics] = useState<string[]>([]);
   const [showAllTopics, setShowAllTopics] = useState(false);
+
   const {
     courses,
     documents,
@@ -73,11 +73,10 @@ export default function QuizSelectionForm() {
           if (!userLevelLoaded && !userLevel) {
             await fetchUserLevel();
           }
-
           if (userLevel) {
-            setFormData(prev => ({ ...prev, level: userLevel }));
+            setFormData((prev) => ({ ...prev, level: userLevel }));
           }
-        } catch { }
+        } catch {}
       }
     }
     void loadUserLevel();
@@ -87,7 +86,6 @@ export default function QuizSelectionForm() {
     if (documentsLoaded || documents.length > 0) {
       return;
     }
-
     void fetchDocuments().catch((error) => {
       console.error('Failed to fetch courses:', error);
     });
@@ -97,60 +95,51 @@ export default function QuizSelectionForm() {
     if (!documentsLoaded && documents.length === 0) {
       return;
     }
-
     const relevantDocuments = formData.courseCode
       ? documents.filter((doc) => doc.course_code === formData.courseCode)
       : documents;
 
-    const topics = [...new Set(
-      relevantDocuments
-        .map((document) => document.topic)
-        .filter((topic): topic is string => Boolean(topic && topic.trim()))
-    )];
-
+    const topics = [
+      ...new Set(
+        relevantDocuments
+          .map((document) => document.topic)
+          .filter((topic): topic is string => Boolean(topic && topic.trim()))
+      ),
+    ];
     setTopicOptions(topics);
   }, [documents, documentsLoaded, formData.courseCode]);
 
-  // Filter topics as user types
   useEffect(() => {
     if (!formData.topic || showAllTopics) {
       setFilteredTopics(topicOptions);
     } else {
       setFilteredTopics(
-        topicOptions.filter(t => t.toLowerCase().includes(formData.topic.toLowerCase()))
+        topicOptions.filter((t) => t.toLowerCase().includes(formData.topic.toLowerCase()))
       );
     }
   }, [formData.topic, topicOptions, showAllTopics]);
 
-  const handleInputChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
-  ) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target;
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
-      [name]: type === 'number' ? parseInt(value) || 0 : value
+      [name]: type === 'number' ? parseInt(value) || 0 : value,
     }));
   };
 
   const handleCourseSelect = (courseCode: string) => {
     if (!courseCode) {
-      setFormData(prev => ({
-        ...prev,
-        courseCode: '',
-        courseTitle: '',
-        topic: ''
-      }));
+      setFormData((prev) => ({ ...prev, courseCode: '', courseTitle: '', topic: '' }));
       return;
     }
-
-    const course = courses.find(c => c.courseCode === courseCode);
+    const course = courses.find((c) => c.courseCode === courseCode);
     if (course) {
-      setFormData(prev => ({
+      setFormData((prev) => ({
         ...prev,
         courseCode: course.courseCode,
         courseTitle: course.courseTitle,
         level: course.level || prev.level,
-        topic: '' // Clear topic when course changes
+        topic: '',
       }));
     }
   };
@@ -165,11 +154,10 @@ export default function QuizSelectionForm() {
       setError('User session not found. Please log in again.');
       return;
     }
+    const userId = session.user.id;
 
-    // Create abort controller for cancellation
     const controller = new AbortController();
     setAbortController(controller);
-
     setIsGenerating(true);
     setShowLoadingModal(true);
     setIsQuizComplete(false);
@@ -186,33 +174,42 @@ export default function QuizSelectionForm() {
         questionType: formData.questionType,
         difficulty: formData.difficulty,
         timeLimit: formData.timeLimit,
-        userId: session?.user?.id!,
+        userId,
       });
 
-      const data = await response.json();
+      const rawText = await response.clone().text().catch(() => '');
+      let data: any = {};
+      try {
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        data = {};
+      }
 
       if (!response.ok) {
-        console.error("Quiz Gen API Error Payload:", data);
-        throw new Error(data.error || data.detail?.[0]?.msg || data.detail || 'Failed to generate quiz');
+        console.error('Quiz Gen API Error Payload:', data);
+        throw new Error(
+          data.error ||
+          data.detail?.[0]?.msg ||
+          data.detail ||
+          rawText ||
+          'Failed to generate quiz'
+        );
       }
 
       if (data.message) {
         setInfo(data.message);
       }
 
-      // Mark quiz as complete and show 100% progress
       setIsQuizComplete(true);
-
-      // Wait a moment for the progress bar to reach 100%, then navigate
       setTimeout(() => {
         router.push(`/quiz/${data.quiz.id}`);
       }, 1000);
-
-    } catch (err: any) {
-      if (err.name === 'AbortError') {
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
         setError('Quiz generation cancelled');
       } else {
-        setError(err.message || 'Failed to generate quiz');
+        const message = err instanceof Error ? err.message : 'Failed to generate quiz';
+        setError(message);
       }
       setShowLoadingModal(false);
     } finally {
@@ -238,28 +235,24 @@ export default function QuizSelectionForm() {
   };
 
   return (
-    <div className="backdrop-blur-sm border rounded-2xl p-8 bg-white dark:[background-color:#2D3A2D] border-gray-200 dark:border-white/10">
+    <div className="backdrop-blur-sm border rounded-2xl p-8 bg-card border-border">
       {info && (
-        <div className="mb-6 border rounded-xl p-4 flex items-center space-x-3 bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-600/30">
-          <CheckCircleIcon className="h-5 w-5 flex-shrink-0 text-green-600 dark:text-[#00A400]" />
-          <p className="font-medium text-green-700 dark:text-[#00A400]">{info}</p>
+        <div className="mb-6 border rounded-xl p-4 flex items-center space-x-3 bg-primary/10 dark:bg-primary/15 border-primary/30 dark:border-primary/30">
+          <CheckCircleIcon className="h-5 w-5 flex-shrink-0 text-primary dark:text-primary" />
+          <p className="font-medium text-primary dark:text-primary">{info}</p>
         </div>
       )}
-
       {error && (
         <div className="mb-6 border rounded-xl p-4 flex items-center space-x-3 bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-600/30">
           <XMarkIcon className="h-5 w-5 flex-shrink-0 text-red-600 dark:text-[#dc2626]" />
           <p className="font-medium text-red-700 dark:text-[#dc2626]">{error}</p>
         </div>
       )}
-
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Course Selection */}
           <div className="space-y-2">
-            <label htmlFor="courseCode" className="flex items-center space-x-2 text-sm font-semibold text-gray-700 dark:text-white">
-              <BookOpenIcon className="h-4 w-4" />
-              <span>Select Course *</span>
+            <label htmlFor="courseCode" className="block text-sm font-semibold text-foreground mb-2">
+              Select Course *
             </label>
             <select
               id="courseCode"
@@ -267,34 +260,35 @@ export default function QuizSelectionForm() {
               required
               value={formData.courseCode}
               onChange={(e) => handleCourseSelect(e.target.value)}
-              className="w-full border rounded-xl px-4 py-3 text-base md:text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-white/50 focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] focus:border-transparent transition-all duration-200 bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
+              className="w-full border rounded-xl px-4 py-3 text-base md:text-sm text-foreground placeholder:text-muted-foreground focus:ring-2 focus:ring-primary dark:focus:ring-primary focus:border-transparent transition-all duration-200 bg-input-background border-border"
             >
-              <option value="" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">Choose a course</option>
+              <option value="" className="bg-card text-foreground">Choose a course</option>
               {courses.map((course) => (
-                <option key={course.courseCode} value={course.courseCode} className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">
+                <option key={course.courseCode} value={course.courseCode} className="bg-card text-foreground">
                   {course.courseCode} - {course.courseTitle} (Level {course.level})
                 </option>
               ))}
             </select>
           </div>
 
-          {/* Topic - Combobox */}
           <div className="space-y-2">
-            <label htmlFor="topic" className="flex items-center space-x-2 text-sm font-semibold text-gray-700 dark:text-white">
-              <TagIcon className="h-4 w-4" />
-              <span>Topic (Optional)</span>
+            <label htmlFor="topic" className="block text-sm font-semibold text-foreground mb-2">
+              Topic (Optional)
             </label>
-            <Combobox value={formData.topic} onChange={value => {
-              setFormData(prev => ({ ...prev, topic: value || "" }));
-              setShowAllTopics(false);
-            }}>
+            <Combobox
+              value={formData.topic}
+              onChange={(value) => {
+                setFormData((prev) => ({ ...prev, topic: value || '' }));
+                setShowAllTopics(false);
+              }}
+            >
               <div className="relative">
-                <div className="flex w-full items-center justify-between border rounded-xl px-4 py-3 bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20 focus-within:ring-2 focus-within:ring-green-600 dark:focus-within:ring-[#00A400] transition-all duration-200">
+                <div className="flex w-full items-center justify-between border rounded-xl px-4 py-3 bg-input-background border-border focus-within:ring-2 focus-within:ring-primary dark:focus-within:ring-primary transition-all duration-200">
                   <Combobox.Input
-                    className="w-full bg-transparent border-none p-0 text-base md:text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-white/50 focus:ring-0 outline-none"
+                    className="w-full bg-transparent border-none p-0 text-base md:text-sm text-foreground placeholder:text-muted-foreground focus:ring-0 outline-none"
                     displayValue={(topic: string) => topic}
-                    onChange={e => {
-                      setFormData(prev => ({ ...prev, topic: e.target.value || "" }));
+                    onChange={(e) => {
+                      setFormData((prev) => ({ ...prev, topic: e.target.value || '' }));
                       setShowAllTopics(false);
                     }}
                     onFocus={() => setShowAllTopics(true)}
@@ -305,26 +299,28 @@ export default function QuizSelectionForm() {
                     autoComplete="off"
                   />
                   <Combobox.Button className="ml-2 flex items-center bg-transparent border-none">
-                    <svg className="h-4 w-4 text-gray-400 dark:text-white/50 hover:text-gray-600 dark:hover:text-white" viewBox="0 0 20 20" fill="currentColor">
+                    <svg className="h-4 w-4 text-muted-foreground hover:text-foreground" viewBox="0 0 20 20" fill="currentColor">
                       <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
                     </svg>
                   </Combobox.Button>
                 </div>
                 {documentsLoading && !documentsLoaded ? (
                   <div className="absolute inset-y-0 right-0 flex items-center pr-3">
-                    <svg className="animate-spin h-5 w-5 text-gray-400 dark:text-white/50" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <svg className="animate-spin h-5 w-5 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
                   </div>
-                ) : (showAllTopics || filteredTopics.length > 0) ? (
-                  <Combobox.Options className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-xl py-1 text-base focus:outline-none sm:text-sm border bg-white dark:[background-color:#2D3A2D] border-gray-200 dark:border-white/10">
+                ) : showAllTopics || filteredTopics.length > 0 ? (
+                  <Combobox.Options className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-xl py-1 text-base focus:outline-none sm:text-sm border bg-card border-border">
                     {filteredTopics.map((topic) => (
                       <Combobox.Option
                         key={topic}
                         value={topic}
                         className={({ active }) =>
-                          `relative cursor-pointer select-none py-2 pl-3 pr-9 transition-colors ${active ? 'text-gray-700 dark:text-white bg-green-600 dark:bg-[#00A400]' : 'text-gray-900 dark:text-white/90'}`
+                          `relative cursor-pointer select-none py-2 pl-3 pr-9 transition-colors ${
+                            active ? 'text-foreground bg-primary dark:bg-primary' : 'text-foreground/90'
+                          }`
                         }
                       >
                         {topic}
@@ -332,27 +328,24 @@ export default function QuizSelectionForm() {
                     ))}
                   </Combobox.Options>
                 ) : formData.courseCode && !(documentsLoading && !documentsLoaded) ? (
-                  <div className="absolute z-10 mt-1 w-full rounded-xl py-2 px-3 text-sm border bg-white dark:[background-color:#2D3A2D] border-gray-200 dark:border-white/10 text-gray-600 dark:text-white/60">
+                  <div className="absolute z-10 mt-1 w-full rounded-xl py-2 px-3 text-sm border bg-card border-border text-muted-foreground">
                     No topics found for this course
                   </div>
                 ) : null}
               </div>
             </Combobox>
-            <p className="text-sm text-gray-600 dark:text-white/70">
+            <p className="text-sm text-muted-foreground">
               {formData.courseCode
                 ? `Topics available for ${formData.courseCode}. Leave blank for a general quiz on the course.`
-                : 'Select a course first to see available topics. Leave blank for a general quiz on the course.'
-              }
+                : 'Select a course first to see available topics. Leave blank for a general quiz on the course.'}
             </p>
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {/* Level */}
           <div className="space-y-2">
-            <label htmlFor="level" className="flex items-center space-x-2 text-sm font-semibold text-gray-700 dark:text-white">
-              <AcademicCapIcon className="h-4 w-4" />
-              <span>Level *</span>
+            <label htmlFor="level" className="block text-sm font-semibold text-foreground mb-2">
+              Level *
             </label>
             <select
               id="level"
@@ -360,23 +353,21 @@ export default function QuizSelectionForm() {
               required
               value={formData.level}
               onChange={handleInputChange}
-              className="w-full border rounded-xl px-4 py-3 text-base md:text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] focus:border-transparent transition-all duration-200 bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
+              className="w-full border rounded-xl px-4 py-3 text-base md:text-sm text-foreground focus:ring-2 focus:ring-primary dark:focus:ring-primary focus:border-transparent transition-all duration-200 bg-input-background border-border"
             >
-              <option value="" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">Select level</option>
-              <option value="100" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">100</option>
-              <option value="200" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">200</option>
-              <option value="300" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">300</option>
-              <option value="400" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">400</option>
-              <option value="500" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">500</option>
-              <option value="600" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">600</option>
+              <option value="" className="bg-card text-foreground">Select level</option>
+              <option value="100" className="bg-card text-foreground">100</option>
+              <option value="200" className="bg-card text-foreground">200</option>
+              <option value="300" className="bg-card text-foreground">300</option>
+              <option value="400" className="bg-card text-foreground">400</option>
+              <option value="500" className="bg-card text-foreground">500</option>
+              <option value="600" className="bg-card text-foreground">600</option>
             </select>
           </div>
 
-          {/* Number of Questions */}
           <div className="space-y-2">
-            <label htmlFor="numQuestions" className="flex items-center space-x-2 text-sm font-semibold text-gray-700 dark:text-white">
-              <QuestionMarkCircleIcon className="h-4 w-4" />
-              <span>Number of Questions *</span>
+            <label htmlFor="numQuestions" className="block text-sm font-semibold text-foreground mb-2">
+              Number of Questions *
             </label>
             <select
               id="numQuestions"
@@ -384,21 +375,19 @@ export default function QuizSelectionForm() {
               required
               value={formData.numQuestions}
               onChange={handleInputChange}
-              className="w-full border rounded-xl px-4 py-3 text-base md:text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-white/50 focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] focus:border-transparent transition-all duration-200 bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
+              className="w-full border rounded-xl px-4 py-3 text-base md:text-sm text-foreground placeholder:text-muted-foreground focus:ring-2 focus:ring-primary dark:focus:ring-primary focus:border-transparent transition-all duration-200 bg-input-background border-border"
             >
-              <option value={5} className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">5 Questions</option>
-              <option value={10} className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">10 Questions</option>
-              <option value={15} className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">15 Questions</option>
-              <option value={20} className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">20 Questions</option>
-              <option value={30} className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">30 Questions</option>
+              <option value={5} className="bg-card text-foreground">5 Questions</option>
+              <option value={10} className="bg-card text-foreground">10 Questions</option>
+              <option value={15} className="bg-card text-foreground">15 Questions</option>
+              <option value={20} className="bg-card text-foreground">20 Questions</option>
+              <option value={30} className="bg-card text-foreground">30 Questions</option>
             </select>
           </div>
 
-          {/* Question Type */}
           <div className="space-y-2">
-            <label htmlFor="questionType" className="flex items-center space-x-2 text-sm font-semibold text-gray-700 dark:text-white">
-              <ChartBarIcon className="h-4 w-4" />
-              <span>Question Type *</span>
+            <label htmlFor="questionType" className="block text-sm font-semibold text-foreground mb-2">
+              Question Type *
             </label>
             <select
               id="questionType"
@@ -406,20 +395,18 @@ export default function QuizSelectionForm() {
               required
               value={formData.questionType}
               onChange={handleInputChange}
-              className="w-full border rounded-xl px-4 py-3 text-base md:text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-white/50 focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] focus:border-transparent transition-all duration-200 bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
+              className="w-full border rounded-xl px-4 py-3 text-base md:text-sm text-foreground placeholder:text-muted-foreground focus:ring-2 focus:ring-primary dark:focus:ring-primary focus:border-transparent transition-all duration-200 bg-input-background border-border"
             >
-              <option value="OBJECTIVE" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">Objective Questions</option>
-              <option value="MCQ" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">Multiple Choice Questions</option>
-              <option value="TRUE_FALSE" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">True/False</option>
-              <option value="SHORT_ANSWER" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">Short Answer</option>
+              <option value="OBJECTIVE" className="bg-card text-foreground">Objective Questions</option>
+              <option value="MCQ" className="bg-card text-foreground">Multiple Choice (3 True, 2 False)</option>
+              <option value="TRUE_FALSE" className="bg-card text-foreground">True/False</option>
+              <option value="SHORT_ANSWER" className="bg-card text-foreground">Short Answer</option>
             </select>
           </div>
 
-          {/* Difficulty */}
           <div className="space-y-2">
-            <label htmlFor="difficulty" className="flex items-center space-x-2 text-sm font-semibold text-gray-700 dark:text-white">
-              <ChartBarIcon className="h-4 w-4" />
-              <span>Difficulty Level *</span>
+            <label htmlFor="difficulty" className="block text-sm font-semibold text-foreground mb-2">
+              Difficulty Level *
             </label>
             <select
               id="difficulty"
@@ -427,45 +414,42 @@ export default function QuizSelectionForm() {
               required
               value={formData.difficulty}
               onChange={handleInputChange}
-              className="w-full border rounded-xl px-4 py-3 text-base md:text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-white/50 focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] focus:border-transparent transition-all duration-200 bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
+              className="w-full border rounded-xl px-4 py-3 text-base md:text-sm text-foreground placeholder:text-muted-foreground focus:ring-2 focus:ring-primary dark:focus:ring-primary focus:border-transparent transition-all duration-200 bg-input-background border-border"
             >
-              <option value="easy" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">Easy</option>
-              <option value="medium" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">Medium</option>
-              <option value="hard" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">Hard</option>
+              <option value="easy" className="bg-card text-foreground">Easy</option>
+              <option value="medium" className="bg-card text-foreground">Medium</option>
+              <option value="hard" className="bg-card text-foreground">Hard</option>
             </select>
           </div>
 
-          {/* Time Limit */}
           <div className="space-y-2">
-            <label htmlFor="timeLimit" className="flex items-center space-x-2 text-sm font-semibold text-gray-700 dark:text-white">
-              <ClockIcon className="h-4 w-4" />
-              <span>Time Limit (Optional)</span>
+            <label htmlFor="timeLimit" className="block text-sm font-semibold text-foreground mb-2">
+              Time Limit (Optional)
             </label>
             <select
               id="timeLimit"
               name="timeLimit"
               value={formData.timeLimit || ''}
               onChange={handleInputChange}
-              className="w-full border rounded-xl px-4 py-3 text-base md:text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-white/50 focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] focus:border-transparent transition-all duration-200 bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
+              className="w-full border rounded-xl px-4 py-3 text-base md:text-sm text-foreground placeholder:text-muted-foreground focus:ring-2 focus:ring-primary dark:focus:ring-primary focus:border-transparent transition-all duration-200 bg-input-background border-border"
             >
-              <option value="" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">No time limit</option>
-              <option value={5} className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">5 minutes</option>
-              <option value={10} className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">10 minutes</option>
-              <option value={15} className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">15 minutes</option>
-              <option value={20} className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">20 minutes</option>
-              <option value={30} className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">30 minutes</option>
-              <option value={45} className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">45 minutes</option>
-              <option value={60} className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">1 hour</option>
+              <option value="" className="bg-card text-foreground">No time limit</option>
+              <option value={5} className="bg-card text-foreground">5 minutes</option>
+              <option value={10} className="bg-card text-foreground">10 minutes</option>
+              <option value={15} className="bg-card text-foreground">15 minutes</option>
+              <option value={20} className="bg-card text-foreground">20 minutes</option>
+              <option value={30} className="bg-card text-foreground">30 minutes</option>
+              <option value={45} className="bg-card text-foreground">45 minutes</option>
+              <option value={60} className="bg-card text-foreground">1 hour</option>
             </select>
           </div>
         </div>
 
-        {/* Submit Button */}
-        <div className="pt-6 border-t border-gray-200 dark:border-white/10">
+        <div className="pt-6 border-t border-border">
           <button
             type="submit"
             disabled={isGenerating}
-            className="w-full flex items-center justify-center space-x-2 px-8 py-4 text-white font-semibold rounded-xl transition-all duration-200 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 bg-green-600 dark:bg-[#00A400] hover:bg-green-700 dark:hover:bg-[#008300]"
+            className="w-full flex items-center justify-center space-x-2 px-8 py-4 text-white font-semibold rounded-xl transition-all duration-200 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 bg-primary dark:bg-primary hover:bg-primary/90 dark:hover:bg-primary/90"
           >
             {isGenerating ? (
               <>
@@ -482,7 +466,6 @@ export default function QuizSelectionForm() {
         </div>
       </form>
 
-      {/* Loading Modal */}
       <QuizLoadingModal
         isOpen={showLoadingModal}
         onClose={handleCloseLoadingModal}
@@ -491,4 +474,7 @@ export default function QuizSelectionForm() {
       />
     </div>
   );
-} 
+}
+
+
+

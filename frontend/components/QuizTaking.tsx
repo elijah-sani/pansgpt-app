@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
@@ -29,6 +29,44 @@ interface Quiz {
 interface UserAnswer {
   questionId: string;
   answer: string | string[];
+}
+
+function stripOptionLabel(text: string): string {
+  return text.replace(/^\s*[\(\[]?[A-Ea-e1-5][\)\].:-]\s*/, '').trim();
+}
+
+function getQuestionStem(questionText: string, options?: string[]): string {
+  const raw = (questionText || '').trim();
+  if (!raw) return raw;
+
+  let cutIndex = raw.length;
+
+  const markerPatterns = [
+    /\bselect\s+one\s+or\s+more\b/i,
+    /\bselect\s+all\s+that\s+apply\b/i,
+    /\b[a-e]\s*[.)]\s+/i,
+  ];
+
+  for (const pattern of markerPatterns) {
+    const match = pattern.exec(raw);
+    if (match && typeof match.index === 'number' && match.index > 0) {
+      cutIndex = Math.min(cutIndex, match.index);
+    }
+  }
+
+  if (Array.isArray(options)) {
+    const questionLower = raw.toLowerCase();
+    for (const option of options) {
+      const optionCore = stripOptionLabel(String(option || ''));
+      if (!optionCore) continue;
+      const idx = questionLower.indexOf(optionCore.toLowerCase());
+      if (idx > 0) {
+        cutIndex = Math.min(cutIndex, idx);
+      }
+    }
+  }
+
+  return raw.slice(0, cutIndex).trim();
 }
 
 export default function QuizTaking({ quizId }: { quizId: string }) {
@@ -73,8 +111,9 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
         }
 
         setStartTime(new Date());
-      } catch (err: any) {
-        setError(err.message);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Quiz not found';
+        setError(message);
       } finally {
         setLoading(false);
       }
@@ -84,23 +123,6 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
       fetchQuiz();
     }
   }, [quizId]);
-
-  useEffect(() => {
-    if (timeRemaining !== null && timeRemaining > 0) {
-      const timer = setInterval(() => {
-        setTimeRemaining(prev => {
-          if (prev !== null && prev <= 1) {
-            // Time's up, auto-submit
-            handleSubmit();
-            return 0;
-          }
-          return prev !== null ? prev - 1 : null;
-        });
-      }, 1000);
-
-      return () => clearInterval(timer);
-    }
-  }, [timeRemaining]);
 
   const handleAnswerChange = (questionId: string, answer: string | string[]) => {
     setUserAnswers(prev =>
@@ -116,7 +138,7 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = useCallback(async () => {
     if (!quiz || !startTime) return;
 
     setIsSubmitting(true);
@@ -129,7 +151,7 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
         userId: userId || "",
         answers: userAnswers.map(a => ({
           questionId: a.questionId,
-          selectedAnswer: Array.isArray(a.answer) ? a.answer.join(',') : a.answer
+          selectedAnswer: Array.isArray(a.answer) ? JSON.stringify(a.answer) : a.answer
         })),
         timeTaken
       });
@@ -143,11 +165,30 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
       // Navigate to results page
       router.push(`/quiz/${quizId}/results?resultId=${data.result.id}`);
 
-    } catch (err: any) {
-      setError(err.message || 'Failed to submit quiz');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to submit quiz';
+      setError(message);
       setIsSubmitting(false);
     }
-  };
+  }, [quiz, startTime, userId, userAnswers, quizId, router]);
+
+  useEffect(() => {
+    if (timeRemaining === null || timeRemaining <= 0) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setTimeRemaining((prev) => {
+        if (prev !== null && prev <= 1) {
+          void handleSubmit();
+          return 0;
+        }
+        return prev !== null ? prev - 1 : null;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [timeRemaining, handleSubmit]);
 
   const handleNext = () => {
     if (currentQuestionIndex < (quiz?.questions.length || 0) - 1) {
@@ -202,21 +243,21 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-50 dark:[background-color:#0C120C]">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2" style={{ borderColor: '#00A400' }}></div>
+      <div className="flex items-center justify-center min-h-screen bg-background">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2" style={{ borderColor: 'var(--primary)' }}></div>
       </div>
     );
   }
 
   if (error || !quiz) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-50 dark:[background-color:#0C120C]">
+      <div className="flex items-center justify-center min-h-screen bg-background">
         <div className="text-center">
           <h2 className="text-2xl font-bold mb-4" style={{ color: '#dc2626' }}>Error</h2>
-          <p className="text-gray-600 dark:text-gray-900 dark:text-white/70">{error || 'Quiz not found'}</p>
+          <p className="text-muted-foreground">{error || 'Quiz not found'}</p>
           <button
             onClick={() => router.push('/quiz')}
-            className="mt-4 px-4 py-2 text-white rounded transition-colors bg-green-600 dark:bg-[#00A400] hover:bg-green-700 dark:hover:bg-[#008300]"
+            className="mt-4 px-4 py-2 text-white rounded transition-colors bg-primary dark:bg-primary hover:bg-primary/90 dark:hover:bg-primary/90"
           >
             Back to Quiz Selection
           </button>
@@ -227,9 +268,10 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
 
   const currentQuestion = quiz.questions[currentQuestionIndex];
   const currentAnswer = userAnswers.find(a => a.questionId === currentQuestion.id)?.answer || '';
+  const currentQuestionStem = getQuestionStem(currentQuestion.question_text, currentQuestion.options);
 
   return (
-    <div className="min-h-screen overflow-y-auto text-gray-900 dark:text-white py-8 bg-gray-50 dark:[background-color:#0C120C]">
+    <div className="min-h-screen overflow-y-auto text-foreground py-8 bg-background">
       <div className="max-w-4xl mx-auto px-4">
         {/* Header with Close Button */}
         <div className="flex justify-end items-center mb-4">
@@ -257,12 +299,12 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
         </div>
 
         {/* Header */}
-        <div className="rounded-lg p-6 mb-6 border bg-white dark:[background-color:#2D3A2D] border-gray-200 dark:border-white/10">
+        <div className="rounded-lg p-6 mb-6 border bg-card border-border">
           <div className="flex justify-between items-start mb-4">
             <div>
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{quiz.title}</h1>
-              <p className="text-gray-900 dark:text-white font-medium">{quiz.course_code} - {quiz.course_title}</p>
-              {quiz.topic && <p className="text-gray-600 dark:text-gray-900 dark:text-white/70">Topic: {quiz.topic}</p>}
+              <h1 className="text-2xl font-bold text-foreground">{quiz.title}</h1>
+              <p className="text-foreground font-medium">{quiz.course_code} - {quiz.course_title}</p>
+              {quiz.topic && <p className="text-muted-foreground">Topic: {quiz.topic}</p>}
             </div>
             <div className="text-right">
               {timeRemaining !== null && (
@@ -270,7 +312,7 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
                   {formatTime(timeRemaining)}
                 </div>
               )}
-              <div className="text-sm text-gray-600 dark:text-gray-900 dark:text-white/70">
+              <div className="text-sm text-muted-foreground">
                 Level {quiz.level} • {quiz.difficulty}
               </div>
             </div>
@@ -278,13 +320,13 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
 
           {/* Progress Bar */}
           <div className="mb-4">
-            <div className="flex justify-between text-sm text-gray-600 dark:text-gray-900 dark:text-white/70 mb-2">
+            <div className="flex justify-between text-sm text-muted-foreground mb-2">
               <span>Question {currentQuestionIndex + 1} of {quiz.questions.length}</span>
               <span>{getAnsweredCount()} answered</span>
             </div>
-            <div className="w-full rounded-full h-2 bg-gray-200 dark:bg-black/30">
+            <div className="w-full rounded-full h-2 bg-muted/70">
               <div
-                className="h-2 rounded-full transition-all duration-300 bg-green-600 dark:bg-[#00A400]"
+                className="h-2 rounded-full transition-all duration-300 bg-primary dark:bg-primary"
                 style={{ width: `${getProgressPercentage()}%` }}
               ></div>
             </div>
@@ -292,12 +334,12 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
         </div>
 
         {/* Question */}
-        <div className="rounded-lg p-6 mb-6 border bg-white dark:[background-color:#2D3A2D] border-gray-200 dark:border-white/10">
+        <div className="rounded-lg p-6 mb-6 border bg-card border-border">
           <div className="mb-6">
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
+            <h2 className="text-xl font-semibold text-foreground mb-4">
               Question {currentQuestion.question_order}
             </h2>
-            <p className="text-lg text-gray-900 dark:text-white mb-6">{currentQuestion.question_text}</p>
+            <p className="text-lg text-foreground mb-6">{currentQuestionStem}</p>
 
             {/* Answer Options */}
             {currentQuestion.question_type === 'MCQ' && currentQuestion.options && (
@@ -308,8 +350,8 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
                     <label
                       key={index}
                       className={`flex items-center p-3 border rounded-lg cursor-pointer transition-all ${selected
-                        ? 'bg-green-50 dark:bg-[rgba(0,164,0,0.2)] border-green-600 dark:border-[#00A400]'
-                        : 'bg-gray-50 dark:bg-transparent border-gray-300 dark:border-white/20 hover:bg-gray-100 dark:hover:bg-white/5'
+                        ? 'bg-primary/10 dark:bg-primary/15 border-primary dark:border-primary/40'
+                        : 'bg-input-background border-border hover:bg-accent'
                         }`}
                     >
                       <input
@@ -327,9 +369,9 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
                           handleAnswerChange(currentQuestion.id, newAnswers);
                         }}
                         className="h-4 w-4"
-                        style={{ accentColor: '#00A400' }}
+                        style={{ accentColor: 'var(--primary)' }}
                       />
-                      <span className="ml-3 text-gray-900 dark:text-white">{option}</span>
+                      <span className="ml-3 text-foreground">{option}</span>
                     </label>
                   );
                 })}
@@ -342,8 +384,8 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
                   <label
                     key={option}
                     className={`flex items-center p-3 border rounded-lg cursor-pointer transition-all ${currentAnswer === option
-                      ? 'bg-green-50 dark:bg-[rgba(0,164,0,0.2)] border-green-600 dark:border-[#00A400]'
-                      : 'bg-gray-50 dark:bg-transparent border-gray-300 dark:border-white/20 hover:bg-gray-100 dark:hover:bg-white/5'
+                      ? 'bg-primary/10 dark:bg-primary/15 border-primary dark:border-primary/40'
+                      : 'bg-input-background border-border hover:bg-accent'
                       }`}
                   >
                     <input
@@ -353,9 +395,9 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
                       checked={currentAnswer === option}
                       onChange={(e) => handleAnswerChange(currentQuestion.id, e.target.value)}
                       className="h-4 w-4"
-                      style={{ accentColor: '#00A400' }}
+                      style={{ accentColor: 'var(--primary)' }}
                     />
-                    <span className="ml-3 text-gray-900 dark:text-white">{option}</span>
+                    <span className="ml-3 text-foreground">{option}</span>
                   </label>
                 ))}
               </div>
@@ -367,8 +409,8 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
                   <label
                     key={index}
                     className={`flex items-center p-3 border rounded-lg cursor-pointer transition-all ${currentAnswer === option
-                      ? 'bg-green-50 dark:bg-[rgba(0,164,0,0.2)] border-green-600 dark:border-[#00A400]'
-                      : 'bg-gray-50 dark:bg-transparent border-gray-300 dark:border-white/20 hover:bg-gray-100 dark:hover:bg-white/5'
+                      ? 'bg-primary/10 dark:bg-primary/15 border-primary dark:border-primary/40'
+                      : 'bg-input-background border-border hover:bg-accent'
                       }`}
                   >
                     <input
@@ -378,9 +420,9 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
                       checked={currentAnswer === option}
                       onChange={e => handleAnswerChange(currentQuestion.id, e.target.value)}
                       className="h-4 w-4"
-                      style={{ accentColor: '#00A400' }}
+                      style={{ accentColor: 'var(--primary)' }}
                     />
-                    <span className="ml-3 text-gray-900 dark:text-white">{option}</span>
+                    <span className="ml-3 text-foreground">{option}</span>
                   </label>
                 ))}
               </div>
@@ -393,7 +435,7 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
                     value={currentAnswer}
                     onChange={(e) => handleAnswerChange(currentQuestion.id, e.target.value)}
                     placeholder={'Write your answer...'}
-                    className="flex-1 p-3 border rounded-lg focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] focus:border-transparent resize-none text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-white/50 bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
+                    className="flex-1 p-3 border rounded-lg focus:ring-2 focus:ring-primary dark:focus:ring-primary focus:border-transparent resize-none text-foreground placeholder:text-muted-foreground bg-input-background border-border"
                     rows={4}
                   />
                 </div>
@@ -442,8 +484,8 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
                 onClick={handleNext}
                 disabled={!canProceed()}
                 className={`px-6 py-2 text-white rounded-md transition-all ${!canProceed()
-                  ? 'bg-green-400 dark:bg-green-600/50 cursor-not-allowed'
-                  : 'bg-green-600 dark:bg-[#00A400] hover:bg-green-700 dark:hover:bg-[#008300] cursor-pointer'
+                  ? 'bg-primary/40 dark:bg-primary/50 cursor-not-allowed'
+                  : 'bg-primary dark:bg-primary hover:bg-primary/90 dark:hover:bg-primary/90 cursor-pointer'
                   }`}
               >
                 Next
@@ -452,18 +494,18 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
               <button
                 onClick={handleSubmit}
                 disabled={!canProceed() || isSubmitting}
-                className="px-6 py-2 text-gray-900 dark:text-white rounded-md transition-all"
+                className="px-6 py-2 text-foreground rounded-md transition-all"
                 style={{
-                  backgroundColor: (!canProceed() || isSubmitting) ? 'rgba(0, 164, 0, 0.5)' : '#00A400',
+                  backgroundColor: (!canProceed() || isSubmitting) ? 'color-mix(in srgb, var(--primary), transparent 50%)' : 'var(--primary)',
                   cursor: (!canProceed() || isSubmitting) ? 'not-allowed' : 'pointer'
                 }}
                 onMouseEnter={(e) => {
                   if (!canProceed() || isSubmitting) return;
-                  e.currentTarget.style.backgroundColor = '#008300';
+                  e.currentTarget.style.backgroundColor = 'color-mix(in srgb, var(--primary), black 20%)';
                 }}
                 onMouseLeave={(e) => {
                   if (!canProceed() || isSubmitting) return;
-                  e.currentTarget.style.backgroundColor = '#00A400';
+                  e.currentTarget.style.backgroundColor = 'var(--primary)';
                 }}
               >
                 {isSubmitting ? 'Submitting...' : 'Submit Quiz'}
@@ -482,7 +524,7 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
         {/* Cancel Confirmation Dialog */}
         {showCancelDialog && (
           <div className="fixed inset-0 flex items-center justify-center z-50" style={{ backgroundColor: 'rgba(0, 0, 0, 0.8)' }}>
-            <div className="rounded-lg p-6 max-w-md mx-4 border bg-white dark:[background-color:#2D3A2D] border-gray-200 dark:border-white/10">
+            <div className="rounded-lg p-6 max-w-md mx-4 border bg-card border-border">
               <div className="flex items-center mb-4">
                 <div className="flex-shrink-0 w-10 h-10 mx-auto rounded-full flex items-center justify-center" style={{ backgroundColor: 'rgba(220, 38, 38, 0.2)' }}>
                   <svg className="w-6 h-6" style={{ color: '#dc2626' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -491,25 +533,25 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
                 </div>
               </div>
               <div className="text-center">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+                <h3 className="text-lg font-medium text-foreground mb-2">
                   Cancel Quiz?
                 </h3>
-                <p className="text-sm text-gray-600 dark:text-gray-900 dark:text-white/70 mb-6">
-                  Are you sure you want to cancel this quiz? Your progress will be lost and you'll need to start over.
+                <p className="text-sm text-muted-foreground mb-6">
+                  Are you sure you want to cancel this quiz? Your progress will be lost and you&apos;ll need to start over.
                 </p>
                 <div className="flex space-x-3 justify-center">
                   <button
                     onClick={cancelCancel}
-                    className="px-4 py-2 text-sm font-medium text-gray-900 dark:text-white rounded-md transition-colors"
-                    style={{ backgroundColor: '#2D3A2D', border: '1px solid rgba(255, 255, 255, 0.1)' }}
+                    className="px-4 py-2 text-sm font-medium text-foreground rounded-md transition-colors"
+                    style={{ backgroundColor: 'var(--surface-secondary)', border: '1px solid rgba(255, 255, 255, 0.1)' }}
                     onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)'}
-                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#2D3A2D'}
+                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--surface-secondary)'}
                   >
                     Continue Quiz
                   </button>
                   <button
                     onClick={confirmCancel}
-                    className="px-4 py-2 text-sm font-medium text-gray-900 dark:text-white rounded-md transition-colors"
+                    className="px-4 py-2 text-sm font-medium text-foreground rounded-md transition-colors"
                     style={{ backgroundColor: '#dc2626' }}
                     onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#b91c1c'}
                     onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#dc2626'}
@@ -525,3 +567,7 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
     </div>
   );
 } 
+
+
+
+

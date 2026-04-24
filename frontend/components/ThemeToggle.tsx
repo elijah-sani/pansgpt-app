@@ -40,7 +40,7 @@ export const ThemeToggle: React.FC<ThemeToggleProps> = ({ className = '' }) => {
         bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700
         border border-gray-200 dark:border-gray-600
         text-gray-600 hover:text-gray-800 dark:text-gray-300 dark:hover:text-white
-        focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1
+        focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1
         dark:focus:ring-offset-gray-800
         ${className}
       `}

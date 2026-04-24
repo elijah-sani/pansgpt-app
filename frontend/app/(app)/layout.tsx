@@ -232,7 +232,7 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
             {/* Delete Confirmation Modal */}
             {isDeleteModalOpen && (
                 <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-                    <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm p-6">
+                    <div className="bg-card border border-border rounded-2xl shadow-sm w-full max-w-sm p-6">
                         <div className="flex items-center gap-3 mb-4">
                             <div className="w-10 h-10 rounded-full bg-destructive/10 flex items-center justify-center shrink-0">
                                 <Trash2 className="w-5 h-5 text-destructive" />
@@ -263,7 +263,7 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
             {/* Rename Modal */}
             {renamingChatId && (
                 <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-                    <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm p-6">
+                    <div className="bg-card border border-border rounded-2xl shadow-sm w-full max-w-sm p-6">
                         <div className="flex items-center justify-between mb-4">
                             <div className="flex items-center gap-3">
                                 <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">

@@ -267,7 +267,7 @@ export default function MessageBubble({
                     {/* Feedback Buttons */}
                     <button
                         onClick={() => handleFeedbackClick('up')}
-                        className={`p-1.5 hover:bg-muted rounded-md transition-colors ${feedback === 'up' ? 'text-green-500 bg-green-500/10' : ''}`}
+                        className={`p-1.5 hover:bg-muted rounded-md transition-colors ${feedback === 'up' ? 'text-primary bg-primary/10' : ''}`}
                         title="Helpful"
                     >
                         <ThumbsUp className="w-4 h-4" />
@@ -291,7 +291,7 @@ export default function MessageBubble({
                         title="Copy message"
                     >
                         {copied ? (
-                            <Check className="w-4 h-4 text-green-500" />
+                            <Check className="w-4 h-4 text-primary" />
                         ) : (
                             <Copy className="w-4 h-4" />
                         )}
@@ -307,7 +307,7 @@ export default function MessageBubble({
                             {isSavingNote ? (
                                 <Loader2 className="w-4 h-4 animate-spin" />
                             ) : noteSaved ? (
-                                <Check className="w-4 h-4 text-green-500" />
+                                <Check className="w-4 h-4 text-primary" />
                             ) : (
                                 <BookmarkPlus className="w-4 h-4" />
                             )}
@@ -330,7 +330,7 @@ export default function MessageBubble({
                                 side="top"
                                 align="start"
                                 sideOffset={8}
-                                className="w-72 p-3 bg-background border border-border/40 rounded-xl shadow-xl z-50"
+                                className="w-72 p-3 bg-background border border-border/40 rounded-xl shadow-sm z-50"
                             >
                                 {/* Header */}
                                 <div className="mb-2 pb-2 border-b border-border/40">

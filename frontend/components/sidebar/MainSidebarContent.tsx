@@ -87,7 +87,7 @@ export function MainSidebarContent({
                       </button>
                       {openMenuId === chat.id && (
                         <div
-                          className="absolute right-0 top-full mt-1 z-50 w-40 bg-card border border-border rounded-xl shadow-xl py-1 animate-in fade-in zoom-in-95 duration-150"
+                          className="absolute right-0 top-full mt-1 z-50 w-40 bg-card border border-border rounded-xl shadow-sm py-1 animate-in fade-in zoom-in-95 duration-150"
                           onClick={(event) => event.stopPropagation()}
                         >
                           <button
