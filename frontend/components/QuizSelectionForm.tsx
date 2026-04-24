@@ -189,11 +189,23 @@ export default function QuizSelectionForm() {
         userId: session?.user?.id!,
       });
 
-      const data = await response.json();
+      const rawText = await response.clone().text().catch(() => '');
+      let data: any = {};
+      try {
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        data = {};
+      }
 
       if (!response.ok) {
         console.error("Quiz Gen API Error Payload:", data);
-        throw new Error(data.error || data.detail?.[0]?.msg || data.detail || 'Failed to generate quiz');
+        throw new Error(
+          data.error ||
+          data.detail?.[0]?.msg ||
+          data.detail ||
+          rawText ||
+          'Failed to generate quiz'
+        );
       }
 
       if (data.message) {
@@ -409,7 +421,7 @@ export default function QuizSelectionForm() {
               className="w-full border rounded-xl px-4 py-3 text-base md:text-sm text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-white/50 focus:ring-2 focus:ring-green-600 dark:focus:ring-[#00A400] focus:border-transparent transition-all duration-200 bg-gray-50 dark:bg-black/20 border-gray-300 dark:border-white/20"
             >
               <option value="OBJECTIVE" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">Objective Questions</option>
-              <option value="MCQ" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">Multiple Choice Questions</option>
+              <option value="MCQ" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">Multiple Choice (3 True, 2 False)</option>
               <option value="TRUE_FALSE" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">True/False</option>
               <option value="SHORT_ANSWER" className="bg-white dark:bg-[#2D3A2D] text-gray-900 dark:text-white">Short Answer</option>
             </select>

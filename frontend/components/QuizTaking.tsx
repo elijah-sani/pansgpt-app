@@ -16,19 +16,57 @@ interface Question {
 interface Quiz {
   id: string;
   title: string;
-  courseCode: string;
-  courseTitle: string;
+  course_code: string;
+  course_title: string;
   topic?: string;
   level: string;
   difficulty: string;
-  numQuestions: number;
-  timeLimit?: number;
+  num_questions: number;
+  time_limit?: number;
   questions: Question[];
 }
 
 interface UserAnswer {
   questionId: string;
   answer: string | string[];
+}
+
+function stripOptionLabel(text: string): string {
+  return text.replace(/^\s*[\(\[]?[A-Ea-e1-5][\)\].:-]\s*/, '').trim();
+}
+
+function getQuestionStem(questionText: string, options?: string[]): string {
+  const raw = (questionText || '').trim();
+  if (!raw) return raw;
+
+  let cutIndex = raw.length;
+
+  const markerPatterns = [
+    /\bselect\s+one\s+or\s+more\b/i,
+    /\bselect\s+all\s+that\s+apply\b/i,
+    /\b[a-e]\s*[.)]\s+/i,
+  ];
+
+  for (const pattern of markerPatterns) {
+    const match = pattern.exec(raw);
+    if (match && typeof match.index === 'number' && match.index > 0) {
+      cutIndex = Math.min(cutIndex, match.index);
+    }
+  }
+
+  if (Array.isArray(options)) {
+    const questionLower = raw.toLowerCase();
+    for (const option of options) {
+      const optionCore = stripOptionLabel(String(option || ''));
+      if (!optionCore) continue;
+      const idx = questionLower.indexOf(optionCore.toLowerCase());
+      if (idx > 0) {
+        cutIndex = Math.min(cutIndex, idx);
+      }
+    }
+  }
+
+  return raw.slice(0, cutIndex).trim();
 }
 
 export default function QuizTaking({ quizId }: { quizId: string }) {
@@ -68,8 +106,8 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
         setUserAnswers(initialAnswers);
 
         // Set time limit if exists
-        if (data.quiz.timeLimit) {
-          setTimeRemaining(data.quiz.timeLimit * 60); // Convert to seconds
+        if (data.quiz.time_limit) {
+          setTimeRemaining(data.quiz.time_limit * 60); // Convert to seconds
         }
 
         setStartTime(new Date());
@@ -129,7 +167,10 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
         userId: userId || "",
         answers: userAnswers.map(a => ({
           questionId: a.questionId,
-          selectedAnswer: Array.isArray(a.answer) ? a.answer.join(',') : a.answer
+          // Backward-compatible payload:
+          // send checkbox selections as JSON string so older backends (str-only)
+          // don't reject with 422, while newer backend parses it losslessly.
+          selectedAnswer: Array.isArray(a.answer) ? JSON.stringify(a.answer) : a.answer
         })),
         timeTaken
       });
@@ -227,9 +268,10 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
 
   const currentQuestion = quiz.questions[currentQuestionIndex];
   const currentAnswer = userAnswers.find(a => a.questionId === currentQuestion.id)?.answer || '';
+  const currentQuestionStem = getQuestionStem(currentQuestion.question_text, currentQuestion.options);
 
   return (
-    <div className="min-h-screen text-gray-900 dark:text-white py-8 bg-gray-50 dark:[background-color:#0C120C]">
+    <div className="min-h-screen overflow-y-auto text-gray-900 dark:text-white py-8 bg-gray-50 dark:[background-color:#0C120C]">
       <div className="max-w-4xl mx-auto px-4">
         {/* Header with Close Button */}
         <div className="flex justify-end items-center mb-4">
@@ -261,7 +303,7 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
           <div className="flex justify-between items-start mb-4">
             <div>
               <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{quiz.title}</h1>
-              <p className="text-gray-900 dark:text-white font-medium">{quiz.courseCode} - {quiz.courseTitle}</p>
+              <p className="text-gray-900 dark:text-white font-medium">{quiz.course_code} - {quiz.course_title}</p>
               {quiz.topic && <p className="text-gray-600 dark:text-gray-900 dark:text-white/70">Topic: {quiz.topic}</p>}
             </div>
             <div className="text-right">
@@ -297,7 +339,7 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
             <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
               Question {currentQuestion.question_order}
             </h2>
-            <p className="text-lg text-gray-900 dark:text-white mb-6">{currentQuestion.question_text}</p>
+            <p className="text-lg text-gray-900 dark:text-white mb-6">{currentQuestionStem}</p>
 
             {/* Answer Options */}
             {currentQuestion.question_type === 'MCQ' && currentQuestion.options && (

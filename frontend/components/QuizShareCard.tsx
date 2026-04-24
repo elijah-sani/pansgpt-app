@@ -1,9 +1,7 @@
 'use client';
 
-import React, { useRef, useEffect, useState } from 'react';
-import Image from 'next/image';
+import React, { useRef, useState, useEffect } from 'react';
 import html2canvas from 'html2canvas';
-import { createRoot } from 'react-dom/client';
 
 interface QuizShareCardProps {
   result: {
@@ -20,15 +18,10 @@ interface QuizShareCardProps {
     };
   };
   onShare?: (imageUrl: string) => void;
-  exportMode?: boolean;
 }
 
-export default function QuizShareCard({ result, onShare, exportMode = false }: QuizShareCardProps) {
-  const cardRef = useRef<HTMLDivElement>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
-
+// ── The actual card layout (only rendered off-screen for capture) ──
+function ShareCardCanvas({ result }: { result: QuizShareCardProps['result'] }) {
   const getScoreMessage = (percentage: number) => {
     if (percentage >= 90) return '🔥 Outstanding Performance!';
     if (percentage >= 80) return '🔥 Distinction Level!';
@@ -45,43 +38,130 @@ export default function QuizShareCard({ result, onShare, exportMode = false }: Q
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric'
-    });
+    try {
+      return new Date(dateString).toLocaleDateString('en-US', {
+        day: 'numeric', month: 'short', year: 'numeric'
+      });
+    } catch { return 'N/A'; }
   };
+
+  return (
+    <div style={{
+      width: 1000, height: 1000,
+      background: 'linear-gradient(135deg, #14532d 0%, #000000 50%, #111827 100%)',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between',
+      position: 'relative', overflow: 'hidden',
+      fontFamily: 'system-ui, -apple-system, sans-serif',
+      margin: 0, padding: 0, borderRadius: 0, boxShadow: 'none',
+    }}>
+      {/* Background Blurs */}
+      <div style={{ position: 'absolute', inset: 0, opacity: 0.1, pointerEvents: 'none' }}>
+        <div style={{ position: 'absolute', top: 32, right: 32, width: 160, height: 160, background: '#22c55e', borderRadius: '50%', filter: 'blur(40px)' }} />
+        <div style={{ position: 'absolute', bottom: 32, left: 32, width: 128, height: 128, background: '#3b82f6', borderRadius: '50%', filter: 'blur(40px)' }} />
+      </div>
+
+      {/* Header */}
+      <div style={{ position: 'relative', zIndex: 10, textAlign: 'center', marginTop: 64, marginBottom: 32, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <div style={{ width: 160, height: 160, marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <img src="/uploads/Logo.png" alt="PANSGPT Logo" width={160} height={160} style={{ objectFit: 'contain' }} />
+        </div>
+        <p style={{ color: '#86efac', fontSize: 24, fontWeight: 600, margin: 0 }}>Quiz Results</p>
+      </div>
+
+      {/* Score */}
+      <div style={{ position: 'relative', zIndex: 10, textAlign: 'center', marginBottom: 32, width: '100%' }}>
+        <div style={{ fontSize: 72, fontWeight: 800, color: '#ffffff', marginBottom: 8 }}>
+          {result.score}/{result.maxScore}
+        </div>
+        <div style={{ fontSize: 40, fontWeight: 700, color: '#4ade80', marginBottom: 8 }}>
+          {result.percentage.toFixed(1)}%
+        </div>
+        <div style={{ fontSize: 24, fontWeight: 600, color: '#86efac' }}>
+          {getScoreMessage(result.percentage)}
+        </div>
+      </div>
+
+      {/* Quiz Info */}
+      <div style={{ position: 'relative', zIndex: 10, width: '80%', margin: '0 auto', marginBottom: 32 }}>
+        <div style={{ background: 'rgba(20, 83, 45, 0.3)', borderRadius: 12, padding: 32, border: '1px solid rgba(34, 197, 94, 0.2)' }}>
+          <h3 style={{ fontSize: 24, fontWeight: 700, color: '#ffffff', marginBottom: 8, marginTop: 0 }}>
+            {result.quiz.title}
+          </h3>
+          <p style={{ color: '#86efac', fontSize: 18, margin: 0 }}>
+            {result.quiz.courseCode} - {result.quiz.courseTitle}
+          </p>
+          {result.quiz.topic && (
+            <p style={{ color: '#d1d5db', fontSize: 18, marginTop: 8, marginBottom: 0 }}>
+              Topic: {result.quiz.topic}
+            </p>
+          )}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 18, color: '#d1d5db', marginTop: 16 }}>
+          {result.timeTaken && <span>⏱️ {formatTime(result.timeTaken)}</span>}
+          <span>📅 {formatDate(result.completedAt)}</span>
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div style={{ position: 'relative', zIndex: 10, textAlign: 'center', marginBottom: 48, width: '100%' }}>
+        <div style={{ fontSize: 18, color: '#9ca3af', marginBottom: 8 }}>Powered by PANSGPT</div>
+        <div style={{ fontSize: 18, color: '#4ade80', fontWeight: 600 }}>Your AI Study Partner</div>
+      </div>
+
+      {/* Decorative */}
+      <div style={{ position: 'absolute', bottom: 32, right: 32, width: 64, height: 64, background: 'rgba(34, 197, 94, 0.2)', borderRadius: '50%' }} />
+      <div style={{ position: 'absolute', top: '50%', left: 32, width: 32, height: 32, background: 'rgba(59, 130, 246, 0.2)', borderRadius: '50%' }} />
+    </div>
+  );
+}
+
+
+// ── Main component: generates image and shows it as preview ──
+export default function QuizShareCard({ result, onShare }: QuizShareCardProps) {
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const getShareText = () => {
-    const timeText = result.timeTaken ? ` in ${formatTime(result.timeTaken)}` : '';
-    return `${result.score}/${result.maxScore} in ${result.quiz.courseCode} – thanks to PANSGPT! 🎯\n\n${getScoreMessage(result.percentage)}\n\nYou know the best thing to do 📚`;
+    const getMsg = (p: number) => {
+      if (p >= 90) return '🔥 Outstanding Performance!';
+      if (p >= 80) return '🔥 Distinction Level!';
+      if (p >= 70) return '✅ Great Job!';
+      if (p >= 60) return '⚠️ You\'re almost there!';
+      if (p >= 50) return '📚 Keep studying!';
+      return '💪 Don\'t give up!';
+    };
+    return `${result.score}/${result.maxScore} in ${result.quiz.courseCode} – thanks to PANSGPT! 🎯\n\n${getMsg(result.percentage)}\n\nYou know the best thing to do 📚`;
   };
 
-  const copyShareText = async () => {
-    try {
-      await navigator.clipboard.writeText(getShareText());
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (error) {
-      console.error('Failed to copy text:', error);
-    }
-  };
+  // Generate the image on mount
+  useEffect(() => {
+    generateImage();
+  }, []);
 
-  const generateShareImage = async () => {
+  const generateImage = async () => {
     setIsGenerating(true);
-    // Create a hidden export-mode card in the DOM
-    const exportDiv = document.createElement('div');
-    exportDiv.style.position = 'fixed';
-    exportDiv.style.left = '-9999px';
-    exportDiv.style.top = '0';
-    exportDiv.style.zIndex = '-1';
-    document.body.appendChild(exportDiv);
-    // Render export-mode card using React 18+ root API
-    const root = createRoot(exportDiv);
-    root.render(<QuizShareCard result={result} exportMode={true} />);
-    // Wait for render
-    setTimeout(async () => {
-      const cardNode = exportDiv.firstChild as HTMLElement;
+    try {
+      // Create hidden container
+      const container = document.createElement('div');
+      container.style.position = 'fixed';
+      container.style.left = '-9999px';
+      container.style.top = '0';
+      container.style.zIndex = '-1';
+      document.body.appendChild(container);
+
+      // Render the canvas card
+      const { createRoot } = await import('react-dom/client');
+      const root = createRoot(container);
+      root.render(<ShareCardCanvas result={result} />);
+
+      // Wait for render + image load
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      const cardNode = container.firstChild as HTMLElement;
+      if (!cardNode) throw new Error('Failed to render card');
+
       const canvas = await html2canvas(cardNode, {
         backgroundColor: '#000000',
         scale: 2,
@@ -90,243 +170,162 @@ export default function QuizShareCard({ result, onShare, exportMode = false }: Q
         width: 1000,
         height: 1000,
       });
-      const imageUrl = canvas.toDataURL('image/png');
-      setGeneratedImageUrl(imageUrl);
+
+      const url = canvas.toDataURL('image/png');
+      setImageUrl(url);
+
       root.unmount();
-      document.body.removeChild(exportDiv);
-      if (onShare) {
-        onShare(imageUrl);
-      } else {
-        // Download the image
-        const link = document.createElement('a');
-        link.download = `pansgpt-quiz-result-${Date.now()}.png`;
-        link.href = imageUrl;
-        link.click();
-      }
+      document.body.removeChild(container);
+    } catch (error) {
+      console.error('Failed to generate share card image:', error);
+    } finally {
       setIsGenerating(false);
-    }, 100);
+    }
+  };
+
+  const downloadImage = () => {
+    if (!imageUrl) return;
+    const link = document.createElement('a');
+    link.download = `pansgpt-quiz-result-${Date.now()}.png`;
+    link.href = imageUrl;
+    link.click();
   };
 
   const shareToWhatsApp = async () => {
-    // Generate image first if not already generated
-    if (!generatedImageUrl) {
-      await generateShareImage();
+    if (!imageUrl) {
+      await generateImage();
+      if (!imageUrl) return;
     }
-    
-    if (generatedImageUrl) {
-      try {
-        // Convert data URL to blob and create a File object
-        const response = await fetch(generatedImageUrl);
-        const blob = await response.blob();
-        const file = new File([blob], 'pansgpt-quiz-result.png', { type: 'image/png' });
-        
-        // Try to copy the image to clipboard first (works on some browsers)
-        if (navigator.clipboard && navigator.clipboard.write) {
+
+    try {
+      // Convert to File
+      const response = await fetch(imageUrl);
+      const blob = await response.blob();
+      const file = new File([blob], 'pansgpt-quiz-result.png', { type: 'image/png' });
+
+      // Try Web Share API (mobile — opens native share sheet with image)
+      if (navigator.share && navigator.canShare) {
+        const shareData: ShareData = { files: [file] };
+        if (navigator.canShare(shareData)) {
           try {
-            // Create a ClipboardItem with the image
-            const clipboardItem = new ClipboardItem({
-              'image/png': blob
-            });
-            
-            await navigator.clipboard.write([clipboardItem]);
-            
-            // Open WhatsApp Web - the image should be in clipboard
-            const shareText = encodeURIComponent(getShareText());
-            const whatsappUrl = `https://wa.me/?text=${shareText}`;
-            window.open(whatsappUrl, '_blank');
-            
-            // Show success message
-            alert('Image copied to clipboard! Paste it in WhatsApp (Ctrl+V or Cmd+V)');
+            await navigator.share(shareData);
             return;
-            
-          } catch (clipboardError) {
-            console.log('Clipboard API failed, trying Web Share API');
+          } catch (err: any) {
+            if (err.name === 'AbortError') return;
+            console.log('Web Share API failed, trying fallback');
           }
         }
-        
-        // Try Web Share API with files (works on mobile)
-        if (navigator.share && navigator.canShare) {
-          const shareData = {
-            title: 'PANSGPT Quiz Results',
-            text: getShareText(),
-            files: [file]
-          };
-          
-          if (navigator.canShare(shareData)) {
-            try {
-              await navigator.share(shareData);
-              return;
-            } catch (error) {
-              console.log('Web Share API failed, trying download method');
-            }
-          }
-        }
-        
-        // Fallback: Download image and provide clear instructions
-        const link = document.createElement('a');
-        link.download = 'pansgpt-quiz-result.png';
-        link.href = generatedImageUrl;
-        link.click();
-        
-        // Open WhatsApp Web
-        const shareText = encodeURIComponent(getShareText());
-        const whatsappUrl = `https://wa.me/?text=${shareText}`;
-        window.open(whatsappUrl, '_blank');
-        
-        // Show clear instructions
-        setTimeout(() => {
-          alert('Image downloaded! To share:\n1. Open WhatsApp Web\n2. Click the attachment button (📎)\n3. Select the downloaded image\n4. Send your message');
-        }, 500);
-        
-      } catch (error) {
-        console.error('Error sharing image:', error);
-        
-        // Final fallback
-        const link = document.createElement('a');
-        link.download = `pansgpt-quiz-result-${Date.now()}.png`;
-        link.href = generatedImageUrl;
-        link.click();
-        
-        const shareText = encodeURIComponent(getShareText());
-        const whatsappUrl = `https://wa.me/?text=${shareText}`;
-        window.open(whatsappUrl, '_blank');
       }
+
+      // Desktop fallback: download + open WhatsApp Web
+      const link = document.createElement('a');
+      link.download = 'pansgpt-quiz-result.png';
+      link.href = imageUrl;
+      link.click();
+
+      const shareText = encodeURIComponent(getShareText());
+      window.open(`https://wa.me/?text=${shareText}`, '_blank');
+
+    } catch (error) {
+      console.error('Error sharing:', error);
     }
   };
 
-  const openWhatsAppShare = (text: string) => {
-    const encodedText = encodeURIComponent(text);
-    const whatsappUrl = `https://wa.me/?text=${encodedText}`;
-    window.open(whatsappUrl, '_blank');
+  const copyShareText = async () => {
+    try {
+      await navigator.clipboard.writeText(getShareText());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      console.error('Failed to copy:', error);
+    }
   };
-
-  // Card style logic
-  const cardClass = exportMode
-    ? 'bg-gradient-to-br from-green-900 via-black to-gray-900 flex flex-col items-center justify-between'
-    : 'relative bg-gradient-to-br from-green-900 via-black to-gray-900 rounded-2xl text-white border border-green-500/20 overflow-hidden flex flex-col items-center justify-between';
-  const cardStyle = exportMode
-    ? { width: 1000, height: 1000, aspectRatio: '1/1', margin: 0, padding: 0, borderRadius: 0, boxShadow: 'none' }
-    : {};
 
   return (
-    <div className="space-y-4">
-      {/* Share Card Preview */}
-      <div 
-        ref={cardRef}
-        className={cardClass}
-        style={cardStyle}
-      >
-        {/* Background Pattern */}
-        <div className="absolute inset-0 opacity-10 pointer-events-none select-none">
-          <div className="absolute top-8 right-8 w-40 h-40 bg-green-500 rounded-full blur-2xl"></div>
-          <div className="absolute bottom-8 left-8 w-32 h-32 bg-blue-500 rounded-full blur-2xl"></div>
-        </div>
-
-        {/* Header */}
-        <div className="relative z-10 text-center mt-16 mb-8 w-full flex flex-col items-center">
-          <div className="w-40 h-40 mb-4 relative flex items-center justify-center">
-            <Image
-              src="/uploads/Logo.png"
-              alt="PANSGPT Logo"
-              width={160}
-              height={160}
-              className="object-contain"
-            />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Image Preview */}
+      <div style={{
+        width: '100%',
+        aspectRatio: '1 / 1',
+        borderRadius: 16,
+        overflow: 'hidden',
+        background: '#000',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}>
+        {isGenerating || !imageUrl ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+            <div style={{
+              width: 40, height: 40,
+              border: '3px solid rgba(34, 197, 94, 0.3)',
+              borderTopColor: '#22c55e',
+              borderRadius: '50%',
+              animation: 'spin 1s linear infinite',
+            }} />
+            <span style={{ color: '#9ca3af', fontSize: 14 }}>Generating share card...</span>
           </div>
-          <p className="text-green-300 text-2xl font-semibold">Quiz Results</p>
-        </div>
-
-        {/* Score Section */}
-        <div className="relative z-10 text-center mb-8 w-full">
-          <div className="text-7xl font-extrabold text-white mb-2">
-            {result.score}/{result.maxScore}
-          </div>
-          <div className="text-4xl font-bold text-green-400 mb-2">
-            {result.percentage.toFixed(1)}%
-          </div>
-          <div className="text-2xl font-semibold text-green-300">
-            {getScoreMessage(result.percentage)}
-          </div>
-        </div>
-
-        {/* Quiz Info */}
-        <div className="relative z-10 w-[80%] mx-auto mb-8">
-          <div className="bg-green-900/30 rounded-xl p-8 border border-green-500/20">
-            <h3 className="text-2xl font-bold text-white mb-2">
-              {result.quiz.title}
-            </h3>
-            <p className="text-green-300 text-lg">
-              {result.quiz.courseCode} - {result.quiz.courseTitle}
-            </p>
-            {result.quiz.topic && (
-              <p className="text-gray-300 text-lg mt-2">
-                Topic: {result.quiz.topic}
-              </p>
-            )}
-          </div>
-          {/* Time and Date */}
-          <div className="flex justify-between text-lg text-gray-300 mt-4">
-            {result.timeTaken && (
-              <span>⏱️ {formatTime(result.timeTaken)}</span>
-            )}
-            <span>📅 {formatDate(result.completedAt)}</span>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="relative z-10 text-center mb-12 w-full">
-          <div className="text-lg text-gray-400 mb-2">
-            Powered by PANSGPT
-          </div>
-          <div className="text-lg text-green-400 font-semibold">
-            Your AI Study Partner
-          </div>
-        </div>
-
-        {/* Decorative Elements */}
-        <div className="absolute bottom-8 right-8 w-16 h-16 bg-green-500/20 rounded-full"></div>
-        <div className="absolute top-1/2 left-8 w-8 h-8 bg-blue-500/20 rounded-full"></div>
+        ) : (
+          <img
+            src={imageUrl}
+            alt="Quiz Results Share Card"
+            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+          />
+        )}
       </div>
 
-      {/* Share Buttons */}
-      <div className="flex flex-col sm:flex-row gap-3 justify-center">
+      {/* Buttons */}
+      <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: 12, justifyContent: 'center' }}>
         <button
-          onClick={generateShareImage}
-          disabled={isGenerating}
-          className="flex items-center justify-center px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+          onClick={downloadImage}
+          disabled={!imageUrl}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '12px 24px',
+            background: !imageUrl ? '#166534' : '#16a34a',
+            color: '#ffffff', borderRadius: 8, fontWeight: 500,
+            border: 'none', cursor: !imageUrl ? 'not-allowed' : 'pointer',
+            opacity: !imageUrl ? 0.5 : 1, fontSize: 14,
+          }}
         >
-          {isGenerating ? (
-            <>
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-              Generating...
-            </>
-          ) : (
-            <>
-              📷 Download Image
-            </>
-          )}
+          📷 Download Image
         </button>
 
         <button
           onClick={shareToWhatsApp}
-          disabled={isGenerating}
-          className="flex items-center justify-center px-6 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+          disabled={!imageUrl}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '12px 24px',
+            background: !imageUrl ? '#166534' : '#22c55e',
+            color: '#ffffff', borderRadius: 8, fontWeight: 500,
+            border: 'none', cursor: !imageUrl ? 'not-allowed' : 'pointer',
+            opacity: !imageUrl ? 0.5 : 1, fontSize: 14,
+          }}
         >
           📱 Share to WhatsApp
         </button>
 
         <button
           onClick={copyShareText}
-          className="flex items-center justify-center px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '12px 24px',
+            background: '#2563eb',
+            color: '#ffffff', borderRadius: 8, fontWeight: 500,
+            border: 'none', cursor: 'pointer', fontSize: 14,
+          }}
         >
           {copied ? '✅ Copied!' : '📋 Copy Text'}
         </button>
       </div>
 
-      {/* Share Instructions */}
-      <div className="text-center text-sm text-gray-400 mt-4">
-        <p>💡 Tip: The image will be copied to clipboard or downloaded for easy sharing!</p>
+      <div style={{ textAlign: 'center', fontSize: 14, color: '#9ca3af', marginTop: 8 }}>
+        💡 Tip: Download or share your results card!
       </div>
+
+      {/* CSS animation for spinner */}
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
-} 
+}
