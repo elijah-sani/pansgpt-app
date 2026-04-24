@@ -7,9 +7,10 @@ interface MobileBottomSheetProps {
   onClose: () => void;
   children: React.ReactNode;
   maxHeight?: string;
+  borderless?: boolean;
 }
 
-export default function MobileBottomSheet({ isOpen, onClose, children, maxHeight = '90vh' }: MobileBottomSheetProps) {
+export default function MobileBottomSheet({ isOpen, onClose, children, maxHeight = '90vh', borderless = false }: MobileBottomSheetProps) {
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = 'hidden';
@@ -30,7 +31,7 @@ export default function MobileBottomSheet({ isOpen, onClose, children, maxHeight
         onClick={onClose}
       />
       <div
-        className={`absolute bottom-0 left-0 right-0 bg-card border-t border-border rounded-t-2xl overflow-hidden
+        className={`absolute bottom-0 left-0 right-0 bg-card ${borderless ? '' : 'border-t border-border'} rounded-t-2xl overflow-hidden
           transition-transform duration-300 ease-out
           ${isOpen ? 'translate-y-0' : 'translate-y-full'}`}
         style={{ maxHeight }}

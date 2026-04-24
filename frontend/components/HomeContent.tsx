@@ -247,7 +247,7 @@ export default function HomeContent() {
             </div>
 
 
-            <main className="relative mx-auto max-w-7xl px-6 pt-3 pb-12 md:py-12">
+            <main className="relative mx-auto max-w-7xl px-6 pt-5 pb-12 md:py-12">
 
                 {/* Navigation / Breadcrumbs */}
                 <div className="mb-8">
@@ -296,7 +296,7 @@ export default function HomeContent() {
 
                 {/* Error State */}
                 {error && (
-                    <div className="mb-8 rounded-xl border border-red-200/50 bg-red-50/50 dark:bg-red-900/10 p-4 backdrop-blur-sm animate-in fade-in slide-in-from-top-4">
+                    <div className="mb-8 rounded-xl bg-red-50/50 dark:bg-red-900/10 p-4 backdrop-blur-sm animate-in fade-in slide-in-from-top-4">
                         <div className="flex items-center gap-3">
                             <div className="p-2 bg-red-100 dark:bg-red-900/30 rounded-full text-red-600 dark:text-red-400">
                                 <Library className="h-5 w-5" />
@@ -340,7 +340,7 @@ export default function HomeContent() {
                                             className="group relative text-left w-full"
                                             style={{ animationDelay: `${idx * 50}ms` }}
                                         >
-                                            <div className="bg-card h-full p-6 rounded-2xl shadow-sm hover:shadow-md hover:-translate-y-1 active:translate-y-0 transition-all duration-300 relative overflow-hidden group">
+                                            <div className="bg-card h-full p-6 rounded-2xl shadow-sm hover:shadow-md hover:-translate-y-1 active:shadow-md active:-translate-y-1 transition-all duration-300 relative overflow-hidden group touch-manipulation">
                                                 <div className="flex items-start justify-between mb-6">
                                                     <div className="p-3 rounded-xl bg-secondary text-secondary-foreground group-hover:scale-110 transition-transform duration-300 shadow-sm">
                                                         <FolderOpen className="h-8 w-8" />
@@ -387,7 +387,7 @@ export default function HomeContent() {
                                         className="group relative"
                                         style={{ animationDelay: `${idx * 50}ms` }}
                                     >
-                                        <div className="bg-card h-full p-6 rounded-2xl shadow-sm hover:shadow-md hover:-translate-y-1 active:translate-y-0 transition-all duration-300 relative overflow-hidden">
+                                        <div className="bg-card h-full p-6 rounded-2xl shadow-sm hover:shadow-md hover:-translate-y-1 active:shadow-md active:-translate-y-1 transition-all duration-300 relative overflow-hidden touch-manipulation">
                                             {/* Progress fill behind all content */}
                                             {pct > 0 && (
                                                 <div
@@ -450,7 +450,7 @@ export default function HomeContent() {
                     ((viewMode === 'groups' && filteredGroupKeys.length === 0) ||
                         (viewMode === 'list' && filteredCourseDocs.length === 0))
                 ) && (
-                    <div className="flex flex-col items-center justify-center rounded-2xl border border-border bg-card px-6 py-16 text-center">
+                    <div className="flex flex-col items-center justify-center rounded-2xl bg-card px-6 py-16 text-center">
                         <Search className="mb-3 h-6 w-6 text-muted-foreground" />
                         <p className="text-base font-semibold text-foreground">No matches found</p>
                         <p className="mt-1 text-sm text-muted-foreground">Try a different keyword.</p>

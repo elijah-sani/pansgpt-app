@@ -116,6 +116,7 @@ export default function ChatInterface({
     onNoteAdded
 }: ChatInterfaceProps) {
     const MAX_IMAGES = 4;
+    const isStudyMode = Boolean(contextId);
     const chatEndRef = useRef<HTMLDivElement>(null);
     const chatScrollRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -511,7 +512,7 @@ export default function ChatInterface({
                                                 /* Normal Display Mode */
                                                 <>
                                                     <div className="max-w-[85%]">
-                                                        <div className="bg-[var(--surface-secondary)] text-white px-5 py-3 rounded-2xl rounded-tr-sm shadow-sm border border-[var(--surface-secondary)] text-[15px] leading-relaxed">
+                                                        <div className="bg-primary/20 dark:bg-secondary text-[#1b4332] dark:text-secondary-foreground font-sans px-5 py-3 rounded-2xl rounded-tr-sm text-[15px] leading-relaxed">
                                                             <div className={isLongUserMessage && !isExpanded ? 'line-clamp-3' : ''}>
                                                                 {msg.content}
                                                             </div>
@@ -654,7 +655,7 @@ export default function ChatInterface({
                     )}
 
                     {/* Input Card — matching main chat layout */}
-                    <div className={`relative flex flex-col bg-card border border-border rounded-3xl p-3 shadow-sm transition-all duration-300 ${isListening ? 'ring-2 ring-primary/20' : ''}`}>
+                    <div className={`relative flex flex-col bg-card rounded-3xl p-3 shadow-sm transition-all duration-300 ${!isStudyMode ? 'border border-border' : ''} ${isListening ? 'ring-2 ring-primary/20' : ''}`}>
                         {/* Textarea / Waveform / Processing */}
                         {isListening ? (
                             <div className="w-full flex items-center justify-center py-3 px-2">
@@ -763,9 +764,7 @@ export default function ChatInterface({
                         </div>
                     </div>
 
-                    <div className="text-center mt-3 text-xs text-muted-foreground">
-                        AI can make mistakes. Verify important information.
-                    </div>
+
                 </div>
             </div>
 

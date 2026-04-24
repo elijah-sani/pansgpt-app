@@ -22,9 +22,9 @@ export function MainProfileSidebar({
 }: MainProfileSidebarProps) {
   return (
     <aside
-      className={`fixed inset-y-0 right-0 z-50 w-screen transform transition-transform duration-300 bg-background border-l border-border ${
+      className={`fixed inset-y-0 right-0 z-50 w-screen transform transition-transform duration-300 bg-background ${
         isOpen ? 'translate-x-0 md:w-80 md:opacity-100' : 'translate-x-full md:w-0 md:opacity-0'
-      } md:relative md:inset-auto md:z-auto md:translate-x-0 md:transition-[width,opacity] md:duration-300 md:ease-in-out md:flex-shrink-0 md:overflow-hidden`}
+      } md:relative md:inset-auto md:z-auto md:translate-x-0 md:transition-[width,opacity] md:duration-300 md:ease-in-out md:flex-shrink-0 md:overflow-hidden md:border-l md:border-border`}
     >
       <div className="relative z-50 h-full bg-background">
         <ProfileSidebar

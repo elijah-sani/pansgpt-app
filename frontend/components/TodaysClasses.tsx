@@ -117,7 +117,7 @@ export default function TodaysClasses({ onSeeAll, level }: TodaysClassesProps) {
             Array.from({ length: 2 }).map((_, idx) => (
               <div
                 key={`class-skeleton-${idx}`}
-                className="min-w-[220px] bg-card border border-border rounded-2xl p-4 snap-center flex flex-col gap-2 flex-shrink-0 animate-pulse"
+                className="min-w-[220px] bg-card rounded-2xl p-4 snap-center flex flex-col gap-2 flex-shrink-0 animate-pulse"
               >
                 <div className="h-4 w-32 bg-muted rounded" />
                 <div className="h-4 w-44 bg-muted rounded" />
@@ -125,20 +125,20 @@ export default function TodaysClasses({ onSeeAll, level }: TodaysClassesProps) {
               </div>
             ))
           ) : classes.length === 0 ? (
-            <div className="min-w-full bg-card border border-dashed border-border rounded-2xl p-6 text-center text-sm text-muted-foreground">
+            <div className="min-w-full bg-card rounded-2xl p-6 text-center text-sm text-muted-foreground">
               No classes scheduled for today!
             </div>
           ) : (
             classes.map((cls, idx) => (
               <div
                 key={cls.id || `${cls.time_slot || 'slot'}-${cls.course_code || 'course'}-${idx}`}
-                className={`min-w-[220px] max-w-[260px] bg-card border rounded-2xl p-4 snap-center flex flex-col gap-3 flex-shrink-0 ${
+                className={`min-w-[220px] max-w-[260px] bg-card rounded-2xl p-4 snap-center flex flex-col gap-3 flex-shrink-0 ${
                   idx === activeClassIndex
-                    ? 'border-primary/60 shadow-[0_0_0_1px_rgba(59,130,246,0.2),0_0_18px_rgba(59,130,246,0.1)]'
-                    : 'border-border'
+                    ? 'shadow-[0_0_0_1px_rgba(59,130,246,0.2),0_0_18px_rgba(59,130,246,0.1)]'
+                    : ''
                 }`}
               >
-                <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-primary bg-primary/10 w-fit">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary/10 w-fit">
                   <Clock size={13} className="text-primary" />
                   <span className="text-xs font-bold text-primary">
                     {cls.time_slot || 'Time TBD'}

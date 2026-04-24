@@ -415,6 +415,21 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         lastScrollY.current = currentY;
     };
 
+    const handlePdfWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+        const container = pdfWrapperRef.current;
+        if (!container) return;
+
+        // Keep browser pinch-to-zoom behavior untouched.
+        if (e.ctrlKey || e.metaKey || isSnippingMode) return;
+
+        const multiplier = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? container.clientHeight : 1;
+        const delta = e.deltaY * multiplier;
+        if (delta === 0) return;
+
+        container.scrollTop += delta;
+        e.preventDefault();
+    };
+
     // Chat State
     const [chatHistory, setChatHistory] = useState<Message[]>([]);
     const [isLoading, setIsLoading] = useState(false);
@@ -2001,9 +2016,9 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                         <div className="flex items-center gap-3">
                             <button
                                 onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-                                className={`flex items-center justify-center w-10 h-10 rounded-lg transition-all duration-200 border ${isSidebarOpen
-                                    ? 'bg-card text-primary border-primary/20 shadow-lg shadow-black/5'
-                                    : 'bg-card hover:bg-muted/50 text-muted-foreground border-border shadow-sm'
+                                className={`flex items-center justify-center w-10 h-10 rounded-lg transition-all duration-200 ${isSidebarOpen
+                                    ? 'bg-muted/50 text-primary shadow-lg shadow-black/5'
+                                    : 'bg-card hover:bg-muted/50 text-muted-foreground shadow-sm'
                                     }`}
                                 title="AI Assistant"
                             >
@@ -2018,6 +2033,27 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                         {/* PDF Area Wrapper */}
                         <div className={`flex-1 min-w-0 relative h-full flex flex-col ${activeTab === 'document' ? 'flex' : 'hidden md:flex'}`}>
                             
+                            {/* Snipping Mode Banner */}
+                            {isSnippingMode && (
+                                <div className="absolute top-0 left-0 right-0 bg-primary/90 text-primary-foreground px-4 py-2 text-sm font-medium flex items-center justify-between z-20 backdrop-blur-sm shadow-md">
+                                    <div className="flex items-center gap-2">
+                                        <Scissors className="w-4 h-4" />
+                                        <span>Select an area on the document to snip</span>
+                                    </div>
+                                    <button
+                                        onClick={() => {
+                                            setIsSnippingMode(false);
+                                            setIsSnipActive(false);
+                                            setSnipRect(null);
+                                            setSnipPopup(null);
+                                        }}
+                                        className="p-1 hover:bg-black/10 rounded-full transition-colors"
+                                    >
+                                        <X className="w-4 h-4" />
+                                    </button>
+                                </div>
+                            )}
+
                             {/* PDF Container */}
                             <div
                                 ref={pdfWrapperRef}
@@ -2027,8 +2063,9 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                 `}
                             onTouchStart={() => triggerMobilePill()}
                             onScroll={handleMobileScroll}
+                            onWheel={handlePdfWheel}
                             onContextMenu={(e) => e.preventDefault()}
-                            style={{ WebkitTouchCallout: 'none' } as React.CSSProperties}
+                            style={{ WebkitTouchCallout: 'none', touchAction: isSnipActive ? 'none' : 'pan-y' } as React.CSSProperties}
                         >
                             {/* Snipping Mode Banner */}
                             {/* ─── Reading Progress Bar (Mobile) ─────────────────────────────── */}

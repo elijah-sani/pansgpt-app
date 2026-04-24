@@ -31,7 +31,7 @@ export function QuizFilterModal({
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
 
       <div
-        className="relative z-10 w-full sm:w-80 sm:ml-[76px] bg-card border border-border rounded-t-2xl sm:rounded-2xl shadow-sm p-5 animate-in slide-in-from-bottom-4 sm:slide-in-from-left-4 duration-250"
+        className="relative z-10 w-full sm:w-80 sm:ml-[76px] bg-card rounded-t-2xl sm:rounded-2xl shadow-sm p-5 animate-in slide-in-from-bottom-4 sm:slide-in-from-left-4 duration-250"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-5">
@@ -58,7 +58,7 @@ export function QuizFilterModal({
             value={draftFilters.courseCode}
             onChange={(event) => setDraftFilters((previous) => ({ ...previous, courseCode: event.target.value }))}
             placeholder="e.g. CSC 301"
-            className="w-full px-3 py-2.5 text-base md:text-sm bg-background border border-border rounded-xl text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 transition-all"
+            className="w-full px-3 py-2.5 text-base md:text-sm bg-background rounded-xl text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 transition-all"
           />
         </div>
 
@@ -71,10 +71,10 @@ export function QuizFilterModal({
               <button
                 key={level}
                 onClick={() => setDraftFilters((previous) => ({ ...previous, level }))}
-                className={`py-2 text-xs font-semibold rounded-xl border transition-all ${
+                className={`py-2 text-xs font-semibold rounded-xl transition-all ${
                   draftFilters.level === level
-                    ? 'bg-primary text-primary-foreground border-primary shadow-sm'
-                    : 'bg-background text-foreground border-border hover:border-primary/40 hover:bg-muted/40'
+                    ? 'bg-primary text-primary-foreground shadow-sm'
+                    : 'bg-background text-foreground hover:bg-muted/40'
                 }`}
               >
                 {level === '' ? 'All' : level}
@@ -86,7 +86,7 @@ export function QuizFilterModal({
         <div className="flex gap-2">
           <button
             onClick={clearFilters}
-            className="flex-1 py-2.5 text-sm font-medium text-muted-foreground bg-muted/40 hover:bg-muted/70 rounded-xl border border-border transition-colors"
+            className="flex-1 py-2.5 text-sm font-medium text-muted-foreground bg-muted/40 hover:bg-muted/70 rounded-xl transition-colors"
           >
             Clear
           </button>

@@ -206,7 +206,7 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
     const currentAvatar = avatarUrl || fallbackAvatar;
     const modalContent = (
         <>
-            <div className="p-5 border-b border-border flex justify-between items-center bg-muted/30">
+            <div className="p-5 flex justify-between items-center bg-muted/30">
                 <h2 className="text-lg font-bold text-foreground">Personal Information</h2>
                 <button onClick={onClose} className="p-2 hover:bg-muted rounded-full transition-colors">
                     <X className="w-5 h-5 text-muted-foreground" />
@@ -214,7 +214,7 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
             </div>
 
             <div className="p-5 space-y-4 overflow-y-auto bg-background/50">
-                <div className="rounded-xl border border-border bg-card px-3.5 py-3 flex items-center justify-between gap-3">
+                <div className="rounded-xl bg-card px-3.5 py-3 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3 min-w-0">
                         <img
                             src={currentAvatar}
@@ -229,7 +229,7 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
                     <button
                         onClick={() => setIsAvatarModalOpen(true)}
                         disabled={isUpdatingAvatar}
-                        className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-background text-xs font-semibold text-foreground hover:bg-muted transition-colors disabled:opacity-60"
+                        className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-background text-xs font-semibold text-foreground hover:bg-muted transition-colors disabled:opacity-60"
                     >
                         <LayoutGrid className="w-3.5 h-3.5" />
                         {isUpdatingAvatar ? 'Updating...' : 'Edit Avatar'}
@@ -243,10 +243,10 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
                             type="text"
                             value={formData.firstName}
                             onChange={(e) => updateField('firstName', e.target.value)}
-                            className="w-full px-3 py-2.5 rounded-xl border border-border bg-background text-base md:text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/30 transition-all"
+                            className="w-full px-3 py-2.5 rounded-xl border-0 bg-background text-base md:text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-all"
                         />
                     ) : (
-                        <div className="w-full px-3 py-2.5 rounded-xl border border-border bg-muted/40 text-sm text-foreground">
+                        <div className="w-full px-3 py-2.5 rounded-xl bg-muted/40 text-sm text-foreground">
                             {formData.firstName || 'Not set'}
                         </div>
                     )}
@@ -259,10 +259,10 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
                             type="text"
                             value={formData.otherNames}
                             onChange={(e) => updateField('otherNames', e.target.value)}
-                            className="w-full px-3 py-2.5 rounded-xl border border-border bg-background text-base md:text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/30 transition-all"
+                            className="w-full px-3 py-2.5 rounded-xl border-0 bg-background text-base md:text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-all"
                         />
                     ) : (
-                        <div className="w-full px-3 py-2.5 rounded-xl border border-border bg-muted/40 text-sm text-foreground">
+                        <div className="w-full px-3 py-2.5 rounded-xl bg-muted/40 text-sm text-foreground">
                             {formData.otherNames || 'Not set'}
                         </div>
                     )}
@@ -274,7 +274,7 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
                         <select
                             value={formData.university}
                             onChange={(e) => updateField('university', e.target.value)}
-                            className="w-full px-3 py-2.5 rounded-xl border border-border bg-background text-base md:text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/30 transition-all"
+                            className="w-full px-3 py-2.5 rounded-xl border-0 bg-background text-base md:text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-all"
                         >
                             <option value="">Select your university</option>
                             {universityOptions.map((u) => (
@@ -282,7 +282,7 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
                             ))}
                         </select>
                     ) : (
-                        <div className="w-full px-3 py-2.5 rounded-xl border border-border bg-muted/40 text-sm text-foreground">
+                        <div className="w-full px-3 py-2.5 rounded-xl bg-muted/40 text-sm text-foreground">
                             {formData.university || 'Not set'}
                         </div>
                     )}
@@ -294,7 +294,7 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
                         <select
                             value={formData.level}
                             onChange={(e) => updateField('level', e.target.value)}
-                            className="w-full px-3 py-2.5 rounded-xl border border-border bg-background text-base md:text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/30 transition-all"
+                            className="w-full px-3 py-2.5 rounded-xl border-0 bg-background text-base md:text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-all"
                         >
                             {levelOptions.map((level) => (
                                 <option key={level} value={level}>
@@ -303,21 +303,21 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
                             ))}
                         </select>
                     ) : (
-                        <div className="w-full px-3 py-2.5 rounded-xl border border-border bg-muted/40 text-sm text-foreground">
+                        <div className="w-full px-3 py-2.5 rounded-xl bg-muted/40 text-sm text-foreground">
                             {formData.level ? `${formData.level} Level` : 'Not set'}
                         </div>
                     )}
                 </div>
             </div>
 
-            <div className="p-5 border-t border-border bg-muted/30">
+            <div className="p-5 bg-muted/30">
                 {!isEditing && (
                     <button
                         onClick={() => {
                             setSaveError(null);
                             setIsEditing(true);
                         }}
-                        className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition-all shadow-md bg-background border border-border text-foreground hover:bg-muted"
+                        className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition-all shadow-md bg-background text-foreground hover:bg-muted"
                     >
                         <Pencil className="w-4 h-4" />
                         Edit Profile
@@ -329,7 +329,7 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
                         <button
                             onClick={handleCancelEdit}
                             disabled={isSaving}
-                            className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold border border-border bg-background text-foreground hover:bg-muted transition-colors disabled:opacity-60"
+                            className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold bg-background text-foreground hover:bg-muted transition-colors disabled:opacity-60"
                         >
                             Cancel
                         </button>
@@ -386,7 +386,7 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
 
     return (
         <>
-            <MobileBottomSheet isOpen={isOpen} onClose={onClose}>
+            <MobileBottomSheet isOpen={isOpen} onClose={onClose} borderless>
                 <div className="bg-card flex flex-col max-h-[90vh]">
                     {modalContent}
                 </div>
@@ -405,7 +405,7 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
                             initial={{ scale: 0.95, opacity: 0 }}
                             animate={{ scale: 1, opacity: 1 }}
                             exit={{ scale: 0.95, opacity: 0 }}
-                            className="bg-card border border-border rounded-2xl shadow-sm w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]"
+                            className="bg-card rounded-2xl shadow-sm w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]"
                             onClick={(e) => e.stopPropagation()}
                         >
                             {modalContent}

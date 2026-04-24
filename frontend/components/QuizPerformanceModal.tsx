@@ -110,7 +110,7 @@ export default function QuizPerformanceModal({ isOpen, onClose }: QuizPerformanc
     ];
     const modalContent = (
         <>
-            <div className="p-5 border-b border-border flex justify-between items-center bg-muted/30">
+            <div className="p-5 flex justify-between items-center bg-muted/30">
                 <h2 className="text-lg font-bold text-foreground">Quiz Performance</h2>
                 <button onClick={onClose} className="p-2 hover:bg-muted rounded-full transition-colors">
                     <X className="w-5 h-5 text-muted-foreground" />
@@ -125,7 +125,7 @@ export default function QuizPerformanceModal({ isOpen, onClose }: QuizPerformanc
                             initial={{ opacity: 0, y: 8 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ delay: index * 0.04 }}
-                            className="rounded-xl border border-border bg-card px-4 py-3.5"
+                            className="rounded-xl bg-card px-4 py-3.5"
                         >
                             <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{stat.label}</p>
                             <p className="mt-2 text-2xl font-bold text-foreground">{stat.value}</p>
@@ -135,7 +135,7 @@ export default function QuizPerformanceModal({ isOpen, onClose }: QuizPerformanc
 
                 <div>
                     <h3 className="text-sm font-semibold text-foreground mb-3">Recent Quizzes</h3>
-                    <div className="rounded-xl border border-border bg-card overflow-hidden">
+                    <div className="rounded-xl bg-card overflow-hidden">
                         {isLoading && (
                             <div className="px-4 py-6 text-sm text-muted-foreground">Loading quiz history...</div>
                         )}
@@ -148,9 +148,7 @@ export default function QuizPerformanceModal({ isOpen, onClose }: QuizPerformanc
                         {!isLoading && !error && recentQuizzes.map((quiz, index) => (
                             <div
                                 key={`${quiz.title}-${quiz.date}-${index}`}
-                                className={`px-4 py-3.5 flex items-center justify-between gap-3 ${
-                                    index < recentQuizzes.length - 1 ? 'border-b border-border/60' : ''
-                                }`}
+                                className="px-4 py-3.5 flex items-center justify-between gap-3"
                             >
                                 <div className="min-w-0">
                                     <p className="text-sm font-semibold text-foreground truncate">{quiz.title}</p>
@@ -158,7 +156,7 @@ export default function QuizPerformanceModal({ isOpen, onClose }: QuizPerformanc
                                         {quiz.date} - {quiz.score}
                                     </p>
                                 </div>
-                                <span className="shrink-0 px-2.5 py-1 rounded-full text-xs font-semibold border border-primary/30 bg-primary/10 text-primary">
+                                <span className="shrink-0 px-2.5 py-1 rounded-full text-xs font-semibold bg-primary/10 text-primary">
                                     {quiz.percentage.toFixed(1)}%
                                 </span>
                             </div>
@@ -173,7 +171,7 @@ export default function QuizPerformanceModal({ isOpen, onClose }: QuizPerformanc
 
     return (
         <>
-            <MobileBottomSheet isOpen={isOpen} onClose={onClose}>
+            <MobileBottomSheet isOpen={isOpen} onClose={onClose} borderless>
                 <div className="bg-card flex flex-col max-h-[90vh]">
                     {modalContent}
                 </div>
@@ -192,7 +190,7 @@ export default function QuizPerformanceModal({ isOpen, onClose }: QuizPerformanc
                             initial={{ scale: 0.95, opacity: 0 }}
                             animate={{ scale: 1, opacity: 1 }}
                             exit={{ scale: 0.95, opacity: 0 }}
-                            className="bg-card border border-border rounded-2xl shadow-sm w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]"
+                            className="bg-card rounded-2xl shadow-sm w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]"
                             onClick={(e) => e.stopPropagation()}
                         >
                             {modalContent}

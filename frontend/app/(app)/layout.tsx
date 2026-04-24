@@ -232,7 +232,7 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
             {/* Delete Confirmation Modal */}
             {isDeleteModalOpen && (
                 <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-                    <div className="bg-card border border-border rounded-2xl shadow-sm w-full max-w-sm p-6">
+                    <div className="bg-card rounded-2xl shadow-sm w-full max-w-sm p-6">
                         <div className="flex items-center gap-3 mb-4">
                             <div className="w-10 h-10 rounded-full bg-destructive/10 flex items-center justify-center shrink-0">
                                 <Trash2 className="w-5 h-5 text-destructive" />
@@ -245,7 +245,7 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                         <div className="flex gap-3 mt-6">
                             <button
                                 onClick={() => { setIsDeleteModalOpen(false); setDeleteTargetId(null); }}
-                                className="flex-1 px-4 py-2.5 rounded-xl border border-border text-sm font-medium text-foreground hover:bg-muted transition-colors"
+                                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-foreground hover:bg-muted transition-colors"
                             >
                                 Cancel
                             </button>
@@ -263,7 +263,7 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
             {/* Rename Modal */}
             {renamingChatId && (
                 <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-                    <div className="bg-card border border-border rounded-2xl shadow-sm w-full max-w-sm p-6">
+                    <div className="bg-card rounded-2xl shadow-sm w-full max-w-sm p-6">
                         <div className="flex items-center justify-between mb-4">
                             <div className="flex items-center gap-3">
                                 <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
@@ -287,13 +287,13 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                                 if (e.key === "Escape") { setRenamingChatId(null); setRenameDraft(""); }
                             }}
                             autoFocus
-                            className="w-full px-3 py-2.5 rounded-xl border border-border bg-background text-base md:text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/30 transition-all mb-4"
+                            className="w-full px-3 py-2.5 rounded-xl bg-background text-base md:text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/30 transition-all mb-4"
                             placeholder="Chat name..."
                         />
                         <div className="flex gap-3">
                             <button
                                 onClick={() => { setRenamingChatId(null); setRenameDraft(""); }}
-                                className="flex-1 px-4 py-2.5 rounded-xl border border-border text-sm font-medium text-foreground hover:bg-muted transition-colors"
+                                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-foreground hover:bg-muted transition-colors"
                             >
                                 Cancel
                             </button>

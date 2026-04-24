@@ -419,7 +419,7 @@ export default function SettingsModal({
   }
 
   const desktopContent = (
-    <div className="relative hidden h-[600px] w-[680px] overflow-hidden rounded-3xl border border-border bg-background shadow-sm md:flex">
+    <div className="relative hidden h-[600px] w-[680px] overflow-hidden rounded-3xl bg-background shadow-sm md:flex">
       <button
         onClick={onClose}
         className="absolute left-4 top-4 z-10 rounded-lg p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -510,7 +510,7 @@ export default function SettingsModal({
 
   return (
     <>
-      <MobileBottomSheet isOpen={isOpen} onClose={onClose} maxHeight="96vh">
+      <MobileBottomSheet isOpen={isOpen} onClose={onClose} maxHeight="96vh" borderless>
         {mobileContent}
       </MobileBottomSheet>
 
@@ -521,7 +521,7 @@ export default function SettingsModal({
       {isDeleteDialogOpen && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
           <div
-            className="w-full max-w-sm rounded-2xl border border-border bg-card shadow-sm"
+            className="w-full max-w-sm rounded-2xl bg-card shadow-sm"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="border-b border-border px-5 py-4">

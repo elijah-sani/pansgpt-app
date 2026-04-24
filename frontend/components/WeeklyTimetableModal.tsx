@@ -77,7 +77,7 @@ export default function WeeklyTimetableModal({
   const activeClasses = Array.isArray(weekData[activeTab]) ? weekData[activeTab] : [];
   const modalContent = (
     <>
-      <div className="p-5 border-b border-border flex items-center justify-between bg-muted/30">
+      <div className="p-5 flex items-center justify-between bg-muted/30">
         <div className="flex items-center gap-2">
           <CalendarDays className="w-5 h-5 text-primary" />
           <h2 className="text-lg font-bold text-foreground">Weekly Timetable</h2>
@@ -87,7 +87,7 @@ export default function WeeklyTimetableModal({
         </button>
       </div>
 
-      <div className="border-b border-border px-4 pt-3">
+      <div className="px-4 pt-3">
         <div className="flex gap-2 overflow-x-auto pb-2 [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-primary/20 [&::-webkit-scrollbar-thumb]:rounded-full">
           {days.map((day) => (
             <button
@@ -113,7 +113,7 @@ export default function WeeklyTimetableModal({
             ))}
           </div>
         ) : activeClasses.length === 0 ? (
-          <div className="border border-dashed border-border rounded-xl p-8 text-center text-muted-foreground">
+          <div className="rounded-xl p-8 text-center bg-muted/20 text-muted-foreground">
             No classes on this day!
           </div>
         ) : (
@@ -121,9 +121,9 @@ export default function WeeklyTimetableModal({
             {activeClasses.map((cls, idx) => (
               <div
                 key={cls.id || `${activeTab}-${cls.time_slot || 'slot'}-${cls.course_code || 'course'}-${idx}`}
-                className="bg-card border border-border rounded-2xl p-4 flex flex-col gap-3"
+                className="bg-card rounded-2xl p-4 flex flex-col gap-3 shadow-sm"
               >
-                <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-primary bg-primary/10 w-fit">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary/10 w-fit">
                   <span className="text-xs font-bold text-primary">{cls.time_slot || 'Time TBD'}</span>
                 </div>
                 <div className="flex flex-col gap-1">
@@ -159,7 +159,7 @@ export default function WeeklyTimetableModal({
               initial={{ scale: 0.96, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.96, opacity: 0 }}
-              className="bg-card border border-border rounded-2xl shadow-sm w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]"
+              className="bg-card rounded-2xl shadow-sm w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]"
               onClick={(e) => e.stopPropagation()}
             >
               {modalContent}

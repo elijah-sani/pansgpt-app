@@ -80,17 +80,26 @@ export default function AppSidebar({
   }, [pathname]);
 
   useEffect(() => {
-    const handlePointerDown = (event: MouseEvent) => {
+    const handlePointerDown = (event: PointerEvent) => {
+      // Don't close if the click originated from the help button itself
       const targetNode = event.target as Node;
-      if (!settingsMenuRef.current?.contains(targetNode) && !helpSubmenuRef.current?.contains(targetNode)) {
+      if (
+        helpRowRef.current?.contains(targetNode) ||
+        helpSubmenuRef.current?.contains(targetNode)
+      ) {
+        return;
+      }
+      if (!settingsMenuRef.current?.contains(targetNode)) {
         setIsSettingsMenuOpen(false);
+      }
+      if (!helpSubmenuRef.current?.contains(targetNode)) {
         setIsHelpSubmenuOpen(false);
         setDesktopHelpMenuPosition(null);
       }
     };
 
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
   }, []);
 
   useEffect(() => {
@@ -125,7 +134,12 @@ export default function AppSidebar({
     }
   };
 
+  const isMobileViewport = () => typeof window !== "undefined" && window.innerWidth < 768;
+
   const scheduleHideHelpMenu = () => {
+    if (isMobileViewport()) {
+      return;
+    }
     clearHideHelpTimeout();
     hideHelpTimeoutRef.current = window.setTimeout(() => {
       setIsHelpSubmenuOpen(false);
@@ -141,16 +155,16 @@ export default function AppSidebar({
 
     clearHideHelpTimeout();
     const rect = helpRowRef.current.getBoundingClientRect();
-    const isMobileViewport = window.innerWidth < 768;
-    const menuWidth = isMobileViewport ? Math.min(288, window.innerWidth - 24) : 256;
-    let top = isMobileViewport
+    const mobileViewport = window.innerWidth < 768;
+    const menuWidth = mobileViewport ? Math.min(288, window.innerWidth - 24) : 256;
+    let top = mobileViewport
       ? Math.max(12, rect.top - 8)
       : rect.top;
-    const left = isMobileViewport
+    const left = mobileViewport
       ? Math.min(window.innerWidth - menuWidth - 12, Math.max(12, rect.left))
       : rect.right + 8;
 
-    if (!isMobileViewport && top + HELP_SUBMENU_HEIGHT > window.innerHeight) {
+    if (!mobileViewport && top + HELP_SUBMENU_HEIGHT > window.innerHeight) {
       top = Math.max(12, rect.bottom - HELP_SUBMENU_HEIGHT);
     }
 
@@ -179,7 +193,7 @@ export default function AppSidebar({
     <>
       <aside
         className={`
-          fixed inset-y-0 left-0 z-50 w-[80vw] max-w-sm transform transition-transform duration-300 bg-card border-r border-border
+          fixed inset-y-0 left-0 z-50 w-[80vw] max-w-sm transform transition-transform duration-300 bg-card
           ${isOpen ? "translate-x-0" : "-translate-x-full"}
           md:relative md:inset-auto md:z-auto md:max-w-none md:translate-x-0
           md:transition-[width,opacity] md:duration-300 md:ease-in-out md:flex-shrink-0 md:overflow-visible
@@ -192,7 +206,8 @@ export default function AppSidebar({
             <button
               onClick={onClose}
               title={isIconOnly ? "Expand sidebar" : "Collapse sidebar"}
-              className="p-2 text-foreground hover:bg-accent rounded-lg transition-colors"
+              className="p-2 text-foreground hover:bg-accent active:bg-accent/80 active:scale-95 rounded-lg transition-colors"
+              style={{ WebkitTapHighlightColor: 'transparent' }}
             >
               <PanelLeft size={20} />
             </button>
@@ -259,7 +274,8 @@ export default function AppSidebar({
                       closeSettingsMenu();
                       onOpenSettings();
                     }}
-                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-popover-foreground transition-colors hover:bg-muted"
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-popover-foreground transition-colors hover:bg-muted active:bg-muted/80"
+                    style={{ WebkitTapHighlightColor: 'transparent' }}
                   >
                     <Settings className="h-4 w-4 shrink-0" />
                     <span className="flex-1">Settings</span>
@@ -267,22 +283,34 @@ export default function AppSidebar({
 
                   <div
                     className="relative"
-                    onPointerEnter={openHelpMenu}
-                    onPointerLeave={scheduleHideHelpMenu}
+                    onPointerEnter={() => {
+                      if (!isMobileViewport()) {
+                        openHelpMenu();
+                      }
+                    }}
+                    onPointerLeave={() => {
+                      if (!isMobileViewport()) {
+                        scheduleHideHelpMenu();
+                      }
+                    }}
                   >
                     <button
                       ref={helpRowRef}
-                      onPointerEnter={openHelpMenu}
-                      onClick={() => {
-                        if (typeof window !== "undefined" && window.innerWidth < 768) {
-                          if (isHelpSubmenuOpen) {
-                            scheduleHideHelpMenu();
-                          } else {
-                            openHelpMenu();
-                          }
+                      onPointerEnter={() => {
+                        if (!isMobileViewport()) {
+                          openHelpMenu();
                         }
                       }}
-                      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-popover-foreground transition-colors hover:bg-muted"
+                      onClick={() => {
+                        if (isHelpSubmenuOpen) {
+                          setIsHelpSubmenuOpen(false);
+                          setDesktopHelpMenuPosition(null);
+                        } else {
+                          openHelpMenu();
+                        }
+                      }}
+                      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-popover-foreground transition-colors hover:bg-muted active:bg-muted/80"
+                      style={{ WebkitTapHighlightColor: 'transparent' }}
                     >
                       <CircleHelp className="h-4 w-4 shrink-0" />
                       <span className="flex-1">Help</span>
@@ -318,36 +346,48 @@ export default function AppSidebar({
                 left: desktopHelpMenuPosition.left,
                 bottom: window.innerWidth < 768 ? window.innerHeight - desktopHelpMenuPosition.top + 8 : undefined,
               }}
-              onPointerEnter={clearHideHelpTimeout}
-              onPointerLeave={scheduleHideHelpMenu}
+              onPointerEnter={() => {
+                if (!isMobileViewport()) {
+                  clearHideHelpTimeout();
+                }
+              }}
+              onPointerLeave={() => {
+                if (!isMobileViewport()) {
+                  scheduleHideHelpMenu();
+                }
+              }}
             >
               <button
                 onClick={() => {
                   closeSettingsMenu();
                   onOpenReportProblem();
                 }}
-                className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-popover-foreground transition-colors hover:bg-muted"
+                className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-popover-foreground transition-colors hover:bg-muted active:bg-muted/80"
+                style={{ WebkitTapHighlightColor: 'transparent' }}
               >
                 <Bug className="h-4 w-4 shrink-0" />
                 <span>Report a Bug</span>
               </button>
               <button
                 onClick={() => openHelpPage("/terms")}
-                className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-popover-foreground transition-colors hover:bg-muted"
+                className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-popover-foreground transition-colors hover:bg-muted active:bg-muted/80"
+                style={{ WebkitTapHighlightColor: 'transparent' }}
               >
                 <FileText className="h-4 w-4 shrink-0" />
                 <span>Terms & Policies</span>
               </button>
               <button
                 onClick={() => openHelpPage("/faq")}
-                className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-popover-foreground transition-colors hover:bg-muted"
+                className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-popover-foreground transition-colors hover:bg-muted active:bg-muted/80"
+                style={{ WebkitTapHighlightColor: 'transparent' }}
               >
                 <CircleHelp className="h-4 w-4 shrink-0" />
                 <span>FAQ</span>
               </button>
               <button
                 onClick={() => openHelpPage("/contact")}
-                className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-popover-foreground transition-colors hover:bg-muted"
+                className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-popover-foreground transition-colors hover:bg-muted active:bg-muted/80"
+                style={{ WebkitTapHighlightColor: 'transparent' }}
               >
                 <Mail className="h-4 w-4 shrink-0" />
                 <span>Contact Us</span>

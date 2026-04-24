@@ -130,7 +130,7 @@ export default function ChatInput({
         </div>
       )}
 
-      <div className="relative flex flex-col bg-card border border-border rounded-2xl p-3 shadow-sm">
+      <div className="relative flex flex-col bg-card rounded-2xl p-3 shadow-sm">
         {isListening ? (
           <div className="w-full flex items-center justify-center py-3 px-4">
             <InlineWaveform volume={volume} />
@@ -291,9 +291,7 @@ export default function ChatInput({
         )}
       </AnimatePresence>
 
-      <div className="text-center mt-4">
-        <p className="text-xs text-muted-foreground">PansGPT can make mistakes. Verify important information.</p>
-      </div>
+
     </div>
   );
 }

@@ -50,7 +50,7 @@ export default function WelcomeModal({ isOpen, firstName, onClose }: WelcomeModa
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.92, opacity: 0, y: 20 }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="bg-card border border-border rounded-3xl shadow-sm w-full max-w-md overflow-hidden"
+            className="bg-card rounded-3xl shadow-sm w-full max-w-md overflow-hidden"
           >
             <div className="relative bg-gradient-to-br from-primary/20 to-primary/5 px-8 pt-10 pb-8 text-center">
               <button
@@ -59,7 +59,7 @@ export default function WelcomeModal({ isOpen, firstName, onClose }: WelcomeModa
               >
                 <X className="w-4 h-4" />
               </button>
-              <div className="w-16 h-16 rounded-2xl bg-primary/20 border border-primary/30 flex items-center justify-center mx-auto mb-4">
+              <div className="w-16 h-16 rounded-2xl bg-primary/20 flex items-center justify-center mx-auto mb-4">
                 <Sparkles className="w-8 h-8 text-primary" />
               </div>
               <h2 className="text-2xl font-bold text-foreground mb-1">
@@ -78,7 +78,7 @@ export default function WelcomeModal({ isOpen, firstName, onClose }: WelcomeModa
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: -20 }}
                   transition={{ duration: 0.2 }}
-                  className="flex items-start gap-4 p-4 rounded-2xl bg-muted/40 border border-border"
+                  className="flex items-start gap-4 p-4 rounded-2xl bg-muted/40"
                 >
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${features[step].color}`}>
                     {(() => {
@@ -108,7 +108,7 @@ export default function WelcomeModal({ isOpen, firstName, onClose }: WelcomeModa
               {step > 0 && (
                 <button
                   onClick={() => setStep((s) => s - 1)}
-                  className="px-4 py-3 rounded-xl border border-border text-sm font-medium text-muted-foreground hover:bg-muted transition-colors"
+                  className="px-4 py-3 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted transition-colors"
                 >
                   Back
                 </button>

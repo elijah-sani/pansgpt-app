@@ -226,7 +226,7 @@ export function MainConversation({
                   <button
                     onClick={handleLoadOlderMessages}
                     disabled={isLoadingOlder}
-                    className="px-4 py-2 text-sm font-medium text-primary bg-primary/5 hover:bg-primary/10 border border-primary/20 rounded-full transition-all active:bg-primary/15 disabled:opacity-50 flex items-center gap-2"
+                    className="px-4 py-2 text-sm font-medium text-primary bg-primary/5 hover:bg-primary/10 rounded-full transition-all active:bg-primary/15 disabled:opacity-50 flex items-center gap-2"
                   >
                     {isLoadingOlder ? (
                       <>
@@ -265,7 +265,7 @@ export function MainConversation({
                                   <img
                                     src={`data:image/jpeg;base64,${image}`}
                                     alt={`Attachment ${imageIndex + 1}`}
-                                    className="w-20 h-20 object-cover rounded-lg border border-border shadow-sm hover:opacity-90 transition-opacity"
+                                    className="w-20 h-20 object-cover rounded-lg shadow-sm hover:opacity-90 transition-opacity"
                                   />
                                 </div>
                               ))}
@@ -279,7 +279,7 @@ export function MainConversation({
                               <textarea
                                 value={editDraft}
                                 onChange={(event) => setEditDraft(event.target.value)}
-                                className="w-full bg-accent border border-border rounded-xl px-4 py-3 text-base md:text-[15px] leading-relaxed text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none min-h-[80px]"
+                                className="w-full bg-accent rounded-xl px-4 py-3 text-base md:text-[15px] leading-relaxed text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none min-h-[80px]"
                                 rows={5}
                                 autoFocus
                               />
@@ -379,7 +379,7 @@ export function MainConversation({
               })}
 
               {isError && !isLoading && (
-                <div className="flex items-center gap-3 p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-sm">
+                <div className="flex items-center gap-3 p-4 bg-destructive/10 rounded-xl text-sm">
                   <AlertCircle className="w-5 h-5 text-destructive-foreground shrink-0" />
                   <span className="text-destructive-foreground font-medium flex-1">
                     {chatError || 'Network Error: Please try again.'}
@@ -408,7 +408,7 @@ export function MainConversation({
           type="button"
           onClick={handleScrollToBottom}
           aria-label="Scroll to bottom"
-          className="pointer-events-auto bg-background border border-border rounded-full shadow-sm p-2"
+          className="pointer-events-auto bg-background rounded-full shadow-sm p-2"
         >
           <ChevronDown className="w-5 h-5" />
         </button>

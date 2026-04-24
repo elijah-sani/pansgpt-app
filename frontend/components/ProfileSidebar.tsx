@@ -52,7 +52,7 @@ export default function ProfileSidebar({
 
     return (
         <>
-            <div className="relative z-50 w-full h-full flex flex-col bg-background border-l border-border overflow-hidden">
+            <div className="relative z-50 w-full h-full flex flex-col bg-background overflow-hidden">
                 <div className="flex items-center px-5 py-4 border-b border-border/50">
                     <button
                         onClick={onClose}
@@ -66,11 +66,11 @@ export default function ProfileSidebar({
                 </div>
 
                 <div className="flex-1 overflow-y-auto">
-                    <div className="mx-4 mt-4 rounded-2xl overflow-hidden border border-border bg-card relative">
+                    <div className="mx-4 mt-4 rounded-2xl overflow-hidden bg-card relative">
                         <div className="absolute top-0 inset-x-0 h-24 bg-gradient-to-b from-primary/10 to-transparent pointer-events-none" />
 
                         <div className="px-5 pt-6 pb-5 flex flex-col items-center text-center relative z-10">
-                            <div className="w-[72px] h-[72px] rounded-full bg-muted border-[3px] border-card shadow-sm overflow-hidden ring-2 ring-primary/30">
+                            <div className="w-[72px] h-[72px] rounded-full bg-muted shadow-sm overflow-hidden ring-2 ring-primary/30">
                                 <img src={currentAvatar} alt="Avatar" className="w-full h-full object-cover rounded-full" />
                             </div>
 
@@ -89,8 +89,8 @@ export default function ProfileSidebar({
                     <div className="mt-4 px-4 pb-4">
                         <h3 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider px-1 mb-2">Account</h3>
 
-                        <div className="bg-card border border-border rounded-xl overflow-hidden">
-                            <div className="divide-y divide-border/60">
+                        <div className="bg-card rounded-xl overflow-hidden">
+                            <div>
                                 <button
                                     onClick={onOpenPersonalInfo}
                                     className="flex items-center gap-3 w-full py-3.5 px-4 text-left transition-all hover:bg-muted/40 active:bg-muted/50 group"
@@ -130,10 +130,10 @@ export default function ProfileSidebar({
                     </div>
                 </div>
 
-                <div className="px-4 py-3 border-t border-border/50">
+                <div className="px-4 py-3">
                     <button
                         onClick={handleLogout}
-                        className="flex items-center gap-3 w-full py-2.5 px-3 text-left transition-all rounded-xl hover:bg-red-500/10 active:bg-red-500/15 group"
+                        className="flex items-center gap-3 w-full py-2.5 px-3 text-left transition-all rounded-xl bg-red-500/5 hover:bg-red-500/10 active:bg-red-500/15 group"
                     >
                         <div className="w-8 h-8 rounded-lg bg-red-500/10 flex items-center justify-center shrink-0 group-hover:bg-red-500/15 transition-colors">
                             <LogOut size={16} className="text-red-500" />
