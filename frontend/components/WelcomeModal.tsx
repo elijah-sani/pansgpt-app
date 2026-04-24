@@ -50,7 +50,7 @@ export default function WelcomeModal({ isOpen, firstName, onClose }: WelcomeModa
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.92, opacity: 0, y: 20 }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="bg-card border border-border rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
+            className="bg-card border border-border rounded-3xl shadow-sm w-full max-w-md overflow-hidden"
           >
             <div className="relative bg-gradient-to-br from-primary/20 to-primary/5 px-8 pt-10 pb-8 text-center">
               <button
@@ -115,7 +115,7 @@ export default function WelcomeModal({ isOpen, firstName, onClose }: WelcomeModa
               )}
               <button
                 onClick={() => (isLastStep ? onClose() : setStep((s) => s + 1))}
-                className="flex-1 py-3 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:bg-primary/90 transition-all shadow-lg shadow-primary/20"
+                className="flex-1 py-3 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:bg-primary/90 transition-all shadow-sm "
               >
                 {isLastStep ? "Let's go →" : 'Next'}
               </button>

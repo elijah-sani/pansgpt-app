@@ -6,11 +6,24 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - name: Deploy to Vercel
-        uses: amondnet/vercel-action@v25
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          vercel-token: vcp_8FKhyTSlt1coasZmRwXE28HZNpzFbyUXRyd9twEr3bgHHgee7l1QRbnK
-          vercel-org-id: team_N4xgpIu9250Upa8zlcXUsbJS
-          vercel-project-id: prj_OpDTzcieMgGAwrNCb2jSbcDQmj0d
-          vercel-args: '--prod'
+          node-version: "20"
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Pull Vercel Environment Information
+        run: vercel pull --yes --environment=production --token=vcp_8FKhyTSlt1coasZmRwXE28HZNpzFbyUXRyd9twEr3bgHHgee7l1QRbnK
+
+      - name: Build Project Artifacts
+        run: vercel build --prod --token=vcp_8FKhyTSlt1coasZmRwXE28HZNpzFbyUXRyd9twEr3bgHHgee7l1QRbnK
+
+      - name: Deploy Project Artifacts to Vercel
+        run: vercel deploy --prebuilt --prod --token=vcp_8FKhyTSlt1coasZmRwXE28HZNpzFbyUXRyd9twEr3bgHHgee7l1QRbnK
+    env:
+      VERCEL_ORG_ID: team_N4xgpIu9250Upa8zlcXUsbJS
+      VERCEL_PROJECT_ID: prj_OpDTzcieMgGAwrNCb2jSbcDQmj0d

@@ -117,7 +117,7 @@ export default function ChatInput({
               <img
                 src={`data:image/png;base64,${att}`}
                 alt={`Attachment ${idx + 1}`}
-                className="h-20 w-20 object-cover rounded-xl border border-border shadow-lg bg-card"
+                className="h-20 w-20 object-cover rounded-xl border border-border shadow-sm bg-card"
               />
               <button
                 onClick={() => onRemoveAttachment(idx)}
@@ -130,7 +130,7 @@ export default function ChatInput({
         </div>
       )}
 
-      <div className="relative flex flex-col bg-card border border-border rounded-2xl p-3 shadow-lg">
+      <div className="relative flex flex-col bg-card border border-border rounded-2xl p-3 shadow-sm">
         {isListening ? (
           <div className="w-full flex items-center justify-center py-3 px-4">
             <InlineWaveform volume={volume} />

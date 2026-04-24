@@ -42,7 +42,7 @@ export function LoginForm({
       <div className="space-y-1.5">
         <div className="flex justify-between items-center">
           <label className="text-sm font-bold text-slate-700">Password</label>
-          <button type="button" onClick={switchToForgot} className="text-sm font-semibold text-green-600 hover:text-green-700 transition-colors">
+          <button type="button" onClick={switchToForgot} className="text-sm font-semibold text-primary hover:text-primary transition-colors">
             Forgot password?
           </button>
         </div>
@@ -65,7 +65,7 @@ export function LoginForm({
         </div>
       </div>
       <div className="flex items-center">
-        <input id="remember-me" type="checkbox" checked={rememberMe} onChange={(event) => setRememberMe(event.target.checked)} className="h-4 w-4 text-green-600 border-gray-300 rounded accent-green-600" />
+        <input id="remember-me" type="checkbox" checked={rememberMe} onChange={(event) => setRememberMe(event.target.checked)} className="h-4 w-4 text-primary border-gray-300 rounded accent-primary" />
         <label htmlFor="remember-me" className="ml-2 block text-sm text-slate-500">Remember me</label>
       </div>
       <AuthMessage message={message} />

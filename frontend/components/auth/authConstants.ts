@@ -27,7 +27,7 @@ export const TAGLINES = [
 ] as const;
 
 export const INPUT_CLASS_NAME =
-  'block w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl text-base text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all font-medium';
+  'block w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl text-base text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-medium';
 
 export const PRIMARY_BUTTON_CLASS_NAME =
-  'w-full flex items-center justify-center py-3.5 px-4 rounded-xl text-white bg-[#00C853] hover:bg-[#00b54b] transition-all font-bold text-sm tracking-wide shadow-md shadow-green-500/20 disabled:opacity-60';
+  'w-full flex items-center justify-center py-3.5 px-4 rounded-xl text-white bg-primary hover:bg-primary/90 transition-all font-bold text-sm tracking-wide shadow-md  disabled:opacity-60';

@@ -58,7 +58,7 @@ export default function AvatarSelectionModal({ isOpen, onClose, onConfirm }: Ava
                             onClick={() => setSelectedSeed(seed)}
                             className={`relative aspect-square rounded-xl overflow-hidden border-2 transition-all ${
                                 selectedSeed === seed
-                                    ? 'border-primary ring-2 ring-primary/30 ring-offset-2 ring-offset-card scale-105 shadow-lg'
+                                    ? 'border-primary ring-2 ring-primary/30 ring-offset-2 ring-offset-card scale-105 shadow-sm'
                                     : 'border-border hover:border-primary/50 hover:scale-105'
                             }`}
                         >
@@ -117,7 +117,7 @@ export default function AvatarSelectionModal({ isOpen, onClose, onConfirm }: Ava
                             initial={{ scale: 0.95, opacity: 0 }}
                             animate={{ scale: 1, opacity: 1 }}
                             exit={{ scale: 0.95, opacity: 0 }}
-                            className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]"
+                            className="bg-card border border-border rounded-2xl shadow-sm w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]"
                             onClick={(e) => e.stopPropagation()}
                         >
                             {modalContent}

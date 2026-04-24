@@ -14,8 +14,10 @@ function QuizPageClient({ id }: { id: string }) {
 export default async function QuizPage({ params }: QuizPageProps) {
     const { id } = await params;
     return (
-        <Suspense fallback={<div className="p-8 text-center text-gray-400">Loading quiz interface...</div>}>
+        <Suspense fallback={<div className="p-8 text-center text-muted-foreground">Loading quiz interface...</div>}>
             <QuizPageClient id={id} />
         </Suspense>
     );
 }
+
+

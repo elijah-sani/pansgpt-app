@@ -109,7 +109,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             {/* Mobile Header (Fixed Top) */}
             <div className="md:hidden fixed top-0 left-0 right-0 h-16 bg-background/90 backdrop-blur-md border-b border-border flex items-center justify-between px-4 z-40">
                 <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center shadow-lg shadow-primary/20">
+                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center shadow-sm ">
                         <div className="w-3 h-3 bg-white rounded-full" />
                     </div>
                     <div>

@@ -240,7 +240,7 @@ export default function TimetableManager() {
             onClick={() => setSelectedDay(day)}
             className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
               selectedDay === day
-                ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20'
+                ? 'bg-primary text-primary-foreground shadow-md '
                 : 'text-foreground hover:bg-accent'
             }`}
           >
@@ -259,7 +259,7 @@ export default function TimetableManager() {
               setUploadSuccess(false);
               setIsUploadModalOpen(true);
             }}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-6 py-2.5 text-sm font-bold text-primary-foreground shadow-lg shadow-primary/20 transition-all hover:scale-[1.02] hover:bg-primary/90 active:scale-[0.98]"
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-6 py-2.5 text-sm font-bold text-primary-foreground shadow-sm  transition-all hover:scale-[1.02] hover:bg-primary/90 active:scale-[0.98]"
           >
             <Plus className="h-4 w-4" />
             Upload Timetable CSV
@@ -361,7 +361,7 @@ export default function TimetableManager() {
 
       {editingEntry && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-2xl rounded-2xl border border-border/60 bg-card shadow-2xl">
+          <div className="w-full max-w-2xl rounded-2xl border border-border/60 bg-card shadow-sm">
             <div className="flex items-start justify-between border-b border-border/60 px-6 py-5">
               <div>
                 <h3 className="text-lg font-semibold text-card-foreground">Edit Timetable Entry</h3>
@@ -466,7 +466,7 @@ export default function TimetableManager() {
 
       {isClearModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-border/60 bg-card shadow-2xl">
+          <div className="w-full max-w-md rounded-2xl border border-border/60 bg-card shadow-sm">
             <div className="border-b border-border/60 px-6 py-5">
               <h3 className="text-lg font-semibold text-card-foreground">Clear {selectedLevel} Timetable?</h3>
               <p className="mt-2 text-sm text-muted-foreground">
@@ -508,7 +508,7 @@ export default function TimetableManager() {
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="w-full max-w-lg bg-background border border-border rounded-2xl shadow-2xl overflow-hidden relative"
+              className="w-full max-w-lg bg-background border border-border rounded-2xl shadow-sm overflow-hidden relative"
             >
               {!uploadSuccess && !isUploading && (
                 <div className="flex justify-between items-center px-5 py-4 border-b border-border bg-muted/30">
@@ -584,7 +584,7 @@ export default function TimetableManager() {
                       <button
                         type="button"
                         onClick={() => void handleUpload()}
-                        className="px-6 py-2.5 rounded-xl text-sm font-bold bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg shadow-primary/20 transition-all active:scale-95"
+                        className="px-6 py-2.5 rounded-xl text-sm font-bold bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm  transition-all active:scale-95"
                       >
                         Confirm Upload
                       </button>
@@ -617,8 +617,8 @@ export default function TimetableManager() {
                     animate={{ opacity: 1, scale: 1 }}
                     className="flex flex-col items-center justify-center h-72 text-center p-8"
                   >
-                    <div className="w-24 h-24 bg-green-500/20 rounded-full flex items-center justify-center mb-6 shadow-2xl shadow-green-500/20">
-                      <Check className="w-12 h-12 text-green-500" />
+                    <div className="w-24 h-24 bg-primary/20 rounded-full flex items-center justify-center mb-6 shadow-sm ">
+                      <Check className="w-12 h-12 text-primary" />
                     </div>
                     <h4 className="text-2xl font-bold text-foreground mb-2">Upload Complete!</h4>
                     <p className="text-muted-foreground text-sm">Timetable imported successfully.</p>

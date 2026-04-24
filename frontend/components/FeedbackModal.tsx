@@ -50,8 +50,8 @@ export default function FeedbackModal({ isOpen, onClose, rating, onSubmit }: Fee
         ? 'border-primary bg-primary/10 text-primary shadow-sm'
         : 'border-destructive bg-destructive/10 text-destructive shadow-sm';
     const activeButtonClass = rating === 'up'
-        ? 'bg-primary text-primary-foreground shadow-md hover:bg-primary/90 hover:shadow-lg'
-        : 'bg-destructive text-destructive-foreground shadow-md hover:bg-destructive/90 hover:shadow-lg';
+        ? 'bg-primary text-primary-foreground shadow-md hover:bg-primary/90 hover:shadow-sm'
+        : 'bg-destructive text-destructive-foreground shadow-md hover:bg-destructive/90 hover:shadow-sm';
 
     const modalContent = (
         <>
@@ -165,7 +165,7 @@ export default function FeedbackModal({ isOpen, onClose, rating, onSubmit }: Fee
             <div className="hidden md:block">
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
                     <div
-                        className="w-full max-w-md bg-card border border-border rounded-2xl shadow-xl backdrop-blur-md overflow-hidden animate-in zoom-in-95 duration-200"
+                        className="w-full max-w-md bg-card border border-border rounded-2xl shadow-sm backdrop-blur-md overflow-hidden animate-in zoom-in-95 duration-200"
                         onClick={(e) => e.stopPropagation()}
                     >
                         {modalContent}

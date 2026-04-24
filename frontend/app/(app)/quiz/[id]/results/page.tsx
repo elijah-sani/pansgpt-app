@@ -11,7 +11,7 @@ interface QuizResultsPageProps {
 export default async function QuizResultsPage({ params }: QuizResultsPageProps) {
     const { id } = await params;
     return (
-        <div className="h-full overflow-y-auto text-gray-900 dark:text-white bg-gray-50 dark:[background-color:#0C120C]">
+        <div className="h-full overflow-y-auto text-foreground bg-background">
             {/* Mobile header — same style as quiz creation page */}
             <QuizResultsHeader />
 
@@ -23,3 +23,6 @@ export default async function QuizResultsPage({ params }: QuizResultsPageProps) 
         </div>
     );
 }
+
+
+

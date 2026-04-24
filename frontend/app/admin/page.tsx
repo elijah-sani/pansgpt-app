@@ -126,8 +126,8 @@ export default function MissionControlPage() {
                     <h1 className="text-3xl font-bold text-foreground flex items-center gap-3">
                         Mission Control
                         <span className="flex h-3 w-3 relative">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                            <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary/70 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-3 w-3 bg-primary"></span>
                         </span>
                     </h1>
                     <p className="text-muted-foreground mt-1">System Overview & Live Operations</p>
@@ -176,8 +176,8 @@ export default function MissionControlPage() {
                     icon={Brain}
                     label="AI Health"
                     value={stats.aiStatus}
-                    color={stats.aiStatus === 'Optimal' ? "text-emerald-500" : "text-amber-500"}
-                    bg={stats.aiStatus === 'Optimal' ? "bg-emerald-500/10" : "bg-amber-500/10"}
+                    color={stats.aiStatus === 'Optimal' ? "text-primary" : "text-amber-500"}
+                    bg={stats.aiStatus === 'Optimal' ? "bg-primary/10" : "bg-amber-500/10"}
                     iconType={stats.aiStatus === 'Optimal' ? ShieldCheck : AlertTriangle}
                 />
                 <StatCard
@@ -206,7 +206,7 @@ export default function MissionControlPage() {
                             <h2 className="text-sm font-bold text-foreground">LIVE FEED</h2>
                         </div>
                         <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                            <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
                             <span className="text-[10px] text-muted-foreground font-mono">REALTIME</span>
                         </div>
                     </div>
@@ -228,7 +228,7 @@ export default function MissionControlPage() {
                                     {/* Compact Icon */}
                                     <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${item.type === 'upload'
                                         ? 'bg-blue-500/10 border-blue-500/20 text-blue-500'
-                                        : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500'
+                                        : 'bg-primary/10 border-primary/30 text-primary'
                                         }`}>
                                         {item.type === 'upload' ? <FileText className="w-4 h-4" /> : <Users className="w-4 h-4" />}
                                     </div>
@@ -265,7 +265,7 @@ function StatCard({ icon: Icon, label, value, trend, sub, color, bg, iconType, p
                 <div className={`p-2.5 rounded-lg ${bg} ${color}`}>
                     <DisplayIcon className="w-5 h-5" />
                 </div>
-                {trend && <span className="text-[10px] font-bold bg-green-500/10 text-green-600 px-2 py-1 rounded-full">{trend}</span>}
+                {trend && <span className="text-[10px] font-bold bg-primary/10 text-primary px-2 py-1 rounded-full">{trend}</span>}
             </div>
             <div>
                 <h3 className="text-muted-foreground text-xs font-bold uppercase tracking-wider mb-1">{label}</h3>
@@ -342,7 +342,7 @@ function SystemAnalytics({ stats }: { stats?: DashboardStats }) {
                             strokeWidth="2"
                             strokeLinecap="round"
                             strokeLinejoin="round"
-                            className="drop-shadow-[0_0_10px_rgba(var(--primary),0.5)]"
+                            className=""
                         />
                         {/* Data Points */}
                         {dataPoints.map((val, i) => (

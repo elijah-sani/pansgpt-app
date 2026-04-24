@@ -70,7 +70,7 @@ export default function ProfileSidebar({
                         <div className="absolute top-0 inset-x-0 h-24 bg-gradient-to-b from-primary/10 to-transparent pointer-events-none" />
 
                         <div className="px-5 pt-6 pb-5 flex flex-col items-center text-center relative z-10">
-                            <div className="w-[72px] h-[72px] rounded-full bg-muted border-[3px] border-card shadow-lg overflow-hidden ring-2 ring-primary/30">
+                            <div className="w-[72px] h-[72px] rounded-full bg-muted border-[3px] border-card shadow-sm overflow-hidden ring-2 ring-primary/30">
                                 <img src={currentAvatar} alt="Avatar" className="w-full h-full object-cover rounded-full" />
                             </div>
 
@@ -106,8 +106,8 @@ export default function ProfileSidebar({
                                     onClick={onOpenQuizPerformance}
                                     className="flex items-center gap-3 w-full py-3.5 px-4 text-left transition-all hover:bg-muted/40 active:bg-muted/50 group"
                                 >
-                                    <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center shrink-0">
-                                        <BarChart3 size={16} className="text-emerald-500" />
+                                    <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                                        <BarChart3 size={16} className="text-primary" />
                                     </div>
                                     <span className="flex-1 text-sm font-medium text-foreground">Quiz Performance</span>
                                     <ChevronRight size={15} className="text-muted-foreground/50 group-hover:text-muted-foreground transition-colors" />

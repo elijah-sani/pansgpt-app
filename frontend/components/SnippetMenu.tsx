@@ -55,7 +55,7 @@ const SnippetMenu: React.FC<SnippetMenuProps> = ({
 
     return (
         <div
-            className="flex items-center gap-1 p-1.5 bg-zinc-900 border border-zinc-700/50 rounded-full shadow-2xl animate-in fade-in zoom-in duration-200 backdrop-blur-md"
+            className="flex items-center gap-1 p-1.5 bg-zinc-900 border border-zinc-700/50 rounded-full shadow-sm animate-in fade-in zoom-in duration-200 backdrop-blur-md"
             onMouseDown={(e) => e.stopPropagation()}
             onMouseUp={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
@@ -86,7 +86,7 @@ const SnippetMenu: React.FC<SnippetMenuProps> = ({
                 title="Add to chat input"
             >
                 <MessageSquarePlus className="w-4 h-4" />
-                <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-black text-xs text-white rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none shadow-lg border border-zinc-800">
+                <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-black text-xs text-white rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none shadow-sm border border-zinc-800">
                     Add to chat
                 </span>
             </button>
@@ -101,7 +101,7 @@ const SnippetMenu: React.FC<SnippetMenuProps> = ({
                     onClose();
                 }}
                 disabled={isSaving}
-                className="relative group p-2 aspect-square rounded-full text-zinc-400 hover:text-emerald-400 hover:bg-zinc-800 transition-all flex items-center justify-center active:scale-95 disabled:opacity-60"
+                className="relative group p-2 aspect-square rounded-full text-zinc-400 hover:text-primary hover:bg-zinc-800 transition-all flex items-center justify-center active:scale-95 disabled:opacity-60"
                 title="Add to notes"
             >
                 {isSaving ? (
@@ -109,7 +109,7 @@ const SnippetMenu: React.FC<SnippetMenuProps> = ({
                 ) : (
                     <BookmarkPlus className="w-4 h-4" />
                 )}
-                <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-black text-xs text-white rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none shadow-lg border border-zinc-800">
+                <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-black text-xs text-white rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none shadow-sm border border-zinc-800">
                     Add to notes
                 </span>
             </button>
