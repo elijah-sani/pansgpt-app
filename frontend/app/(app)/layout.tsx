@@ -209,7 +209,7 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                 )}
 
                 {/* Main content area */}
-                <div className="flex-1 min-w-0 overflow-x-hidden overflow-y-auto">
+                <div className={`flex-1 min-w-0 overflow-x-hidden overflow-y-auto ${!pathname?.startsWith('/reader/') ? 'overscroll-none' : ''}`}>
                     {children}
                 </div>
             </div>

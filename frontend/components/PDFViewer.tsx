@@ -1999,78 +1999,15 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
 
                         <div className="flex items-center gap-3">
-                            {/* Zoom Controls */}
-                            <div className="flex items-center gap-1 bg-muted/50 rounded-lg p-1 border border-border">
-                                <button
-                                    onClick={() => setZoomLevel(z => Math.max(25, z - 25))}
-                                    className="p-1.5 hover:bg-background rounded-md text-muted-foreground hover:text-foreground transition-all"
-                                    title="Zoom Out"
-                                >
-                                    <ZoomOut className="w-4 h-4" />
-                                </button>
-                                <span className="text-xs font-medium w-12 text-center text-muted-foreground">
-                                    {zoomLevel}%
-                                </span>
-                                <button
-                                    onClick={() => setZoomLevel(z => Math.min(300, z + 25))}
-                                    className="p-1.5 hover:bg-background rounded-md text-muted-foreground hover:text-foreground transition-all"
-                                    title="Zoom In"
-                                >
-                                    <ZoomIn className="w-4 h-4" />
-                                </button>
-                            </div>
-
-                            {/* Snip Button */}
-                            <button
-                                onClick={() => {
-                                    const nextSnipMode = !isSnippingMode;
-                                    setIsSnippingMode(nextSnipMode);
-                                    setIsSnipActive(nextSnipMode);
-                                    setSnipRect(null);
-                                    setSnipPopup(null);
-                                }}
-                                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 border ${isSnippingMode
-                                    ? 'bg-amber-500/10 text-amber-600 border-amber-500/30 shadow-lg shadow-amber-500/10'
-                                    : 'bg-card hover:bg-muted/50 text-muted-foreground border-border shadow-sm'
-                                    }`}
-                                title={isSnippingMode ? 'Exit Snipping Mode' : 'Snip & Ask AI (Alt+Drag)'}
-                            >
-                                <Scissors className="w-4 h-4" />
-                                <span className="hidden md:inline">{isSnippingMode ? 'Cancel Snip' : 'Snip'}</span>
-                            </button>
-                            <button
-                                onClick={toggleNotesPanel}
-                                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 border ${notesOpen
-                                    ? 'bg-card text-primary border-primary/20 shadow-lg shadow-black/5'
-                                    : 'bg-card hover:bg-muted/50 text-muted-foreground border-border shadow-sm'
-                                    }`}
-                                title="My Notes"
-                            >
-                                <BookOpen className="w-4 h-4" />
-                                <span className="hidden md:inline">Notes</span>
-                                {notes.length > 0 && (
-                                    <span className="ml-1 text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">{notes.length}</span>
-                                )}
-                            </button>
-
                             <button
                                 onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-                                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 border ${isSidebarOpen
+                                className={`flex items-center justify-center w-10 h-10 rounded-lg transition-all duration-200 border ${isSidebarOpen
                                     ? 'bg-card text-primary border-primary/20 shadow-lg shadow-black/5'
                                     : 'bg-card hover:bg-muted/50 text-muted-foreground border-border shadow-sm'
                                     }`}
+                                title="AI Assistant"
                             >
-                                <Sparkles className="w-4 h-4" />
-                                AI Assistant
-                            </button>
-
-                            {/* Help button — reopens tutorial */}
-                            <button
-                                onClick={() => setShowTutorial(true)}
-                                className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 border border-border transition-all"
-                                title="How to use study mode"
-                            >
-                                <HelpCircle className="w-4 h-4" />
+                                <MessageSquare className="w-5 h-5" />
                             </button>
                         </div>
                     </div>
@@ -2078,31 +2015,27 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                     {/* Main Content Area */}
                     <div className={`flex-1 flex md:pt-16 h-full overflow-hidden transition-all duration-300 ${mobileHeaderVisible ? 'pt-14' : 'pt-0'}`}>
 
-                        {/* PDF Container */}
-                        <div
-                            ref={pdfWrapperRef}
-                            className={`flex-1 min-w-0 overflow-y-auto bg-background transition-all duration-300 relative
-                        ${activeTab === 'document' ? 'block' : 'hidden md:block'
-                                }
-                        ${isSnippingMode ? 'cursor-crosshair' : ''
-                                }
-                        ${isSnipActive ? 'sm:overflow-y-auto overflow-hidden touch-none sm:touch-auto' : ''}
-                    `}
+                        {/* PDF Area Wrapper */}
+                        <div className={`flex-1 min-w-0 relative h-full flex flex-col ${activeTab === 'document' ? 'flex' : 'hidden md:flex'}`}>
+                            
+                            {/* PDF Container */}
+                            <div
+                                ref={pdfWrapperRef}
+                                className={`flex-1 overflow-y-auto bg-background transition-all duration-300 relative
+                                    ${isSnippingMode ? 'cursor-crosshair' : ''}
+                                    ${isSnipActive ? 'sm:overflow-y-auto overflow-hidden touch-none sm:touch-auto' : ''}
+                                `}
                             onTouchStart={() => triggerMobilePill()}
                             onScroll={handleMobileScroll}
                             onContextMenu={(e) => e.preventDefault()}
                             style={{ WebkitTouchCallout: 'none' } as React.CSSProperties}
                         >
                             {/* Snipping Mode Banner */}
-                            {/* ─── Reading Progress Bar ─────────────────────────────── */}
+                            {/* ─── Reading Progress Bar (Mobile) ─────────────────────────────── */}
                             {numPages > 0 && (
                                 <div
-                                    className="fixed bottom-0 left-0 right-0 z-50"
+                                    className="fixed bottom-0 left-0 right-0 z-50 md:hidden pointer-events-none"
                                 >
-                                    {/* Always-visible page indicator */}
-                                    <div className="hidden md:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2.5 py-1 rounded-md bg-card/90 text-foreground text-xs font-medium whitespace-nowrap shadow-lg border border-border pointer-events-none">
-                                        Page {currentPage} of {numPages}
-                                    </div>
                                     {/* Track */}
                                     <div className="w-full h-[3px] bg-border/50">
                                         {/* Fill */}
@@ -2379,6 +2312,98 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                             </div>
                         </div>
 
+                        {/* Desktop Bottom Toolbar (Footer) */}
+                        <div className="hidden md:flex items-center justify-between px-6 border-t border-border bg-card/95 backdrop-blur-md h-14 shrink-0 z-40 w-full relative">
+                            {/* Desktop Progress Bar */}
+                            {numPages > 0 && (
+                                <div className="absolute top-0 left-0 right-0 w-full h-[3px] bg-border/50 pointer-events-none">
+                                    <div
+                                        className="h-full bg-gradient-to-r from-primary via-green-400 to-emerald-400 transition-all duration-500 ease-out"
+                                        style={{ width: `${(currentPage / numPages) * 100}%` }}
+                                    />
+                                </div>
+                            )}
+
+                            {/* Left: Notes, Snip */}
+                            <div className="flex items-center gap-1.5 flex-1 justify-start">
+                                <div className="relative group">
+                                    <button 
+                                        onClick={toggleNotesPanel} 
+                                        className={`p-2 rounded-full transition-all relative ${notesOpen ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}
+                                    >
+                                        <BookOpen className="w-5 h-5"/>
+                                        {notes.length > 0 && (
+                                            <span className="absolute flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[9px] font-bold text-primary-foreground border-2 border-card -right-1 -top-1">
+                                                {notes.length}
+                                            </span>
+                                        )}
+                                    </button>
+                                    <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-foreground text-background text-xs font-medium rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap shadow-md pointer-events-none">
+                                        My Notes
+                                    </span>
+                                </div>
+                                <div className="w-px h-5 bg-border mx-1" />
+                                <div className="relative group">
+                                    <button 
+                                        onClick={() => {
+                                            const nextSnipMode = !isSnippingMode;
+                                            setIsSnippingMode(nextSnipMode);
+                                            setIsSnipActive(nextSnipMode);
+                                            setSnipRect(null);
+                                            setSnipPopup(null);
+                                        }} 
+                                        className={`p-2 rounded-full transition-all ${isSnippingMode ? 'bg-amber-500/15 text-amber-600' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}
+                                    >
+                                        <Scissors className="w-5 h-5"/>
+                                    </button>
+                                    <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-foreground text-background text-xs font-medium rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap shadow-md pointer-events-none">
+                                        {isSnippingMode ? 'Cancel Snip' : 'Snip Tool'}
+                                    </span>
+                                </div>
+                            </div>
+
+                            {/* Middle: Page Number */}
+                            <div className="flex items-center justify-center flex-1">
+                                <span className="flex items-center gap-1.5 px-3 py-1 text-sm font-medium text-muted-foreground bg-muted/40 rounded-full select-none border border-border/40">
+                                    <FileText className="w-3.5 h-3.5" />
+                                    {currentPage} / {numPages}
+                                </span>
+                            </div>
+
+                            {/* Right: Zoom, Help */}
+                            <div className="flex items-center justify-end gap-1.5 flex-1">
+                                <div className="flex items-center bg-muted/30 rounded-full p-0.5 border border-border/50">
+                                    <div className="relative group">
+                                        <button onClick={() => setZoomLevel(z => Math.max(25, z - 25))} className="p-1.5 hover:bg-background rounded-full text-muted-foreground hover:text-foreground transition-all">
+                                            <ZoomOut className="w-4 h-4" />
+                                        </button>
+                                        <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-foreground text-background text-xs font-medium rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap shadow-md pointer-events-none">
+                                            Zoom Out
+                                        </span>
+                                    </div>
+                                    <span className="text-xs font-medium w-11 text-center text-muted-foreground select-none">{zoomLevel}%</span>
+                                    <div className="relative group">
+                                        <button onClick={() => setZoomLevel(z => Math.min(300, z + 25))} className="p-1.5 hover:bg-background rounded-full text-muted-foreground hover:text-foreground transition-all">
+                                            <ZoomIn className="w-4 h-4" />
+                                        </button>
+                                        <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-foreground text-background text-xs font-medium rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap shadow-md pointer-events-none">
+                                            Zoom In
+                                        </span>
+                                    </div>
+                                </div>
+                                <div className="w-px h-5 bg-border mx-1" />
+                                <div className="relative group">
+                                    <button onClick={() => setShowTutorial(true)} className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-full transition-colors">
+                                        <HelpCircle className="w-5 h-5"/>
+                                    </button>
+                                    <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-foreground text-background text-xs font-medium rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap shadow-md pointer-events-none">
+                                        Help & Tutorial
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                        </div>
+                        
                         {/* Chat Container (Mobile) */}
                         <div className={`flex-1 h-full bg-background ${activeTab === 'chat' ? 'block' : 'hidden'} md:hidden`}>
                             {renderChatUI(true)}

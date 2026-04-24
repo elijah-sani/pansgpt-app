@@ -236,7 +236,7 @@ export default function HomeContent() {
         <div className="h-full overflow-y-auto bg-background text-foreground transition-colors duration-500">
 
             {/* Mobile header with sidebar toggle */}
-            <div className="md:hidden flex items-center px-4 py-3 border-b border-border bg-card sticky top-0 z-10">
+            <div className="md:hidden flex items-center px-4 py-3 shadow-sm bg-card sticky top-0 z-10">
                 <button
                     onClick={openSidebar}
                     className="p-2 text-foreground hover:bg-accent rounded-lg transition-colors mr-2"
@@ -247,7 +247,7 @@ export default function HomeContent() {
             </div>
 
 
-            <main className="relative mx-auto max-w-7xl px-6 py-12">
+            <main className="relative mx-auto max-w-7xl px-6 pt-3 pb-12 md:py-12">
 
                 {/* Navigation / Breadcrumbs */}
                 <div className="mb-8">
@@ -282,10 +282,10 @@ export default function HomeContent() {
                                     value={searchQuery}
                                     onChange={(event) => setSearchQuery(event.target.value)}
                                     placeholder={viewMode === 'groups' ? 'Search courses...' : 'Search topics...'}
-                                    className="w-full min-w-0 rounded-xl border-[1px] border-border/70 bg-card py-2.5 pl-10 pr-4 text-base text-foreground placeholder:text-muted-foreground outline-none transition-all focus:border-primary/40 focus:ring-2 focus:ring-primary/20 md:w-[340px]"
+                                    className="w-full min-w-0 rounded-xl bg-card py-2.5 pl-10 pr-4 text-[16px] text-foreground placeholder:text-muted-foreground outline-none transition-all focus:ring-2 focus:ring-primary/20 md:w-[340px]"
                                 />
                             </div>
-                            <div className="hidden md:block bg-secondary text-secondary-foreground px-4 py-2 rounded-full text-sm font-medium border border-border/50 whitespace-nowrap">
+                            <div className="hidden md:block bg-secondary text-secondary-foreground px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap">
                                 {viewMode === 'groups'
                                     ? `${filteredGroupKeys.length} Courses`
                                     : `${filteredCourseDocs?.length || 0} Topics`}
@@ -319,7 +319,7 @@ export default function HomeContent() {
                 {loading && (
                     <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
                         {[1, 2, 3, 4, 5, 6].map(i => (
-                            <div key={i} className="h-48 rounded-2xl bg-muted/50 animate-pulse border border-border"></div>
+                            <div key={i} className="h-48 rounded-2xl bg-muted/50 animate-pulse"></div>
                         ))}
                     </div>
                 )}
@@ -340,12 +340,12 @@ export default function HomeContent() {
                                             className="group relative text-left w-full"
                                             style={{ animationDelay: `${idx * 50}ms` }}
                                         >
-                                            <div className="bg-card border border-border h-full p-6 rounded-2xl shadow-none hover:shadow-sm hover:border-primary/50 hover:-translate-y-1 active:translate-y-0 transition-all duration-300 relative overflow-hidden group">
+                                            <div className="bg-card h-full p-6 rounded-2xl shadow-sm hover:shadow-md hover:-translate-y-1 active:translate-y-0 transition-all duration-300 relative overflow-hidden group">
                                                 <div className="flex items-start justify-between mb-6">
                                                     <div className="p-3 rounded-xl bg-secondary text-secondary-foreground group-hover:scale-110 transition-transform duration-300 shadow-sm">
                                                         <FolderOpen className="h-8 w-8" />
                                                     </div>
-                                                    <span className="px-3 py-1 rounded-full bg-secondary text-xs font-medium text-secondary-foreground border border-border/50">
+                                                    <span className="px-3 py-1 rounded-full bg-secondary text-xs font-medium text-secondary-foreground">
                                                         {groupDocs.length} Items
                                                     </span>
                                                 </div>
@@ -387,7 +387,7 @@ export default function HomeContent() {
                                         className="group relative"
                                         style={{ animationDelay: `${idx * 50}ms` }}
                                     >
-                                        <div className="bg-card border border-border h-full p-6 rounded-2xl shadow-none hover:shadow-sm hover:border-primary/50 hover:-translate-y-1 active:translate-y-0 transition-all duration-300 relative overflow-hidden">
+                                        <div className="bg-card h-full p-6 rounded-2xl shadow-sm hover:shadow-md hover:-translate-y-1 active:translate-y-0 transition-all duration-300 relative overflow-hidden">
                                             {/* Progress fill behind all content */}
                                             {pct > 0 && (
                                                 <div
@@ -424,7 +424,7 @@ export default function HomeContent() {
                                                     <span>{doc.lecturer_name}</span>
                                                 </div>
 
-                                                <div className="pt-2 border-t border-border/50 flex items-center justify-between text-xs text-muted-foreground">
+                                                <div className="pt-2 flex items-center justify-between text-xs text-muted-foreground">
                                                     <span>{formatSize(doc.file_size)}</span>
                                                     {/* Page progress label */}
                                                     {prog && prog.total_pages > 0 && !isComplete ? (
