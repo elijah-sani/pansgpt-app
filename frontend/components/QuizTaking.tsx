@@ -16,13 +16,13 @@ interface Question {
 interface Quiz {
   id: string;
   title: string;
-  courseCode: string;
-  courseTitle: string;
+  course_code: string;
+  course_title: string;
   topic?: string;
   level: string;
   difficulty: string;
-  numQuestions: number;
-  timeLimit?: number;
+  num_questions: number;
+  time_limit?: number;
   questions: Question[];
 }
 
@@ -68,8 +68,8 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
         setUserAnswers(initialAnswers);
 
         // Set time limit if exists
-        if (data.quiz.timeLimit) {
-          setTimeRemaining(data.quiz.timeLimit * 60); // Convert to seconds
+        if (data.quiz.time_limit) {
+          setTimeRemaining(data.quiz.time_limit * 60); // Convert to seconds
         }
 
         setStartTime(new Date());
@@ -229,7 +229,7 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
   const currentAnswer = userAnswers.find(a => a.questionId === currentQuestion.id)?.answer || '';
 
   return (
-    <div className="min-h-screen text-gray-900 dark:text-white py-8 bg-gray-50 dark:[background-color:#0C120C]">
+    <div className="min-h-screen overflow-y-auto text-gray-900 dark:text-white py-8 bg-gray-50 dark:[background-color:#0C120C]">
       <div className="max-w-4xl mx-auto px-4">
         {/* Header with Close Button */}
         <div className="flex justify-end items-center mb-4">
@@ -261,7 +261,7 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
           <div className="flex justify-between items-start mb-4">
             <div>
               <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{quiz.title}</h1>
-              <p className="text-gray-900 dark:text-white font-medium">{quiz.courseCode} - {quiz.courseTitle}</p>
+              <p className="text-gray-900 dark:text-white font-medium">{quiz.course_code} - {quiz.course_title}</p>
               {quiz.topic && <p className="text-gray-600 dark:text-gray-900 dark:text-white/70">Topic: {quiz.topic}</p>}
             </div>
             <div className="text-right">

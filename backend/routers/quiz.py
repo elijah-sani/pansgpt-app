@@ -268,28 +268,131 @@ async def submit_quiz(body: QuizSubmitRequest, current_user: User = Depends(get_
         questions = {q["id"]: q for q in (questions_res.data or [])}
 
         score = 0
-        max_score = len(questions)
+        max_score = 0
         feedback_items = []
+
+        # Separate short-answer questions for AI grading
+        short_answer_items = []  # (index_in_feedback, answer, question)
+        deterministic_items = []
 
         for answer in body.answers:
             question = questions.get(answer.questionId)
             if not question:
                 continue
-            ans_str = answer.selectedAnswer.strip().upper()
-            corr_str = question["correct_answer"].strip().upper()
-            if question.get("question_type") in ("multiple_choice", "MCQ", "OBJECTIVE"):
-                is_correct = bool(ans_str and corr_str and ans_str[0] == corr_str[0])
+            max_score += question.get("points", 1)
+
+            q_type = question.get("question_type", "")
+            if q_type == "SHORT_ANSWER":
+                short_answer_items.append((len(feedback_items), answer, question))
+                # Placeholder — will be filled by AI grading
+                feedback_items.append({
+                    "questionId": answer.questionId,
+                    "questionText": question.get("question_text", ""),
+                    "selectedAnswer": answer.selectedAnswer,
+                    "correctAnswer": question["correct_answer"],
+                    "isCorrect": False,
+                    "partiallyCorrect": False,
+                    "earnedPoints": 0,
+                    "points": question.get("points", 1),
+                    "explanation": question.get("explanation"),
+                })
             else:
-                is_correct = ans_str == corr_str
-            if is_correct:
-                score += question.get("points", 1)
-            feedback_items.append({
-                "questionId": answer.questionId,
-                "selectedAnswer": answer.selectedAnswer,
-                "correctAnswer": question["correct_answer"],
-                "isCorrect": is_correct,
-                "explanation": question.get("explanation"),
-            })
+                # Deterministic grading for MCQ, OBJECTIVE, TRUE_FALSE, multiple_choice
+                ans_str = answer.selectedAnswer.strip().upper()
+                corr_str = question["correct_answer"].strip().upper()
+                if q_type in ("multiple_choice", "MCQ", "OBJECTIVE"):
+                    is_correct = bool(ans_str and corr_str and ans_str[0] == corr_str[0])
+                else:
+                    is_correct = ans_str == corr_str
+                if is_correct:
+                    score += question.get("points", 1)
+                feedback_items.append({
+                    "questionId": answer.questionId,
+                    "questionText": question.get("question_text", ""),
+                    "selectedAnswer": answer.selectedAnswer,
+                    "correctAnswer": question["correct_answer"],
+                    "isCorrect": is_correct,
+                    "partiallyCorrect": False,
+                    "earnedPoints": question.get("points", 1) if is_correct else 0,
+                    "points": question.get("points", 1),
+                    "explanation": question.get("explanation"),
+                })
+
+        # ── AI grading for short-answer questions ──
+        if short_answer_items:
+            try:
+                from services.llm_engine import generate_response_async
+
+                # Build the grading prompt with all short-answer questions
+                grading_entries = []
+                for idx, (fb_index, answer, question) in enumerate(short_answer_items):
+                    grading_entries.append(
+                        f"Q{idx+1}:\n"
+                        f"  Question: {question.get('question_text', '')}\n"
+                        f"  Reference Answer: {question['correct_answer']}\n"
+                        f"  Student Answer: {answer.selectedAnswer}"
+                    )
+
+                grading_prompt = (
+                    "You are a university exam grader. Grade the following short-answer questions.\n"
+                    "For each question, compare the student's answer to the reference answer CONTEXTUALLY.\n"
+                    "The student does NOT need to use the exact same words. As long as the meaning is correct or substantially correct, award marks.\n\n"
+                    "For each question, respond with a JSON object on a separate line:\n"
+                    '{"q": <question_number>, "score": <0 or 0.5 or 1>, "feedback": "<brief explanation>"}\n\n'
+                    "Score guide:\n"
+                    "- 1.0 = Correct or substantially correct (meaning matches even if wording differs)\n"
+                    "- 0.5 = Partially correct (captures some key points but misses others)\n"
+                    "- 0.0 = Incorrect or irrelevant\n\n"
+                    "Questions:\n" + "\n\n".join(grading_entries) + "\n\n"
+                    "Respond ONLY with the JSON lines, one per question. No other text."
+                )
+
+                ai_response = await generate_response_async(grading_prompt, force_google=True)
+                logger.info(f"AI grading response: {ai_response}")
+
+                # Parse AI response
+                import json
+                import re
+                # Extract all JSON objects from response
+                json_pattern = re.compile(r'\{[^}]+\}')
+                grading_results = []
+                for match in json_pattern.finditer(ai_response):
+                    try:
+                        grading_results.append(json.loads(match.group()))
+                    except json.JSONDecodeError:
+                        continue
+
+                # Apply AI grades
+                for grade in grading_results:
+                    q_num = grade.get("q", 0)
+                    if q_num < 1 or q_num > len(short_answer_items):
+                        continue
+                    fb_index, answer, question = short_answer_items[q_num - 1]
+                    ai_score = float(grade.get("score", 0))
+                    ai_feedback = grade.get("feedback", "")
+                    points = question.get("points", 1)
+
+                    earned = round(ai_score * points, 1)
+                    score += earned
+
+                    feedback_items[fb_index]["isCorrect"] = ai_score >= 1.0
+                    feedback_items[fb_index]["partiallyCorrect"] = 0 < ai_score < 1.0
+                    feedback_items[fb_index]["earnedPoints"] = earned
+                    if ai_feedback:
+                        feedback_items[fb_index]["explanation"] = ai_feedback
+
+            except Exception as ai_err:
+                logger.error(f"AI grading failed, falling back to exact match: {ai_err}")
+                # Fallback: exact match for short-answer if AI fails
+                for fb_index, answer, question in short_answer_items:
+                    ans_str = answer.selectedAnswer.strip().upper()
+                    corr_str = question["correct_answer"].strip().upper()
+                    is_correct = ans_str == corr_str
+                    if is_correct:
+                        score += question.get("points", 1)
+                    feedback_items[fb_index]["isCorrect"] = is_correct
+                    feedback_items[fb_index]["earnedPoints"] = question.get("points", 1) if is_correct else 0
+                    feedback_items[fb_index]["explanation"] = question.get("explanation")
 
         percentage = (score / max_score * 100) if max_score > 0 else 0
 

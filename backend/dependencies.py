@@ -189,6 +189,7 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> User:
             signing_key.key,
             algorithms=["ES256", "RS256", "HS256"],
             audience="authenticated",
+            leeway=30,  # Tolerate up to 30s of clock skew (iat/exp)
         )
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token has expired")

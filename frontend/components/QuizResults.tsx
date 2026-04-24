@@ -24,17 +24,17 @@ interface QuizResult {
   max_score: number;
   percentage: number;
   time_taken?: number;
-  created_at: string;
+  completed_at: string;
   feedback: QuestionResult[];
   quiz?: {
     id: string;
     title: string;
-    courseCode: string;
-    courseTitle: string;
+    course_code: string;
+    course_title: string;
     topic?: string;
     level: string;
     difficulty: string;
-    numQuestions: number;
+    num_questions: number;
   };
 }
 
@@ -62,7 +62,9 @@ export default function QuizResults({ quizId }: { quizId: string }) {
           throw new Error('Result not found');
         }
         const data = await response.json();
-        setResult(data.result);
+        console.log('[QuizResults] API response:', { keys: Object.keys(data), hasQuiz: !!data.quiz, quizKeys: data.quiz ? Object.keys(data.quiz) : 'none' });
+        // API returns { result, quiz } as siblings — merge quiz into result
+        setResult({ ...data.result, quiz: data.quiz });
       } catch (err: any) {
         setError(err.message);
       } finally {
@@ -106,8 +108,12 @@ export default function QuizResults({ quizId }: { quizId: string }) {
     return result?.feedback.filter(q => q.isCorrect).length || 0;
   };
 
+  const getPartiallyCorrectCount = () => {
+    return result?.feedback.filter(q => q.partiallyCorrect).length || 0;
+  };
+
   const getIncorrectCount = () => {
-    return result?.feedback.filter(q => !q.isCorrect).length || 0;
+    return result?.feedback.filter(q => !q.isCorrect && !q.partiallyCorrect).length || 0;
   };
 
   if (loading) {
@@ -171,7 +177,7 @@ export default function QuizResults({ quizId }: { quizId: string }) {
           )}
 
           <div className="text-sm text-gray-600 dark:text-white/60 mt-2">
-            Completed on {new Date(result.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
+            Completed on {new Date(result.completed_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
           </div>
 
           {/* Share Button */}
@@ -186,7 +192,7 @@ export default function QuizResults({ quizId }: { quizId: string }) {
         </div>
 
         {/* Share Card */}
-        {showShareCard && result.quiz && (
+        {showShareCard && (
           <div ref={shareCardRef} className="rounded-lg p-8 mb-6 border bg-white dark:[background-color:#2D3A2D] border-gray-200 dark:border-white/10">
             <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4 text-center">Share Your Results</h2>
             <QuizShareCard
@@ -195,8 +201,13 @@ export default function QuizResults({ quizId }: { quizId: string }) {
                 maxScore: result.max_score,
                 percentage: result.percentage,
                 timeTaken: result.time_taken,
-                completedAt: result.created_at,
-                quiz: result.quiz
+                completedAt: result.completed_at,
+                quiz: {
+                  title: result.quiz?.title || 'Quiz',
+                  courseCode: result.quiz?.course_code || '',
+                  courseTitle: result.quiz?.course_title || '',
+                  topic: result.quiz?.topic,
+                }
               }}
             />
           </div>
@@ -206,19 +217,27 @@ export default function QuizResults({ quizId }: { quizId: string }) {
         <div className="rounded-lg p-6 mb-6 border bg-white dark:[background-color:#2D3A2D] border-gray-200 dark:border-white/10">
           <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">Performance Breakdown</h2>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="flex items-center justify-between p-4 rounded-lg border bg-green-50 dark:bg-[rgba(0,164,0,0.2)] border-green-200 dark:border-[rgba(0,164,0,0.5)]">
               <div className="flex items-center">
                 <div className="w-3 h-3 rounded-full mr-3 bg-green-600 dark:bg-[#00A400]"></div>
-                <span className="text-gray-900 dark:text-white font-medium">Correct Answers</span>
+                <span className="text-gray-900 dark:text-white font-medium">Correct</span>
               </div>
               <span className="font-semibold text-lg text-gray-900 dark:text-white">{getCorrectCount()}</span>
+            </div>
+
+            <div className="flex items-center justify-between p-4 rounded-lg border bg-yellow-50 dark:bg-[rgba(251,191,36,0.2)] border-yellow-200 dark:border-[rgba(251,191,36,0.5)]">
+              <div className="flex items-center">
+                <div className="w-3 h-3 rounded-full mr-3 bg-yellow-600 dark:bg-[#fbbf24]"></div>
+                <span className="text-gray-900 dark:text-white font-medium">Partial</span>
+              </div>
+              <span className="font-semibold text-lg text-gray-900 dark:text-white">{getPartiallyCorrectCount()}</span>
             </div>
 
             <div className="flex items-center justify-between p-4 rounded-lg border bg-red-50 dark:bg-[rgba(220,38,38,0.2)] border-red-200 dark:border-[rgba(220,38,38,0.5)]">
               <div className="flex items-center">
                 <div className="w-3 h-3 rounded-full mr-3 bg-red-600 dark:bg-[#dc2626]"></div>
-                <span className="text-gray-900 dark:text-white font-medium">Incorrect Answers</span>
+                <span className="text-gray-900 dark:text-white font-medium">Incorrect</span>
               </div>
               <span className="font-semibold text-lg text-gray-900 dark:text-white">{getIncorrectCount()}</span>
             </div>
@@ -298,7 +317,9 @@ export default function QuizResults({ quizId }: { quizId: string }) {
                       <div
                         className={`p-3 rounded-lg border text-gray-900 dark:text-white ${question.isCorrect
                           ? 'bg-green-50 dark:bg-[rgba(0,164,0,0.2)] border-green-200 dark:border-[rgba(0,164,0,0.5)]'
-                          : 'bg-red-50 dark:bg-[rgba(220,38,38,0.2)] border-red-200 dark:border-[rgba(220,38,38,0.5)]'
+                          : question.partiallyCorrect
+                            ? 'bg-yellow-50 dark:bg-[rgba(251,191,36,0.2)] border-yellow-200 dark:border-[rgba(251,191,36,0.5)]'
+                            : 'bg-red-50 dark:bg-[rgba(220,38,38,0.2)] border-red-200 dark:border-[rgba(220,38,38,0.5)]'
                           }`}
                       >
                         {question.selectedAnswer || 'No answer provided'}
