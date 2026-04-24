@@ -372,7 +372,7 @@ export default function QuizHistory() {
                         {resultData.score}/{resultData.max_score} points
                       </div>
                       <div className="text-xs text-foreground/60 mt-1">
-                        {new Date(resultData.created_at || resultData.completed_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
+                        {new Date(resultData.created_at || resultData.completed_at || Date.now()).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
                       </div>
                     </div>
                   </div>
