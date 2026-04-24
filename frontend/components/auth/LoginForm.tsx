@@ -36,12 +36,12 @@ export function LoginForm({
   return (
     <form onSubmit={onSubmit} className="space-y-5">
       <div className="space-y-1.5">
-        <label className="text-sm font-bold text-slate-700">Email address</label>
+        <label className="text-sm font-bold text-foreground">Email address</label>
         <input type="email" required value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} className={INPUT_CLASS_NAME} placeholder="you@example.com" />
       </div>
       <div className="space-y-1.5">
         <div className="flex justify-between items-center">
-          <label className="text-sm font-bold text-slate-700">Password</label>
+          <label className="text-sm font-bold text-foreground">Password</label>
           <button type="button" onClick={switchToForgot} className="text-sm font-semibold text-primary hover:text-primary transition-colors">
             Forgot password?
           </button>
@@ -58,15 +58,15 @@ export function LoginForm({
           <button
             type="button"
             onClick={() => setShowLoginPassword((previous) => !previous)}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
           >
             {showLoginPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
           </button>
         </div>
       </div>
       <div className="flex items-center">
-        <input id="remember-me" type="checkbox" checked={rememberMe} onChange={(event) => setRememberMe(event.target.checked)} className="h-4 w-4 text-primary border-gray-300 rounded accent-primary" />
-        <label htmlFor="remember-me" className="ml-2 block text-sm text-slate-500">Remember me</label>
+        <input id="remember-me" type="checkbox" checked={rememberMe} onChange={(event) => setRememberMe(event.target.checked)} className="h-4 w-4 text-primary border-border rounded accent-primary" />
+        <label htmlFor="remember-me" className="ml-2 block text-sm text-muted-foreground">Remember me</label>
       </div>
       <AuthMessage message={message} />
       <button type="submit" disabled={loading} className={PRIMARY_BUTTON_CLASS_NAME}>

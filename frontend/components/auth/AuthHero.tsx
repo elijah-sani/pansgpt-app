@@ -12,7 +12,7 @@ export function AuthHero({ taglineFading, taglineIndex, onSelectTagline }: AuthH
       <div className="hidden lg:flex absolute inset-0 flex-col justify-between p-12 overflow-hidden">
         <div className="flex items-center gap-2.5 z-10 w-fit auth-fade-up">
           <img src="/icon.svg" alt="PansGPT icon" className="h-8 w-8 object-contain" />
-          <span className="text-white text-xl font-bold" style={{ fontFamily: 'var(--font-albert-sans, Albert Sans, sans-serif)' }}>
+          <span className="text-foreground text-xl font-bold" style={{ fontFamily: 'var(--font-albert-sans, Albert Sans, sans-serif)' }}>
             PansGPT
           </span>
         </div>
@@ -30,14 +30,14 @@ export function AuthHero({ taglineFading, taglineIndex, onSelectTagline }: AuthH
               <style>{`
                 .base-stroke {
                   fill: none;
-                  stroke: #21c95a;
+                  stroke: var(--border);
                   stroke-miterlimit: 10;
                   stroke-width: 2;
                   opacity: 0.42;
                 }
                 .glow-stroke {
                   fill: none;
-                  stroke: #00ff44;
+                  stroke: var(--primary);
                   stroke-miterlimit: 10;
                   stroke-width: 3;
                   filter: url(#glow);
@@ -69,17 +69,17 @@ export function AuthHero({ taglineFading, taglineIndex, onSelectTagline }: AuthH
           <div
             className="absolute inset-0 z-20"
             style={{
-              background: 'linear-gradient(to bottom, transparent 0%, transparent 25%, #152012 55%, #152012 100%)'
+              background: 'linear-gradient(to bottom, transparent 0%, transparent 25%, var(--background) 55%, var(--background) 100%)'
             }}
           />
         </div>
 
         <div className="z-10 relative mb-12 max-w-xl auth-fade-up-delayed">
-          <div className="inline-flex items-center rounded-full border border-white/15 bg-white/8 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.22em] text-white/70">
+          <div className="inline-flex items-center rounded-full border border-border bg-surface-secondary px-3 py-1 text-[11px] font-bold uppercase tracking-[0.22em] text-muted-foreground">
             Built for Pharmacy School
           </div>
           <p
-            className="mt-5 text-lg text-white/82 font-medium leading-relaxed transition-opacity duration-400 max-w-md"
+            className="mt-5 max-w-md text-lg font-medium leading-relaxed text-foreground transition-opacity duration-400"
             style={{ opacity: taglineFading ? 0 : 1 }}
           >
             {TAGLINES[taglineIndex]}
@@ -89,7 +89,7 @@ export function AuthHero({ taglineFading, taglineIndex, onSelectTagline }: AuthH
               <button
                 key={index}
                 onClick={() => onSelectTagline(index)}
-                className={`h-1 rounded-full transition-all duration-300 ${index === taglineIndex ? 'w-8 bg-white opacity-100' : 'w-8 bg-white opacity-30'}`}
+                className={`h-1 rounded-full transition-all duration-300 ${index === taglineIndex ? 'w-8 bg-primary opacity-100' : 'w-8 bg-border opacity-70'}`}
               />
             ))}
           </div>
@@ -99,11 +99,11 @@ export function AuthHero({ taglineFading, taglineIndex, onSelectTagline }: AuthH
       <div className="lg:hidden relative z-10 flex flex-col items-center justify-center pt-16 pb-8 gap-3 shrink-0 auth-fade-up">
         <div className="flex items-center gap-2.5">
           <img src="/icon.svg" alt="PansGPT" className="h-9 w-9 object-contain" />
-          <span className="text-white text-2xl font-bold" style={{ fontFamily: 'var(--font-albert-sans, Albert Sans, sans-serif)' }}>
+          <span className="text-foreground text-2xl font-bold" style={{ fontFamily: 'var(--font-albert-sans, Albert Sans, sans-serif)' }}>
             PansGPT
           </span>
         </div>
-        <p className="text-white/60 text-sm font-medium px-8 text-center">
+        <p className="px-8 text-center text-sm font-medium text-muted-foreground">
           Your AI-powered pharmacy study assistant
         </p>
       </div>

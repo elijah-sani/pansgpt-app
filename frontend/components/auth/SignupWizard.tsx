@@ -41,11 +41,11 @@ export function SignupWizard({
       {signupStep === 0 && (
         <div className="space-y-4 animate-in slide-in-from-right duration-300">
           <div className="space-y-1.5">
-            <label className="text-sm font-bold text-slate-700">First Name</label>
+            <label className="text-sm font-bold text-foreground">First Name</label>
             <input type="text" autoFocus value={formData.firstName} onChange={(event) => setFormData((current) => ({ ...current, firstName: event.target.value }))} onKeyDown={(event) => event.key === 'Enter' && formData.firstName && nextStep()} className={INPUT_CLASS_NAME} placeholder="e.g. Victor" />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-bold text-slate-700">Other Names</label>
+            <label className="text-sm font-bold text-foreground">Other Names</label>
             <input type="text" value={formData.otherNames} onChange={(event) => setFormData((current) => ({ ...current, otherNames: event.target.value }))} onKeyDown={(event) => event.key === 'Enter' && formData.firstName && nextStep()} className={INPUT_CLASS_NAME} placeholder="e.g. Oluwaseun" />
           </div>
           <button onClick={nextStep} disabled={!formData.firstName} className={PRIMARY_BUTTON_CLASS_NAME}>Continue</button>
@@ -54,14 +54,14 @@ export function SignupWizard({
       {signupStep === 1 && (
         <div className="space-y-4 animate-in slide-in-from-right duration-300">
           <div className="space-y-1.5">
-            <label className="text-sm font-bold text-slate-700">University</label>
+            <label className="text-sm font-bold text-foreground">University</label>
             <select autoFocus value={formData.university} onChange={(event) => setFormData((current) => ({ ...current, university: event.target.value }))} className={`${INPUT_CLASS_NAME} appearance-none`}>
               <option value="">Select University</option>
               {NIGERIAN_UNIVERSITIES.map((university) => <option key={university} value={university}>{university}</option>)}
             </select>
           </div>
           <div className="flex gap-3">
-            <button onClick={prevStep} className="px-4 py-3.5 rounded-xl border border-gray-200 text-slate-600 hover:bg-gray-50 font-bold text-sm"><ArrowLeft className="w-4 h-4" /></button>
+            <button onClick={prevStep} className="px-4 py-3.5 rounded-xl border border-border text-muted-foreground hover:bg-surface-secondary font-bold text-sm"><ArrowLeft className="w-4 h-4" /></button>
             <button onClick={nextStep} disabled={!formData.university} className={PRIMARY_BUTTON_CLASS_NAME.replace('w-full ', 'flex-1 ')}>Continue</button>
           </div>
         </div>
@@ -69,14 +69,14 @@ export function SignupWizard({
       {signupStep === 2 && (
         <div className="space-y-4 animate-in slide-in-from-right duration-300">
           <div className="space-y-1.5">
-            <label className="text-sm font-bold text-slate-700">Level</label>
+            <label className="text-sm font-bold text-foreground">Level</label>
             <select autoFocus value={formData.level} onChange={(event) => setFormData((current) => ({ ...current, level: event.target.value }))} className={`${INPUT_CLASS_NAME} appearance-none`}>
               <option value="">Select Level</option>
               {LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
             </select>
           </div>
           <div className="flex gap-3">
-            <button onClick={prevStep} className="px-4 py-3.5 rounded-xl border border-gray-200 text-slate-600 hover:bg-gray-50 font-bold text-sm"><ArrowLeft className="w-4 h-4" /></button>
+            <button onClick={prevStep} className="px-4 py-3.5 rounded-xl border border-border text-muted-foreground hover:bg-surface-secondary font-bold text-sm"><ArrowLeft className="w-4 h-4" /></button>
             <button onClick={nextStep} disabled={!formData.level} className={PRIMARY_BUTTON_CLASS_NAME.replace('w-full ', 'flex-1 ')}>Continue</button>
           </div>
         </div>
@@ -85,11 +85,11 @@ export function SignupWizard({
         <div className="space-y-4 animate-in slide-in-from-right duration-300">
           <div className="space-y-3">
             <div className="space-y-1.5">
-              <label className="text-sm font-bold text-slate-700">Email</label>
+              <label className="text-sm font-bold text-foreground">Email</label>
               <input type="email" autoFocus value={formData.email} onChange={(event) => setFormData((current) => ({ ...current, email: event.target.value }))} className={INPUT_CLASS_NAME} placeholder="you@example.com" />
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-bold text-slate-700">Password</label>
+              <label className="text-sm font-bold text-foreground">Password</label>
               <div className="relative">
                 <input
                   type={showSignupPassword ? 'text' : 'password'}
@@ -101,7 +101,7 @@ export function SignupWizard({
                 <button
                   type="button"
                   onClick={() => setShowSignupPassword((previous) => !previous)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
                 >
                   {showSignupPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                 </button>
@@ -120,8 +120,8 @@ export function SignupWizard({
               />
               <div
                 className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all ${agreedToTerms
-                    ? 'bg-[#00C853] border-[#00C853]'
-                    : 'border-gray-300 bg-white group-hover:border-green-400'
+                    ? 'bg-primary border-primary'
+                    : 'border-border bg-surface-primary group-hover:border-primary/60'
                   }`}
               >
                 {agreedToTerms && (
@@ -131,13 +131,13 @@ export function SignupWizard({
                 )}
               </div>
             </div>
-            <span className="text-xs text-slate-500 leading-relaxed">
+            <span className="text-xs text-muted-foreground leading-relaxed">
               By signing up, I agree to PansGPT&apos;s{' '}
-              <a href="/terms" target="_blank" className="text-green-600 font-semibold hover:underline">
+              <a href="/terms" target="_blank" className="text-primary font-semibold hover:underline">
                 Terms of Service
               </a>{' '}
               and{' '}
-              <a href="/privacy" target="_blank" className="text-green-600 font-semibold hover:underline">
+              <a href="/privacy" target="_blank" className="text-primary font-semibold hover:underline">
                 Privacy Policy
               </a>
             </span>
@@ -145,19 +145,19 @@ export function SignupWizard({
 
           <AuthMessage message={message} />
           {message?.type === 'success' && (
-            <p className="text-xs text-slate-400 text-center">
+            <p className="text-xs text-muted-foreground text-center">
               Didn&apos;t get it?{' '}
               {resendCooldown > 0 ? (
-                <span className="text-slate-400">Resend in {resendCooldown}s</span>
+                <span className="text-muted-foreground">Resend in {resendCooldown}s</span>
               ) : (
-                <button type="button" disabled={loading} onClick={resendSignupEmail} className="text-green-600 font-bold hover:underline disabled:opacity-50">
+                <button type="button" disabled={loading} onClick={resendSignupEmail} className="text-primary font-bold hover:underline disabled:opacity-50">
                   Resend it
                 </button>
               )}
             </p>
           )}
           <div className="flex gap-3">
-            <button onClick={prevStep} className="px-4 py-3.5 rounded-xl border border-gray-200 text-slate-600 hover:bg-gray-50 font-bold text-sm"><ArrowLeft className="w-4 h-4" /></button>
+            <button onClick={prevStep} className="px-4 py-3.5 rounded-xl border border-border text-muted-foreground hover:bg-surface-secondary font-bold text-sm"><ArrowLeft className="w-4 h-4" /></button>
             <button
               onClick={submitSignup}
               disabled={loading || !formData.email || !formData.password || !agreedToTerms}

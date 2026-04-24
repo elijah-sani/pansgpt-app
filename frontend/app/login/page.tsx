@@ -50,7 +50,7 @@ export default function AuthPage() {
   } = useAuthPage();
 
   return (
-    <div className="flex flex-col min-h-screen w-full bg-[#152012] font-sans text-slate-900 relative">
+    <div className="relative flex min-h-screen w-full flex-col bg-background font-sans text-foreground">
       {/* Mobile layout */}
       <MobileAuthLayout
         forgotEmail={forgotEmail}
@@ -90,7 +90,7 @@ export default function AuthPage() {
           <div className="relative h-14 w-14 overflow-hidden rounded-2xl shadow-sm">
             <Image src="/icon-192x192.png" alt="PansGPT" fill sizes="56px" className="object-cover" />
           </div>
-          <h1 className="mt-4 text-2xl font-bold text-white">PansGPT</h1>
+          <h1 className="mt-4 text-2xl font-bold text-foreground">PansGPT</h1>
           <div className="mt-3 min-h-[20px]">
             <AnimatePresence mode="wait">
               <motion.p
@@ -99,7 +99,7 @@ export default function AuthPage() {
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.35 }}
-                className="text-sm text-white/60"
+                className="text-sm text-muted-foreground"
               >
                 {TAGLINES[taglineIndex]}
               </motion.p>
@@ -111,7 +111,7 @@ export default function AuthPage() {
           initial={{ y: 100, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           transition={{ type: 'spring', stiffness: 260, damping: 26 }}
-          className="fixed inset-x-0 bottom-0 z-20 rounded-t-[2rem] bg-white px-6 pt-8 pb-[calc(env(safe-area-inset-bottom)+2.5rem)] shadow-sm"
+          className="fixed inset-x-0 bottom-0 z-20 rounded-t-[2rem] border border-border bg-surface-primary px-6 pt-8 pb-[calc(env(safe-area-inset-bottom)+2.5rem)] shadow-sm"
         >
           <AnimatePresence mode="wait">
             <motion.div
@@ -121,10 +121,10 @@ export default function AuthPage() {
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2 }}
             >
-              <h2 className="text-xl font-bold text-slate-900">
+              <h2 className="text-xl font-bold text-foreground">
                 {view === 'login' ? 'Welcome back' : view === 'signup' ? 'Create account' : 'Reset password'}
               </h2>
-              <p className="mt-1 text-sm text-slate-500">{panelSubtitle}</p>
+              <p className="mt-1 text-sm text-muted-foreground">{panelSubtitle}</p>
 
               <div className="mt-6">
                 {view === 'login' && (
@@ -177,7 +177,7 @@ export default function AuthPage() {
 
               {view !== 'forgot' && (
                 <div className="mt-6">
-                  <p className="text-center text-sm text-slate-500 font-medium">
+                  <p className="text-center text-sm font-medium text-muted-foreground">
                     {view === 'signup' ? 'Already have an account? ' : "Don't have an account? "}
                     <button
                       onClick={() => switchView(view === 'signup' ? 'login' : 'signup')}
@@ -207,7 +207,7 @@ export default function AuthPage() {
           }}
         />
 
-        <div className="relative lg:absolute lg:inset-y-0 lg:right-0 lg:ml-auto w-full lg:w-[34%] flex-1 lg:min-h-screen bg-white flex flex-col items-center justify-center p-8 rounded-t-[2.5rem] lg:rounded-l-[3rem] lg:rounded-tr-none overflow-y-auto z-20 shadow-sm auth-panel-enter">
+        <div className="relative z-20 flex w-full flex-1 flex-col items-center justify-center overflow-y-auto rounded-t-[2.5rem] border border-border bg-surface-primary p-8 shadow-sm auth-panel-enter lg:absolute lg:inset-y-0 lg:right-0 lg:ml-auto lg:min-h-screen lg:w-[34%] lg:rounded-l-[3rem] lg:rounded-tr-none">
           <div className="w-full max-w-sm auth-fade-up-delayed">
             <AuthPanelHeader
               forgotSent={forgotSent}
@@ -267,7 +267,7 @@ export default function AuthPage() {
 
             {view !== 'forgot' && (
               <div className="mt-8">
-                <p className="text-center text-sm text-slate-500 font-medium">
+                <p className="text-center text-sm font-medium text-muted-foreground">
                   {view === 'signup' ? 'Already have an account? ' : "Don't have an account? "}
                   <button
                     onClick={() => switchView(view === 'signup' ? 'login' : 'signup')}

@@ -10,7 +10,7 @@ import { ReaderCacheProvider } from "@/lib/ReaderCacheContext";
 import { SessionRefresher } from "@/components/SessionRefresher";
 import SplashScreenRemover from "@/components/SplashScreenRemover";
 
-const BRAND_COLOR = "#53d22d";
+const BRAND_COLOR = "#101010";
 
 const albertSans = Albert_Sans({
   subsets: ["latin"],
@@ -46,7 +46,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning style={{ backgroundColor: "#152012" }}>
+    <html lang="en" suppressHydrationWarning style={{ backgroundColor: "#101010" }}>
       <head>
         <link rel="manifest" href="/manifest.json" />
         <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
@@ -69,7 +69,7 @@ export default function RootLayout({
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            backgroundColor: '#152012',
+            backgroundColor: '#101010',
             transition: 'opacity 0.4s ease-out'
           }}
         >

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo } from 'react';
-import { CheckCircle2, ChevronRight, File, Library, FolderOpen, ArrowLeft, User, PanelLeft } from 'lucide-react';
+import { CheckCircle2, ChevronRight, File, Library, FolderOpen, ArrowLeft, User, PanelLeft, Search } from 'lucide-react';
 import Link from 'next/link';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { User as SupabaseUser } from '@supabase/supabase-js';
@@ -49,7 +49,9 @@ export default function HomeContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const selectedCourse = searchParams.get('course');
+    const searchQueryParam = searchParams.get('q') || '';
     const viewMode = selectedCourse ? 'list' : 'groups';
+    const [searchQuery, setSearchQuery] = useState(searchQueryParam);
 
     // Auth State
     const [user, setUser] = useState<SupabaseUser | null>(null);
@@ -193,6 +195,34 @@ export default function HomeContent() {
     const groupKeys = Object.keys(courseGroups).sort();
     const currentCourseDocs = selectedCourse ? courseGroups[selectedCourse] : [];
     const currentCourseTitle = currentCourseDocs?.length > 0 ? currentCourseDocs[0].title : '';
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+
+    const filteredGroupKeys = useMemo(() => {
+        if (!normalizedQuery) return groupKeys;
+
+        return groupKeys.filter((code) => {
+            const groupDocs = courseGroups[code] || [];
+            return groupDocs.some((doc) =>
+                code.toLowerCase().includes(normalizedQuery) ||
+                doc.title?.toLowerCase().includes(normalizedQuery) ||
+                doc.topic?.toLowerCase().includes(normalizedQuery) ||
+                doc.lecturer_name?.toLowerCase().includes(normalizedQuery) ||
+                doc.file_name?.toLowerCase().includes(normalizedQuery)
+            );
+        });
+    }, [courseGroups, groupKeys, normalizedQuery]);
+
+    const filteredCourseDocs = useMemo(() => {
+        if (!normalizedQuery) return currentCourseDocs;
+
+        return currentCourseDocs.filter((doc) =>
+            doc.topic?.toLowerCase().includes(normalizedQuery) ||
+            doc.title?.toLowerCase().includes(normalizedQuery) ||
+            doc.lecturer_name?.toLowerCase().includes(normalizedQuery) ||
+            doc.file_name?.toLowerCase().includes(normalizedQuery) ||
+            doc.course_code?.toLowerCase().includes(normalizedQuery)
+        );
+    }, [currentCourseDocs, normalizedQuery]);
 
     // Format file size
     const formatSize = (bytes?: number) => {
@@ -242,11 +272,23 @@ export default function HomeContent() {
                                     : currentCourseTitle}
                             </p>
                         </div>
-                        <div className="hidden md:block">
-                            <div className="bg-secondary text-secondary-foreground px-4 py-2 rounded-full text-sm font-medium border border-border/50">
+                        <div className="flex flex-col gap-3 md:flex-row md:items-center">
+                            <div className="relative">
+                                <label htmlFor="study-search" className="sr-only">Search library</label>
+                                <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                                <input
+                                    id="study-search"
+                                    type="text"
+                                    value={searchQuery}
+                                    onChange={(event) => setSearchQuery(event.target.value)}
+                                    placeholder={viewMode === 'groups' ? 'Search courses...' : 'Search topics...'}
+                                    className="w-full min-w-0 rounded-xl border-[1px] border-border/70 bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground outline-none transition-all focus:border-primary/40 focus:ring-2 focus:ring-primary/20 md:w-[340px]"
+                                />
+                            </div>
+                            <div className="hidden md:block bg-secondary text-secondary-foreground px-4 py-2 rounded-full text-sm font-medium border border-border/50 whitespace-nowrap">
                                 {viewMode === 'groups'
-                                    ? `${groupKeys.length} Courses`
-                                    : `${currentCourseDocs?.length || 0} Topics`}
+                                    ? `${filteredGroupKeys.length} Courses`
+                                    : `${filteredCourseDocs?.length || 0} Topics`}
                             </div>
                         </div>
                     </div>
@@ -288,7 +330,7 @@ export default function HomeContent() {
                         {/* VIEW 1: COURSE GROUPS */}
                         {viewMode === 'groups' && (
                             <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                                {groupKeys.map((code, idx) => {
+                                {filteredGroupKeys.map((code, idx) => {
                                     const groupDocs = courseGroups[code];
                                     const firstDoc = groupDocs[0];
                                     return (
@@ -330,7 +372,7 @@ export default function HomeContent() {
                         {/* VIEW 2: TOPIC LIST */}
                         {viewMode === 'list' && (
                             <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                                {currentCourseDocs.map((doc, idx) => {
+                                {filteredCourseDocs.map((doc, idx) => {
                                     const prog = progressMap[doc.drive_file_id];
                                     const pct = prog && prog.total_pages > 0
                                         ? Math.min(100, Math.round((prog.current_page / prog.total_pages) * 100))
@@ -401,6 +443,18 @@ export default function HomeContent() {
                             </div>
                         )}
                     </>
+                )}
+
+                {/* Search empty state */}
+                {!loading && !error && docs.length > 0 && (
+                    ((viewMode === 'groups' && filteredGroupKeys.length === 0) ||
+                        (viewMode === 'list' && filteredCourseDocs.length === 0))
+                ) && (
+                    <div className="flex flex-col items-center justify-center rounded-2xl border border-border bg-card px-6 py-16 text-center">
+                        <Search className="mb-3 h-6 w-6 text-muted-foreground" />
+                        <p className="text-base font-semibold text-foreground">No matches found</p>
+                        <p className="mt-1 text-sm text-muted-foreground">Try a different keyword.</p>
+                    </div>
                 )}
 
                 {/* Empty State */}

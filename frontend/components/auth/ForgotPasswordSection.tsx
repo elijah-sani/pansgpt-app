@@ -30,7 +30,7 @@ export function ForgotPasswordSection({
       {!forgotSent ? (
         <form onSubmit={onSubmit} className="space-y-4">
           <div className="space-y-1.5">
-            <label className="text-sm font-bold text-slate-700">Email address</label>
+            <label className="text-sm font-bold text-foreground">Email address</label>
             <input type="email" required autoFocus value={forgotEmail} onChange={(event) => setForgotEmail(event.target.value)} className={INPUT_CLASS_NAME} placeholder="you@example.com" />
           </div>
           <AuthMessage message={message} />
@@ -43,14 +43,14 @@ export function ForgotPasswordSection({
           <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mx-auto">
             <Mail className="w-7 h-7 text-primary" />
           </div>
-          <p className="text-slate-500 text-sm leading-relaxed">
+          <p className="text-muted-foreground text-sm leading-relaxed">
             Check your spam folder too. Link expires in 1 hour.
           </p>
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-muted-foreground">
             Didn&apos;t get it?{' '}
             <button onClick={() => setForgotSent(false)} className="text-primary font-bold hover:underline">Try again</button>
           </p>
-          <button onClick={switchToLogin} className="w-full py-3 rounded-xl border border-gray-200 text-slate-700 font-bold text-sm hover:bg-gray-50 transition-colors">
+          <button onClick={switchToLogin} className="w-full py-3 rounded-xl border border-border text-foreground font-bold text-sm hover:bg-surface-secondary transition-colors">
             Back to login
           </button>
         </div>

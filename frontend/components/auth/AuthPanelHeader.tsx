@@ -22,7 +22,7 @@ export function AuthPanelHeader({
   return (
     <>
       {view === 'forgot' && !forgotSent && (
-        <button onClick={switchToLogin} className="flex items-center gap-2 text-sm text-slate-400 hover:text-slate-600 font-medium mb-6 transition-colors">
+        <button onClick={switchToLogin} className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground font-medium mb-6 transition-colors">
           <ArrowLeft className="w-4 h-4" /> Back to login
         </button>
       )}
@@ -36,10 +36,10 @@ export function AuthPanelHeader({
 
               return (
                 <div key={label} className="flex-1">
-                  <div className="h-1 overflow-hidden rounded-full bg-slate-100">
+                  <div className="h-1 overflow-hidden rounded-full bg-surface-tertiary">
                     <div
                       className={`h-full rounded-full transition-all duration-300 ${
-                        isDone ? 'w-full bg-primary' : isActive ? 'w-2/3 bg-primary' : 'w-0 bg-slate-200'
+                        isDone ? 'w-full bg-primary' : isActive ? 'w-2/3 bg-primary' : 'w-0 bg-border'
                       }`}
                     />
                   </div>
@@ -51,8 +51,8 @@ export function AuthPanelHeader({
       )}
 
       <div className="mb-8">
-        <h1 className="text-3xl font-extrabold text-[#0F172A] tracking-tight mb-2">{panelTitle}</h1>
-        <p className="text-slate-500 text-[15px]">{panelSubtitle}</p>
+        <h1 className="text-3xl font-extrabold text-foreground tracking-tight mb-2">{panelTitle}</h1>
+        <p className="text-muted-foreground text-[15px]">{panelSubtitle}</p>
       </div>
     </>
   );

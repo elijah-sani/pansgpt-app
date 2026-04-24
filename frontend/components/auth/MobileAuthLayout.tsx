@@ -97,7 +97,7 @@ export function MobileAuthLayout({
     return (
         <div
             className="lg:hidden relative flex min-h-screen flex-col"
-            style={{ background: 'linear-gradient(160deg, #1a2e1a 0%, #152012 40%, #0d1a0d 100%)' }}
+            style={{ background: 'linear-gradient(160deg, var(--surface-secondary) 0%, var(--background) 45%, var(--surface-tertiary) 100%)' }}
         >
             {/* Minimal animated background lines */}
             <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
@@ -118,13 +118,13 @@ export function MobileAuthLayout({
                         <style>{`
                             .bg-line {
                                 fill: none;
-                                stroke: #2a4a2a;
+                                stroke: var(--border);
                                 stroke-width: 1;
                                 opacity: 0.5;
                             }
                             .bg-glow {
                                 fill: none;
-                                stroke: #00c030;
+                                stroke: var(--primary);
                                 stroke-width: 1.5;
                                 filter: url(#line-glow);
                                 opacity: 0;
@@ -162,9 +162,9 @@ export function MobileAuthLayout({
                 transition={{ duration: 0.4 }}
                 className="flex items-center gap-2.5 px-7 pt-14 z-10"
             >
-                <img src="/icon.svg" alt="PansGPT" className="h-6 w-6 object-contain brightness-0 invert" />
+                <img src="/icon.svg" alt="PansGPT" className="h-6 w-6 object-contain" />
                 <span
-                    className="text-white text-lg font-bold"
+                    className="text-foreground text-lg font-bold"
                     style={{ fontFamily: 'var(--font-albert-sans, Albert Sans, sans-serif)' }}
                 >
                     PansGPT
@@ -179,15 +179,15 @@ export function MobileAuthLayout({
                     transition={{ delay: 0.25 }}
                 >
                     {/* Static label like desktop */}
-                    <div className="inline-flex items-center rounded-full border border-white/15 bg-white/8 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-white/60 mb-5">
+                    <div className="mb-5 inline-flex items-center rounded-full border border-border bg-surface-secondary px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
                         Built for Pharmacy School
                     </div>
                     <p
-                        className="text-lg font-medium text-white/85 leading-relaxed min-h-[80px]"
+                        className="min-h-[80px] text-lg font-medium leading-relaxed text-foreground"
                         style={{ fontFamily: 'var(--font-albert-sans, Albert Sans, sans-serif)' }}
                     >
                         {typedText}
-                        <span className="inline-block w-[2px] h-4 bg-[#00a200] ml-0.5 animate-pulse align-middle rounded-sm" />
+                        <span className="ml-0.5 inline-block h-4 w-[2px] animate-pulse rounded-sm bg-primary align-middle" />
                     </p>
                 </motion.div>
             </div>
@@ -203,16 +203,16 @@ export function MobileAuthLayout({
                         transition={{ type: 'spring', stiffness: 300, damping: 30 }}
                         className="z-20 px-4 pb-[calc(env(safe-area-inset-bottom)+1.5rem)]"
                     >
-                        <div className="bg-white/5 backdrop-blur-sm rounded-[2rem] p-4 space-y-2.5 border border-white/8 shadow-sm">
+                        <div className="space-y-2.5 rounded-[2rem] border border-border bg-surface-primary/85 p-4 backdrop-blur-sm shadow-sm">
                             <button
                                 onClick={() => handleLandingAction('signup')}
-                                className="w-full py-4 rounded-[1.25rem] bg-white/8 text-white font-semibold text-sm hover:bg-white/12 transition-all"
+                                className="w-full rounded-[1.25rem] border border-border bg-secondary py-4 text-sm font-semibold text-secondary-foreground transition-all hover:bg-surface-tertiary"
                             >
                                 Sign up
                             </button>
                             <button
                                 onClick={() => handleLandingAction('login')}
-                                className="w-full py-4 rounded-[1.25rem] bg-[#00a200] text-white font-bold text-sm shadow-sm shadow-[#00a200]/25 hover:bg-[#008c00] transition-all"
+                                className="w-full rounded-[1.25rem] bg-primary py-4 text-sm font-bold text-primary-foreground shadow-sm shadow-primary/25 transition-all hover:bg-primary/90"
                             >
                                 Log in
                             </button>
@@ -225,23 +225,23 @@ export function MobileAuthLayout({
                         animate={{ y: 0 }}
                         exit={{ y: '100%' }}
                         transition={{ type: 'spring', stiffness: 300, damping: 32 }}
-                        className="fixed inset-x-0 bottom-0 z-30 rounded-t-[2rem] bg-white px-6 pt-6 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] shadow-sm max-h-[92vh] overflow-y-auto"
+                        className="fixed inset-x-0 bottom-0 z-30 max-h-[92vh] overflow-y-auto rounded-t-[2rem] border border-border bg-surface-primary px-6 pt-6 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] shadow-sm"
                     >
                         {/* Drag handle */}
-                        <div className="w-10 h-1 bg-gray-200 rounded-full mx-auto mb-5" />
+                        <div className="mx-auto mb-5 h-1 w-10 rounded-full bg-border" />
 
                         <div className="flex items-center justify-between mb-1">
-                            <h2 className="text-xl font-bold text-slate-900">
+                            <h2 className="text-xl font-bold text-foreground">
                                 {view === 'login' ? 'Welcome back' : view === 'signup' ? 'Create account' : 'Reset password'}
                             </h2>
                             <button
                                 onClick={() => setMode('landing')}
-                                className="text-xs text-slate-400 hover:text-slate-600 font-medium transition-colors px-2 py-1"
+                                className="px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
                             >
                                 Cancel
                             </button>
                         </div>
-                        <p className="text-sm text-slate-500 mb-5">{panelSubtitle}</p>
+                        <p className="mb-5 text-sm text-muted-foreground">{panelSubtitle}</p>
 
                         <AnimatePresence mode="wait">
                             <motion.div
@@ -300,11 +300,11 @@ export function MobileAuthLayout({
 
                         {view !== 'forgot' && (
                             <div className="mt-5 mb-2">
-                                <p className="text-center text-sm text-slate-500 font-medium">
+                                <p className="text-center text-sm font-medium text-muted-foreground">
                                     {view === 'signup' ? 'Already have an account? ' : "Don't have an account? "}
                                     <button
                                         onClick={() => switchView(view === 'signup' ? 'login' : 'signup')}
-                                        className="font-bold text-[#00a200] hover:text-[#008c00] transition-colors"
+                                        className="font-bold text-primary transition-colors hover:text-primary/90"
                                     >
                                         {view === 'signup' ? 'Sign in' : 'Sign up for free'}
                                     </button>
