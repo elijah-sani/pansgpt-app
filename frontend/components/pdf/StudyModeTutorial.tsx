@@ -5,32 +5,24 @@ import { X, Scissors, MessageSquare, BookmarkPlus, Highlighter, ChevronRight, Ch
 const STEPS = [
     {
         icon: MessageSquare,
-        iconColor: 'text-primary',
-        iconBg: 'bg-primary/10',
         title: 'AI Chat',
         description: 'Ask any question about what you\'re reading. The AI has full context of the open document — just type and it will explain, define, or summarize directly from the material.',
         tip: 'Try: "Explain this mechanism" or "Define the term on page 5"',
     },
     {
         icon: Scissors,
-        iconColor: 'text-amber-500',
-        iconBg: 'bg-amber-500/10',
         title: 'Snip Tool',
         description: 'Click the scissors icon in the toolbar to activate snipping mode. Draw a rectangle over any diagram, table, or image — then send it directly to the AI for explanation.',
         tip: 'Perfect for complex diagrams or drug structure images.',
     },
     {
         icon: Highlighter,
-        iconColor: 'text-blue-500',
-        iconBg: 'bg-blue-500/10',
         title: 'Text Highlights',
         description: 'Select any text on the page to reveal a quick action bar. You can ask the AI to explain or define the selected text, copy it, or save it as a note instantly.',
         tip: 'Long-press on mobile to select text.',
     },
     {
         icon: BookmarkPlus,
-        iconColor: 'text-emerald-500',
-        iconBg: 'bg-emerald-500/10',
         title: 'Notes Panel',
         description: 'Save highlights, image snippets, and your own annotations to the Notes panel. Export all your notes as a PDF when you\'re ready to review.',
         tip: 'Click the Notes button in the top bar to open your notes.',
@@ -49,7 +41,7 @@ export function StudyModeTutorial({ onClose }: StudyModeTutorialProps) {
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm relative animate-in slide-in-from-bottom-4 duration-300">
+            <div className="bg-card border border-border rounded-2xl shadow-sm w-full max-w-sm relative animate-in slide-in-from-bottom-4 duration-300">
 
                 {/* Close */}
                 <button
@@ -67,8 +59,8 @@ export function StudyModeTutorial({ onClose }: StudyModeTutorialProps) {
 
                 {/* Step Content */}
                 <div className="px-6 py-5">
-                    <div className={`w-12 h-12 rounded-xl ${current.iconBg} flex items-center justify-center mb-4`}>
-                        <Icon className={`w-6 h-6 ${current.iconColor}`} />
+                    <div className="w-12 h-12 rounded-xl bg-muted text-foreground flex items-center justify-center mb-4 border border-border">
+                        <Icon className="w-6 h-6" />
                     </div>
                     <h3 className="text-base font-semibold text-foreground mb-2">{current.title}</h3>
                     <p className="text-sm text-muted-foreground leading-relaxed mb-3">{current.description}</p>

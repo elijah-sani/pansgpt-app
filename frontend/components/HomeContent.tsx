@@ -216,12 +216,6 @@ export default function HomeContent() {
                 <span className="text-sm font-semibold text-foreground">My Library</span>
             </div>
 
-            {/* Background Decor */}
-            <div className="fixed inset-0 overflow-hidden pointer-events-none">
-                <div className="absolute top-0 left-1/4 w-96 h-96 bg-primary/10 rounded-full blur-3xl -translate-y-1/2" />
-                <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-primary/10 rounded-full blur-3xl translate-y-1/2" />
-            </div>
-
 
             <main className="relative mx-auto max-w-7xl px-6 py-12">
 
@@ -304,12 +298,10 @@ export default function HomeContent() {
                                             className="group relative text-left w-full"
                                             style={{ animationDelay: `${idx * 50}ms` }}
                                         >
-                                            <div className="bg-card border border-border h-full p-6 rounded-2xl shadow-sm hover:shadow-md hover:border-primary/50 hover:-translate-y-1 active:translate-y-0 transition-all duration-300 relative overflow-hidden group">
-                                                <div className="absolute inset-0 bg-gradient-to-br from-primary/0 via-primary/0 to-primary/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-
+                                            <div className="bg-card border border-border h-full p-6 rounded-2xl shadow-none hover:shadow-sm hover:border-primary/50 hover:-translate-y-1 active:translate-y-0 transition-all duration-300 relative overflow-hidden group">
                                                 <div className="flex items-start justify-between mb-6">
-                                                    <div className="p-3 rounded-xl bg-primary/10 text-primary group-hover:scale-110 transition-transform duration-300 shadow-sm">
-                                                        <FolderOpen className="h-8 w-8 text-primary" />
+                                                    <div className="p-3 rounded-xl bg-secondary text-secondary-foreground group-hover:scale-110 transition-transform duration-300 shadow-sm">
+                                                        <FolderOpen className="h-8 w-8" />
                                                     </div>
                                                     <span className="px-3 py-1 rounded-full bg-secondary text-xs font-medium text-secondary-foreground border border-border/50">
                                                         {groupDocs.length} Items
@@ -353,11 +345,11 @@ export default function HomeContent() {
                                         className="group relative"
                                         style={{ animationDelay: `${idx * 50}ms` }}
                                     >
-                                        <div className="bg-card border border-border h-full p-6 rounded-2xl shadow-sm hover:shadow-md hover:border-primary/50 hover:-translate-y-1 active:translate-y-0 transition-all duration-300 relative overflow-hidden">
-                                            {/* Progress fill â€” green overlay behind all content */}
+                                        <div className="bg-card border border-border h-full p-6 rounded-2xl shadow-none hover:shadow-sm hover:border-primary/50 hover:-translate-y-1 active:translate-y-0 transition-all duration-300 relative overflow-hidden">
+                                            {/* Progress fill behind all content */}
                                             {pct > 0 && (
                                                 <div
-                                                    className="absolute inset-y-0 left-0 bg-primary/[0.12] pointer-events-none"
+                                                    className="absolute inset-y-0 left-0 bg-muted/60 pointer-events-none"
                                                     style={
                                                         {
                                                             '--progress-pct': `${pct}%`,
@@ -366,11 +358,9 @@ export default function HomeContent() {
                                                     }
                                                 />
                                             )}
-                                            {/* Hover shimmer */}
-                                            <div className="absolute inset-0 bg-gradient-to-br from-primary/0 via-primary/0 to-primary/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
 
                                             <div className="relative mb-4 flex items-center gap-3">
-                                                <div className="p-2.5 rounded-lg bg-primary/10 text-primary">
+                                                <div className="p-2.5 rounded-lg bg-secondary text-secondary-foreground">
                                                     <File className="h-6 w-6" />
                                                 </div>
                                                 {/* Complete badge */}
@@ -417,7 +407,7 @@ export default function HomeContent() {
                 {!loading && !error && docs.length === 0 && (
                     <div className="flex flex-col items-center justify-center py-24 text-center">
                         <div className="relative mb-6">
-                            <div className="absolute inset-0 bg-primary/20 blur-2xl rounded-full" />
+                            <div className="absolute inset-0 bg-muted/60 blur-2xl rounded-full" />
                             <Library className="relative h-20 w-20 text-muted-foreground/50" />
                         </div>
                         <h3 className="text-2xl font-bold text-foreground">No documents found</h3>

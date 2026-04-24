@@ -18,7 +18,7 @@ export default function ImageLightbox({ image, onClose }: ImageLightboxProps) {
       <img
         src={`data:image/jpeg;base64,${image}`}
         alt="Full View"
-        className="max-w-full max-h-[90vh] rounded-lg shadow-2xl object-contain"
+        className="max-w-full max-h-[90vh] rounded-lg shadow-sm object-contain"
         onClick={(event) => event.stopPropagation()}
       />
     </div>

@@ -61,7 +61,6 @@ export default function QuizLoadingModal({ isOpen, onClose, onCancel, isComplete
   const [currentStage, setCurrentStage] = useState(0);
   const [progress, setProgress] = useState(0);
   const [currentFact, setCurrentFact] = useState<DidYouKnowFact | null>(null);
-  const [availableFacts, setAvailableFacts] = useState<DidYouKnowFact[]>([]);
   
   // Use ref to track used facts to avoid infinite re-renders
   const usedFactsRef = useRef<Set<string>>(new Set());
@@ -91,20 +90,15 @@ export default function QuizLoadingModal({ isOpen, onClose, onCancel, isComplete
 
   useEffect(() => {
     if (!isOpen) {
-      // Reset when modal closes
-      setCurrentStage(0);
-      setProgress(0);
       usedFactsRef.current.clear();
-      setAvailableFacts([]);
-      setCurrentFact(null);
       return;
     }
 
     // Initialize available facts and get first random fact
     const facts = [...DID_YOU_KNOW_FACTS];
-    setAvailableFacts(facts);
-    const firstFact = getRandomFact(facts);
-    setCurrentFact(firstFact);
+    const initialFactTimeout = window.setTimeout(() => {
+      setCurrentFact(getRandomFact(facts));
+    }, 0);
 
     let stageIndex = 0;
     const totalStages = PROGRESS_STAGES.length;
@@ -144,29 +138,21 @@ export default function QuizLoadingModal({ isOpen, onClose, onCancel, isComplete
 
     // Change fact every 6 seconds with truly random selection
     const factInterval = setInterval(() => {
-      setCurrentFact(prevFact => {
-        const randomFact = getRandomFact(facts);
-        return randomFact;
-      });
+      setCurrentFact(getRandomFact(facts));
     }, 6000);
 
     return () => {
+      window.clearTimeout(initialFactTimeout);
       clearInterval(progressInterval);
       clearInterval(factInterval);
     };
   }, [isOpen, isComplete]);
 
-  // When quiz is complete, animate to 100%
-  useEffect(() => {
-    if (isComplete) {
-      setProgress(100);
-      setCurrentStage(PROGRESS_STAGES.length - 1);
-    }
-  }, [isComplete]);
-
   if (!isOpen) return null;
 
-  const currentStageData = PROGRESS_STAGES[currentStage];
+  const displayedProgress = isComplete ? 100 : progress;
+  const displayedStage = isComplete ? PROGRESS_STAGES.length - 1 : currentStage;
+  const currentStageData = PROGRESS_STAGES[displayedStage];
 
   return (
     <AnimatePresence>
@@ -181,15 +167,15 @@ export default function QuizLoadingModal({ isOpen, onClose, onCancel, isComplete
           initial={{ scale: 0.8, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           exit={{ scale: 0.8, opacity: 0 }}
-          className="rounded-2xl border max-w-2xl w-full max-h-[90vh] overflow-hidden bg-white dark:[background-color:#2D3A2D] border-gray-200 dark:border-white/10"
+          className="rounded-2xl border max-w-2xl w-full max-h-[90vh] overflow-hidden bg-card border-border"
         >
           {/* Header */}
-          <div className="p-6 border-b border-gray-200 dark:border-white/10">
+          <div className="p-6 border-b border-border">
             <div className="flex items-center justify-between">
-              <h2 className="text-2xl font-bold text-green-600 dark:text-[#00A400]">Creating Your Quiz</h2>
+              <h2 className="text-2xl font-bold text-primary dark:text-primary">Creating Your Quiz</h2>
               <button
                 onClick={onCancel || onClose}
-                className="transition-colors text-gray-500 dark:text-white/70 hover:text-gray-700 dark:hover:text-red-500"
+                className="transition-colors text-muted-foreground hover:text-foreground dark:hover:text-red-400"
                 title="Cancel Quiz Generation"
               >
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -207,22 +193,22 @@ export default function QuizLoadingModal({ isOpen, onClose, onCancel, isComplete
               <div className="flex items-center space-x-4">
                 <div className="text-4xl">{currentStageData.icon}</div>
                 <div className="flex-1">
-                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{currentStageData.title}</h3>
-                  <p className="text-gray-600 dark:text-white/70 text-sm">{currentStageData.description}</p>
+                  <h3 className="text-lg font-semibold text-foreground">{currentStageData.title}</h3>
+                  <p className="text-muted-foreground text-sm">{currentStageData.description}</p>
                 </div>
               </div>
 
               {/* Progress Bar */}
               <div className="space-y-2">
-                <div className="flex justify-between text-sm text-gray-600 dark:text-white/70">
+                <div className="flex justify-between text-sm text-muted-foreground">
                   <span>Progress</span>
-                  <span>{Math.round(progress)}%</span>
+                  <span>{Math.round(displayedProgress)}%</span>
                 </div>
-                <div className="w-full rounded-full h-3 overflow-hidden bg-gray-200 dark:bg-black/30">
+                <div className="w-full rounded-full h-3 overflow-hidden bg-muted/70">
                   <motion.div
-                    className="h-full rounded-full bg-green-600 dark:bg-[#00A400]"
+                    className="h-full rounded-full bg-primary dark:bg-primary"
                     initial={{ width: 0 }}
-                    animate={{ width: `${progress}%` }}
+                    animate={{ width: `${displayedProgress}%` }}
                     transition={{ duration: 0.3, ease: "easeOut" }}
                   />
                 </div>
@@ -234,11 +220,11 @@ export default function QuizLoadingModal({ isOpen, onClose, onCancel, isComplete
                   <div
                     key={stage.id}
                     className={`h-2 flex-1 rounded-full transition-all duration-300 ${
-                      index <= currentStage
-                        ? 'bg-green-600 dark:bg-[#00A400]'
-                        : index === currentStage + 1
-                        ? 'bg-green-400 dark:bg-green-600/50'
-                        : 'bg-gray-200 dark:bg-white/10'
+                      index <= displayedStage
+                        ? 'bg-primary dark:bg-primary'
+                        : index === displayedStage + 1
+                        ? 'bg-primary/70 dark:bg-primary/50'
+                        : 'bg-muted/70'
                     }`}
                   />
                 ))}
@@ -246,9 +232,9 @@ export default function QuizLoadingModal({ isOpen, onClose, onCancel, isComplete
             </div>
 
             {/* Did You Know Section */}
-            <div className="rounded-xl p-6 border bg-gray-50 dark:bg-black/20 border-gray-200 dark:border-white/10">
+            <div className="rounded-xl p-6 border bg-input-background border-border">
               <div className="flex-1">
-                <h4 className="text-lg font-semibold mb-4 text-green-600 dark:text-[#00A400]">Did You Know?</h4>
+                <h4 className="text-lg font-semibold mb-4 text-primary dark:text-primary">Did You Know?</h4>
                 <AnimatePresence mode="wait">
                   <motion.p
                     key={currentFact?.id}
@@ -256,7 +242,7 @@ export default function QuizLoadingModal({ isOpen, onClose, onCancel, isComplete
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -20 }}
                     transition={{ duration: 0.5 }}
-                    className="text-gray-900 dark:text-white text-sm leading-relaxed"
+                    className="text-foreground text-sm leading-relaxed"
                   >
                     {currentFact?.fact}
                   </motion.p>
@@ -266,7 +252,7 @@ export default function QuizLoadingModal({ isOpen, onClose, onCancel, isComplete
                     {Array.from({ length: 5 }).map((_, index) => (
                       <div
                         key={index}
-                        className="w-2 h-2 rounded-full animate-pulse bg-gray-400 dark:bg-white/40"
+                        className="w-2 h-2 rounded-full animate-pulse bg-muted-foreground/60"
                         style={{ 
                           animationDelay: `${index * 0.2}s` 
                         }}
@@ -279,9 +265,9 @@ export default function QuizLoadingModal({ isOpen, onClose, onCancel, isComplete
           </div>
 
           {/* Footer */}
-          <div className="p-6 border-t border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-black/20">
-            <div className="flex items-center justify-center space-x-2 text-sm text-gray-600 dark:text-white/70">
-              <div className="w-2 h-2 rounded-full animate-pulse bg-green-600 dark:bg-[#00A400]"></div>
+          <div className="p-6 border-t border-border bg-input-background">
+            <div className="flex items-center justify-center space-x-2 text-sm text-muted-foreground">
+              <div className="w-2 h-2 rounded-full animate-pulse bg-primary dark:bg-primary"></div>
               <span>AI is working hard to create the perfect quiz for you...</span>
             </div>
           </div>
@@ -290,3 +276,5 @@ export default function QuizLoadingModal({ isOpen, onClose, onCancel, isComplete
     </AnimatePresence>
   );
 }
+
+

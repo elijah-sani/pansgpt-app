@@ -40,15 +40,15 @@ export function ForgotPasswordSection({
         </form>
       ) : (
         <div className="text-center space-y-4 py-2">
-          <div className="w-14 h-14 rounded-full bg-green-50 flex items-center justify-center mx-auto">
-            <Mail className="w-7 h-7 text-green-500" />
+          <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mx-auto">
+            <Mail className="w-7 h-7 text-primary" />
           </div>
           <p className="text-slate-500 text-sm leading-relaxed">
             Check your spam folder too. Link expires in 1 hour.
           </p>
           <p className="text-xs text-slate-400">
             Didn&apos;t get it?{' '}
-            <button onClick={() => setForgotSent(false)} className="text-green-600 font-bold hover:underline">Try again</button>
+            <button onClick={() => setForgotSent(false)} className="text-primary font-bold hover:underline">Try again</button>
           </p>
           <button onClick={switchToLogin} className="w-full py-3 rounded-xl border border-gray-200 text-slate-700 font-bold text-sm hover:bg-gray-50 transition-colors">
             Back to login

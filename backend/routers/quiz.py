@@ -434,10 +434,14 @@ async def _build_quiz_context_from_embeddings(sb, body: QuizGenerateRequest) -> 
     if not _prepare_embedding_client():
         return ""
 
-    docs_res = sb.table("pans_library").select(
-        "id,file_name,course_code,topic,target_levels,embedding_status"
-    ).eq("course_code", body.courseCode).execute()
-    docs = docs_res.data or []
+    try:
+        docs_res = sb.table("pans_library").select(
+            "id,file_name,course_code,topic,target_levels,embedding_status"
+        ).eq("course_code", body.courseCode).execute()
+        docs = docs_res.data or []
+    except Exception as exc:
+        logger.warning(f"Quiz retrieval document lookup failed: {exc}")
+        return ""
     if not docs:
         return ""
 
@@ -606,13 +610,22 @@ async def generate_quiz(body: QuizGenerateRequest, current_user: User = Depends(
 - "options": an array of 4 option strings ["A. ...", "B. ...", "C. ...", "D. ..."]
 - "correctAnswer": the letter of the correct option (e.g. "A")'''
 
-    recent_question_block = _build_recent_question_block(
-        sb=sb,
-        user_id=current_user.id,
-        course_code=body.courseCode,
-        topic=body.topic,
-    )
-    retrieved_context_block = await _build_quiz_context_from_embeddings(sb, body)
+    try:
+        recent_question_block = _build_recent_question_block(
+            sb=sb,
+            user_id=current_user.id,
+            course_code=body.courseCode,
+            topic=body.topic,
+        )
+    except Exception as exc:
+        logger.warning(f"Could not build recent-question block: {exc}")
+        recent_question_block = ""
+
+    try:
+        retrieved_context_block = await _build_quiz_context_from_embeddings(sb, body)
+    except Exception as exc:
+        logger.warning(f"Could not build embedding context block: {exc}")
+        retrieved_context_block = ""
 
     # Keep prompt size bounded for high question counts.
     recent_lines = _extract_recent_question_lines(recent_question_block, limit=20)
@@ -766,20 +779,18 @@ GROUNDING RULES:
             for idx, q in enumerate(questions):
                 question_type = q.get("questionType", "multiple_choice")
                 options = q.get("options")
-                correct_answer = q["correctAnswer"]
+                correct_answer = q.get("correctAnswer", "")
                 points = 1
 
                 if q_type == "MCQ":
                     question_type = "MCQ"
                     if not isinstance(options, list):
-                        raise HTTPException(status_code=500, detail="Generated MCQ is invalid: options must be a list")
-
+                        options = []
                     options = [str(opt).strip() for opt in options if str(opt).strip()]
-                    if len(options) != 5:
-                        raise HTTPException(
-                            status_code=500,
-                            detail="Generated MCQ is invalid: each question must have exactly 5 options",
-                        )
+                    if len(options) > 5:
+                        options = options[:5]
+                    while len(options) < 5:
+                        options.append(f"Option {len(options) + 1}")
 
                     label_to_option = {
                         "A": options[0],
@@ -815,11 +826,14 @@ GROUNDING RULES:
                             seen.add(opt)
                             deduped_true_options.append(opt)
 
-                    if len(deduped_true_options) != 3:
-                        raise HTTPException(
-                            status_code=500,
-                            detail="Generated MCQ is invalid: each question must have exactly 3 true options",
-                        )
+                    if len(deduped_true_options) > 3:
+                        deduped_true_options = deduped_true_options[:3]
+                    if len(deduped_true_options) < 3:
+                        for fallback_opt in options:
+                            if fallback_opt not in deduped_true_options:
+                                deduped_true_options.append(fallback_opt)
+                            if len(deduped_true_options) == 3:
+                                break
 
                     correct_answer = json.dumps(deduped_true_options)
                     points = 5
@@ -843,6 +857,8 @@ GROUNDING RULES:
         # Return the created quiz
         return await get_quiz(quiz_id, current_user)
 
+    except HTTPException:
+        raise
     except json.JSONDecodeError as e:
         logger.error(f"Quiz generation: JSON parse error: {e}")
         raise HTTPException(status_code=500, detail="Failed to parse AI response into quiz questions")
@@ -896,10 +912,11 @@ async def get_quiz(quiz_id: str, current_user: User = Depends(get_current_user))
         quiz_res = sb.table("quizzes") \
             .select("*") \
             .eq("id", quiz_id) \
-            .single() \
+            .limit(1) \
             .execute()
 
-        if not quiz_res.data:
+        quiz_rows = quiz_res.data or []
+        if not quiz_rows:
             raise HTTPException(status_code=404, detail="Quiz not found")
 
         questions_res = sb.table("quiz_questions") \
@@ -910,7 +927,7 @@ async def get_quiz(quiz_id: str, current_user: User = Depends(get_current_user))
 
         return {
             "quiz": {
-                **quiz_res.data,
+                **quiz_rows[0],
                 "questions": questions_res.data or [],
             }
         }

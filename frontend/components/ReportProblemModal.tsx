@@ -95,7 +95,7 @@ export default function ReportProblemModal({ isOpen, onClose }: ReportProblemMod
                     disabled={!selectedCategory || isSubmitting}
                     className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all ${!selectedCategory || isSubmitting
                         ? 'cursor-not-allowed bg-primary/50 text-primary-foreground/60'
-                        : 'bg-primary text-primary-foreground shadow-md hover:bg-primary/90 hover:shadow-lg'
+                        : 'bg-primary text-primary-foreground shadow-md hover:bg-primary/90 hover:shadow-sm'
                         }`}
                 >
                     {isSubmitting ? (
@@ -114,7 +114,7 @@ export default function ReportProblemModal({ isOpen, onClose }: ReportProblemMod
 
             {showToast && (
                 <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-[100] animate-in fade-in slide-in-from-bottom-5 duration-300 pointer-events-none">
-                    <div className="min-w-[300px] rounded-lg border border-border bg-card px-6 py-3 text-center text-sm font-medium text-foreground shadow-lg">
+                    <div className="min-w-[300px] rounded-lg border border-border bg-card px-6 py-3 text-center text-sm font-medium text-foreground shadow-sm">
                         Report submitted. Thank you for your feedback!
                     </div>
                 </div>
@@ -177,7 +177,7 @@ export default function ReportProblemModal({ isOpen, onClose }: ReportProblemMod
             <div className="hidden md:block">
                 <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
                     <div
-                        className="relative w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card shadow-xl animate-in zoom-in-95 duration-200"
+                        className="relative w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card shadow-sm animate-in zoom-in-95 duration-200"
                         onClick={(e) => e.stopPropagation()}
                     >
                         {modalContent}

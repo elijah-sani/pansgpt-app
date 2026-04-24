@@ -10,7 +10,7 @@ export function AuthMessage({ message }: AuthMessageProps) {
     return null;
   }
 
-  const className = message.type === 'error' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700';
+  const className = message.type === 'error' ? 'bg-red-50 text-red-600' : 'bg-primary/10 text-primary';
 
   return (
     <div className={`p-4 rounded-xl flex items-start gap-3 text-sm font-medium ${className}`}>

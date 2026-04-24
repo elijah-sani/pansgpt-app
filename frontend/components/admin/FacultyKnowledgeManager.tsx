@@ -145,7 +145,7 @@ export default function FacultyKnowledgeManager() {
         <button
           type="button"
           onClick={openCreateModal}
-          className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/20 transition-colors hover:bg-primary/90"
+          className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-sm  transition-colors hover:bg-primary/90"
         >
           <Plus className="h-4 w-4" />
           Add New Level
@@ -238,7 +238,7 @@ export default function FacultyKnowledgeManager() {
 
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-3xl rounded-2xl border border-border/60 bg-card shadow-2xl">
+          <div className="w-full max-w-3xl rounded-2xl border border-border/60 bg-card shadow-sm">
             <div className="flex items-start justify-between border-b border-border/60 px-6 py-5">
               <div>
                 <h3 className="text-lg font-semibold text-card-foreground">{modalTitle}</h3>
@@ -293,7 +293,7 @@ export default function FacultyKnowledgeManager() {
                 type="button"
                 onClick={() => void handleSave()}
                 disabled={isSaving}
-                className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/20 transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-70"
+                className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-sm  transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-70"
               >
                 {isSaving && <Loader2 className="h-4 w-4 animate-spin" />}
                 {editingItem ? 'Save Changes' : 'Create Entry'}

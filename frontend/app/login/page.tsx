@@ -87,7 +87,7 @@ export default function AuthPage() {
       {/* Desktop-only placeholder to keep the lg:hidden div out */}
       <div className="lg:hidden hidden flex min-h-screen flex-col">
         <div className="flex-1 flex flex-col items-center justify-center px-6 text-center">
-          <div className="relative h-14 w-14 overflow-hidden rounded-2xl shadow-lg">
+          <div className="relative h-14 w-14 overflow-hidden rounded-2xl shadow-sm">
             <Image src="/icon-192x192.png" alt="PansGPT" fill sizes="56px" className="object-cover" />
           </div>
           <h1 className="mt-4 text-2xl font-bold text-white">PansGPT</h1>
@@ -111,7 +111,7 @@ export default function AuthPage() {
           initial={{ y: 100, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           transition={{ type: 'spring', stiffness: 260, damping: 26 }}
-          className="fixed inset-x-0 bottom-0 z-20 rounded-t-[2rem] bg-white px-6 pt-8 pb-[calc(env(safe-area-inset-bottom)+2.5rem)] shadow-2xl"
+          className="fixed inset-x-0 bottom-0 z-20 rounded-t-[2rem] bg-white px-6 pt-8 pb-[calc(env(safe-area-inset-bottom)+2.5rem)] shadow-sm"
         >
           <AnimatePresence mode="wait">
             <motion.div
@@ -181,7 +181,7 @@ export default function AuthPage() {
                     {view === 'signup' ? 'Already have an account? ' : "Don't have an account? "}
                     <button
                       onClick={() => switchView(view === 'signup' ? 'login' : 'signup')}
-                      className="font-bold text-green-600 hover:text-green-700 transition-colors"
+                      className="font-bold text-primary hover:text-primary transition-colors"
                     >
                       {view === 'signup' ? 'Sign in' : 'Sign up for free'}
                     </button>
@@ -207,7 +207,7 @@ export default function AuthPage() {
           }}
         />
 
-        <div className="relative lg:absolute lg:inset-y-0 lg:right-0 lg:ml-auto w-full lg:w-[34%] flex-1 lg:min-h-screen bg-white flex flex-col items-center justify-center p-8 rounded-t-[2.5rem] lg:rounded-l-[3rem] lg:rounded-tr-none overflow-y-auto z-20 shadow-2xl auth-panel-enter">
+        <div className="relative lg:absolute lg:inset-y-0 lg:right-0 lg:ml-auto w-full lg:w-[34%] flex-1 lg:min-h-screen bg-white flex flex-col items-center justify-center p-8 rounded-t-[2.5rem] lg:rounded-l-[3rem] lg:rounded-tr-none overflow-y-auto z-20 shadow-sm auth-panel-enter">
           <div className="w-full max-w-sm auth-fade-up-delayed">
             <AuthPanelHeader
               forgotSent={forgotSent}
@@ -271,7 +271,7 @@ export default function AuthPage() {
                   {view === 'signup' ? 'Already have an account? ' : "Don't have an account? "}
                   <button
                     onClick={() => switchView(view === 'signup' ? 'login' : 'signup')}
-                    className="font-bold text-green-600 hover:text-green-700 transition-colors"
+                    className="font-bold text-primary hover:text-primary transition-colors"
                   >
                     {view === 'signup' ? 'Sign in' : 'Sign up for free'}
                   </button>

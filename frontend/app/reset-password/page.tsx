@@ -73,11 +73,11 @@ function ResetPasswordContent() {
 
   return (
     <div className="flex min-h-screen w-full bg-background items-center justify-center p-4">
-      <div className="w-full max-w-sm bg-white rounded-3xl p-8 shadow-2xl">
+      <div className="w-full max-w-sm bg-white rounded-3xl p-8 shadow-sm">
         {done ? (
           <div className="text-center py-4">
-            <div className="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center mx-auto mb-4">
-              <CheckCircle2 className="w-8 h-8 text-green-500" />
+            <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
+              <CheckCircle2 className="w-8 h-8 text-primary" />
             </div>
             <h2 className="text-xl font-extrabold text-[#0F172A] mb-2">Password updated!</h2>
             <p className="text-slate-500 text-sm">Redirecting you to login...</p>
@@ -85,8 +85,8 @@ function ResetPasswordContent() {
         ) : (
           <>
             <div className="mb-8">
-              <div className="w-12 h-12 rounded-2xl bg-green-50 flex items-center justify-center mb-4">
-                <Lock className="w-6 h-6 text-green-600" />
+              <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
+                <Lock className="w-6 h-6 text-primary" />
               </div>
               <h1 className="text-2xl font-extrabold text-[#0F172A] mb-2">Set new password</h1>
               <p className="text-slate-500 text-sm">Choose a strong password for your PansGPT account.</p>
@@ -108,7 +108,7 @@ function ResetPasswordContent() {
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="block w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-base text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all font-medium pr-12"
+                    className="block w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-base text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-medium pr-12"
                     placeholder="Min. 6 characters"
                   />
                   <button
@@ -128,13 +128,13 @@ function ResetPasswordContent() {
                   required
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="block w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-base text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all font-medium"
+                  className="block w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-base text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-medium"
                   placeholder="Repeat your password"
                 />
               </div>
 
               {message && (
-                <div className={`p-4 rounded-xl flex items-start gap-3 text-sm font-medium ${message.type === 'error' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'}`}>
+                <div className={`p-4 rounded-xl flex items-start gap-3 text-sm font-medium ${message.type === 'error' ? 'bg-red-50 text-red-600' : 'bg-primary/10 text-primary'}`}>
                   {message.type === 'error' ? <AlertCircle className="w-5 h-5 shrink-0" /> : <CheckCircle2 className="w-5 h-5 shrink-0" />}
                   <p>{message.text}</p>
                 </div>
@@ -143,7 +143,7 @@ function ResetPasswordContent() {
               <button
                 type="submit"
                 disabled={loading || !sessionReady || !password || !confirmPassword}
-                className="w-full flex items-center justify-center py-3.5 px-4 rounded-xl text-white bg-[#00C853] hover:bg-[#00b54b] transition-all font-bold text-sm shadow-md shadow-green-500/20 disabled:opacity-60"
+                className="w-full flex items-center justify-center py-3.5 px-4 rounded-xl text-white bg-primary hover:bg-primary/90 transition-all font-bold text-sm shadow-md  disabled:opacity-60"
               >
                 {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Update password'}
               </button>

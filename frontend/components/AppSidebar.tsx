@@ -249,7 +249,7 @@ export default function AppSidebar({
 
             {isSettingsMenuOpen && (
               <div
-                className={`absolute bottom-full z-[70] mb-2 rounded-xl border border-border bg-card shadow-xl ${
+                className={`absolute bottom-full z-[70] mb-2 rounded-xl border border-border bg-card shadow-sm ${
                   isIconOnly ? "left-3 w-72" : "left-2 right-2"
                 }`}
               >
@@ -312,7 +312,7 @@ export default function AppSidebar({
         ? createPortal(
             <div
               ref={helpSubmenuRef}
-              className="fixed z-[200] w-64 space-y-1 rounded-xl border border-border bg-card p-2 shadow-xl"
+              className="fixed z-[200] w-64 space-y-1 rounded-xl border border-border bg-card p-2 shadow-sm"
               style={{
                 top: window.innerWidth < 768 ? undefined : desktopHelpMenuPosition.top,
                 left: desktopHelpMenuPosition.left,

@@ -203,7 +203,7 @@ export function MobileAuthLayout({
                         transition={{ type: 'spring', stiffness: 300, damping: 30 }}
                         className="z-20 px-4 pb-[calc(env(safe-area-inset-bottom)+1.5rem)]"
                     >
-                        <div className="bg-white/5 backdrop-blur-sm rounded-[2rem] p-4 space-y-2.5 border border-white/8 shadow-2xl">
+                        <div className="bg-white/5 backdrop-blur-sm rounded-[2rem] p-4 space-y-2.5 border border-white/8 shadow-sm">
                             <button
                                 onClick={() => handleLandingAction('signup')}
                                 className="w-full py-4 rounded-[1.25rem] bg-white/8 text-white font-semibold text-sm hover:bg-white/12 transition-all"
@@ -212,7 +212,7 @@ export function MobileAuthLayout({
                             </button>
                             <button
                                 onClick={() => handleLandingAction('login')}
-                                className="w-full py-4 rounded-[1.25rem] bg-[#00a200] text-white font-bold text-sm shadow-lg shadow-[#00a200]/25 hover:bg-[#008c00] transition-all"
+                                className="w-full py-4 rounded-[1.25rem] bg-[#00a200] text-white font-bold text-sm shadow-sm shadow-[#00a200]/25 hover:bg-[#008c00] transition-all"
                             >
                                 Log in
                             </button>
@@ -225,7 +225,7 @@ export function MobileAuthLayout({
                         animate={{ y: 0 }}
                         exit={{ y: '100%' }}
                         transition={{ type: 'spring', stiffness: 300, damping: 32 }}
-                        className="fixed inset-x-0 bottom-0 z-30 rounded-t-[2rem] bg-white px-6 pt-6 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] shadow-2xl max-h-[92vh] overflow-y-auto"
+                        className="fixed inset-x-0 bottom-0 z-30 rounded-t-[2rem] bg-white px-6 pt-6 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] shadow-sm max-h-[92vh] overflow-y-auto"
                     >
                         {/* Drag handle */}
                         <div className="w-10 h-1 bg-gray-200 rounded-full mx-auto mb-5" />
