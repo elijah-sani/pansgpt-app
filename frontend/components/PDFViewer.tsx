@@ -156,7 +156,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         setNoteSaveError(null);
         // Clear input immediately — optimistic UX
         setPersonalNote('');
-        const isMobile = window.innerWidth < 1024;
+        const isMobile = window.innerWidth < 768;
         try {
             const res = await api.fetch('/notes', {
                 method: 'POST',
@@ -359,7 +359,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
             if (width < 640) {
                 // Mobile: Fit to screen (assuming standard PDF width is ~600px)
                 setBaseScale((width - 32) / 600);
-            } else if (width < 1024) {
+            } else if (width < 768) {
                 // Tablet
                 setBaseScale(1.2);
             } else {
@@ -1623,7 +1623,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         if (!meta.documentId) return;
         setIsSavingNote(true);
         setNoteSaveError(null);
-        const isMobile = window.innerWidth < 1024;
+        const isMobile = window.innerWidth < 768;
         try {
             const res = await api.fetch('/notes', {
                 method: 'POST',
@@ -1662,7 +1662,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         if (!meta.documentId) return;
         setIsSavingNote(true);
         setNoteSaveError(null);
-        const isMobile = window.innerWidth < 1024;
+        const isMobile = window.innerWidth < 768;
         try {
             const res = await api.fetch('/notes', {
                 method: 'POST',
@@ -1946,7 +1946,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 <>
 
 
-                    <div className={`lg:hidden fixed top-0 w-full h-14 bg-background/80 backdrop-blur-md border-b border-border z-50 flex items-center justify-around shadow-sm transition-transform duration-300 ${mobileHeaderVisible ? 'translate-y-0' : '-translate-y-full'}`}>
+                    <div className={`md:hidden fixed top-0 w-full h-14 bg-background/80 backdrop-blur-md border-b border-border z-50 flex items-center justify-around shadow-sm transition-transform duration-300 ${mobileHeaderVisible || activeTab === 'chat' ? 'translate-y-0' : '-translate-y-full'}`}>
                         <button
                             onClick={() => { setActiveTab('document'); }}
                             className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-colors ${activeTab === 'document' ? 'text-primary' : 'text-muted-foreground'}`}
@@ -1974,7 +1974,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
 
                     {/* Desktop Header */}
-                    <div className="hidden lg:flex fixed top-0 left-0 right-0 h-16 bg-card border-b border-border z-30 items-center justify-between px-6 shadow-sm">
+                    <div className="hidden md:flex fixed top-0 left-0 right-0 h-16 bg-card border-b border-border z-30 items-center justify-between px-6 shadow-sm">
                         <div className="flex items-center gap-4">
                             <button
                                 onClick={() => {
@@ -2036,7 +2036,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                 title={isSnippingMode ? 'Exit Snipping Mode' : 'Snip & Ask AI (Alt+Drag)'}
                             >
                                 <Scissors className="w-4 h-4" />
-                                <span className="hidden lg:inline">{isSnippingMode ? 'Cancel Snip' : 'Snip'}</span>
+                                <span className="hidden md:inline">{isSnippingMode ? 'Cancel Snip' : 'Snip'}</span>
                             </button>
                             <button
                                 onClick={toggleNotesPanel}
@@ -2047,7 +2047,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                 title="My Notes"
                             >
                                 <BookOpen className="w-4 h-4" />
-                                <span className="hidden lg:inline">Notes</span>
+                                <span className="hidden md:inline">Notes</span>
                                 {notes.length > 0 && (
                                     <span className="ml-1 text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">{notes.length}</span>
                                 )}
@@ -2076,13 +2076,13 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                     </div>
 
                     {/* Main Content Area */}
-                    <div className={`flex-1 flex lg:pt-16 h-full overflow-hidden transition-all duration-300 ${mobileHeaderVisible ? 'pt-14' : 'pt-0'}`}>
+                    <div className={`flex-1 flex md:pt-16 h-full overflow-hidden transition-all duration-300 ${mobileHeaderVisible ? 'pt-14' : 'pt-0'}`}>
 
                         {/* PDF Container */}
                         <div
                             ref={pdfWrapperRef}
                             className={`flex-1 min-w-0 overflow-y-auto bg-background transition-all duration-300 relative
-                        ${activeTab === 'document' ? 'block' : 'hidden lg:block'
+                        ${activeTab === 'document' ? 'block' : 'hidden md:block'
                                 }
                         ${isSnippingMode ? 'cursor-crosshair' : ''
                                 }
@@ -2100,7 +2100,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                     className="fixed bottom-0 left-0 right-0 z-50"
                                 >
                                     {/* Always-visible page indicator */}
-                                    <div className="hidden lg:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2.5 py-1 rounded-md bg-card/90 text-foreground text-xs font-medium whitespace-nowrap shadow-lg border border-border pointer-events-none">
+                                    <div className="hidden md:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2.5 py-1 rounded-md bg-card/90 text-foreground text-xs font-medium whitespace-nowrap shadow-lg border border-border pointer-events-none">
                                         Page {currentPage} of {numPages}
                                     </div>
                                     {/* Track */}
@@ -2380,13 +2380,13 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                         </div>
 
                         {/* Chat Container (Mobile) */}
-                        <div className={`flex-1 h-full bg-background ${activeTab === 'chat' ? 'block' : 'hidden'} lg:hidden`}>
+                        <div className={`flex-1 h-full bg-background ${activeTab === 'chat' ? 'block' : 'hidden'} md:hidden`}>
                             {renderChatUI(true)}
                         </div>
 
                         {/* Chat Sidebar (Desktop) - flex-based, pushes PDF */}
                         {isSidebarOpen && (
-                            <div className="hidden lg:flex w-96 flex-shrink-0 h-full border-l border-border bg-card animate-in slide-in-from-right duration-300">
+                            <div className="hidden md:flex w-96 flex-shrink-0 h-full border-l border-border bg-card animate-in slide-in-from-right duration-300">
                                 {renderChatUI(false)}
                             </div>
                         )}
@@ -2396,7 +2396,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                             <>
                                 {/* Mobile note save toast — floats above the pill */}
                                 {(noteSavedFlash || noteSaveError) && (
-                                    <div className="lg:hidden fixed bottom-20 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-bottom-2 duration-200">
+                                    <div className="md:hidden fixed bottom-20 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-bottom-2 duration-200">
                                         {noteSavedFlash && (
                                             <div className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-emerald-600 text-white text-xs font-semibold shadow-lg">
                                                 <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
@@ -2412,7 +2412,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                     </div>
                                 )}
                             <div
-                                className={`lg:hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-40 transition-all duration-500 ${showMobilePill ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2 pointer-events-none'}`}
+                                className={`md:hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-40 transition-all duration-500 ${showMobilePill ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2 pointer-events-none'}`}
                             >
                                 <div className="flex items-center gap-1 p-1.5 bg-card border border-border rounded-full shadow-xl">
                                     {/* Page number chip */}

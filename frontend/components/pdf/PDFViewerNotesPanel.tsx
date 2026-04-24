@@ -101,10 +101,10 @@ export function PDFViewerNotesPanel({
 
   return (
     <>
-      <div className="fixed inset-0 bg-black/40 z-30 lg:hidden" onClick={onClose} />
+      <div className="fixed inset-0 bg-black/40 z-30 md:hidden" onClick={onClose} />
 
-      <div className="fixed inset-x-0 bottom-0 h-[75vh] rounded-t-2xl z-40 bg-card border-t border-border flex flex-col shadow-2xl animate-in slide-in-from-bottom-4 duration-300 lg:inset-auto lg:left-4 lg:top-20 lg:bottom-8 lg:w-72 lg:h-auto lg:max-h-[calc(100vh-6rem)] lg:rounded-xl lg:border lg:z-40 lg:shadow-2xl lg:animate-in lg:fade-in lg:slide-in-from-left-2 lg:duration-200">
-        <div className="flex justify-center pt-2 pb-1 lg:hidden">
+      <div className="fixed inset-x-0 bottom-0 h-[75vh] rounded-t-2xl z-40 bg-card border-t border-border flex flex-col shadow-2xl animate-in slide-in-from-bottom-4 duration-300 md:inset-auto md:left-4 md:top-20 md:bottom-8 md:w-72 md:h-auto md:max-h-[calc(100vh-6rem)] md:rounded-xl md:border md:z-40 md:shadow-2xl md:animate-in md:fade-in md:slide-in-from-left-2 md:duration-200">
+        <div className="flex justify-center pt-2 pb-1 md:hidden">
           <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
         </div>
 
@@ -198,7 +198,7 @@ export function PDFViewerNotesPanel({
                         {editingNoteId !== String(note.id) && (
                           <button
                             onClick={() => onStartEdit(note)}
-                            className="opacity-100 lg:opacity-0 lg:group-hover:opacity-100 p-1 rounded-md hover:bg-muted transition-all"
+                            className="opacity-100 md:opacity-0 md:group-hover:opacity-100 p-1 rounded-md hover:bg-muted transition-all"
                             title="Edit note"
                           >
                             <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
@@ -207,7 +207,7 @@ export function PDFViewerNotesPanel({
                         <button
                           onClick={() => onDeleteNote(note.id)}
                           disabled={isDeleting}
-                          className={`${isDeleting ? 'opacity-100 lg:opacity-100' : 'opacity-100 lg:opacity-0 lg:group-hover:opacity-100'} p-1 rounded-md hover:bg-destructive/10 transition-all disabled:opacity-100`}
+                          className={`${isDeleting ? 'opacity-100 md:opacity-100' : 'opacity-100 md:opacity-0 md:group-hover:opacity-100'} p-1 rounded-md hover:bg-destructive/10 transition-all disabled:opacity-100`}
                         >
                           {isDeleting ? (
                             <Loader2 className="w-3.5 h-3.5 text-destructive animate-spin" />

@@ -282,7 +282,7 @@ export default function HomeContent() {
                                     value={searchQuery}
                                     onChange={(event) => setSearchQuery(event.target.value)}
                                     placeholder={viewMode === 'groups' ? 'Search courses...' : 'Search topics...'}
-                                    className="w-full min-w-0 rounded-xl border-[1px] border-border/70 bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground outline-none transition-all focus:border-primary/40 focus:ring-2 focus:ring-primary/20 md:w-[340px]"
+                                    className="w-full min-w-0 rounded-xl border-[1px] border-border/70 bg-card py-2.5 pl-10 pr-4 text-base text-foreground placeholder:text-muted-foreground outline-none transition-all focus:border-primary/40 focus:ring-2 focus:ring-primary/20 md:w-[340px]"
                                 />
                             </div>
                             <div className="hidden md:block bg-secondary text-secondary-foreground px-4 py-2 rounded-full text-sm font-medium border border-border/50 whitespace-nowrap">
