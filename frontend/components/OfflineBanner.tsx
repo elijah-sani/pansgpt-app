@@ -1,19 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { WifiOff } from 'lucide-react';
+import { WifiOff, Wifi } from 'lucide-react';
 import { useOfflineStatus } from '@/hooks/useOfflineStatus';
 
-/**
- * OfflineBanner
- *
- * Mounts at the very top of the app (inside the layout).
- * Slides down when the user goes offline, disappears when back online.
- * Shows a brief "Back online" confirmation for 3 s after reconnection.
- *
- * z-index: 200 — sits above the sidebar (z-40) and modals (z-[100]) alike,
- * but below any spinner/toast overlays the app may use.
- */
 export default function OfflineBanner() {
   const { isOffline } = useOfflineStatus();
   const [showBackOnline, setShowBackOnline] = useState(false);
@@ -25,13 +15,12 @@ export default function OfflineBanner() {
       setVisible(true);
     } else {
       if (visible) {
-        // Just came back online — show a brief confirmation then hide
         setShowBackOnline(true);
         setVisible(true);
         const timer = setTimeout(() => {
           setShowBackOnline(false);
           setVisible(false);
-        }, 3000);
+        }, 2500);
         return () => clearTimeout(timer);
       }
     }
@@ -45,37 +34,23 @@ export default function OfflineBanner() {
       role="status"
       aria-live="polite"
       className={`
-        fixed top-0 inset-x-0 z-[200] flex items-center justify-center gap-2
-        px-4 py-2 text-xs font-semibold
-        animate-in slide-in-from-top duration-300
-        ${showBackOnline
-          ? 'bg-emerald-500 text-white'
-          : 'bg-amber-500 text-white'
-        }
+        fixed bottom-6 left-1/2 -translate-x-1/2 z-[200]
+        flex items-center gap-2 px-4 py-2
+        rounded-full text-xs font-medium text-white shadow-lg
+        animate-in fade-in slide-in-from-bottom-2 duration-200
+        ${showBackOnline ? 'bg-emerald-500' : 'bg-neutral-800'}
       `}
     >
       {showBackOnline ? (
-        /* Back online confirmation */
-        <span className="flex items-center gap-1.5">
-          <svg
-            className="w-3.5 h-3.5 shrink-0"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <polyline points="20 6 9 17 4 12" />
-          </svg>
-          Back online — notes synced
-        </span>
+        <>
+          <Wifi className="w-3.5 h-3.5 shrink-0" />
+          Back online
+        </>
       ) : (
-        /* Offline indicator */
-        <span className="flex items-center gap-1.5">
+        <>
           <WifiOff className="w-3.5 h-3.5 shrink-0" />
-          You&apos;re offline. Showing cached content.
-        </span>
+          You&apos;re offline
+        </>
       )}
     </div>
   );
