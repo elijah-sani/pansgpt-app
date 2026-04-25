@@ -2505,7 +2505,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                         {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
                                     </button>
                                     <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-foreground text-background text-xs font-medium rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap shadow-md pointer-events-none">
-                                        {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+                                        {isFullscreen ? 'Exit Lock In' : 'Lock In'}
                                     </span>
                                 </div>
                             </div>
