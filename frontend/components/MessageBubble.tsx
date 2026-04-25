@@ -217,9 +217,9 @@ export default function MessageBubble({
                             rehypePlugins={[rehypeRaw, rehypeKatex]}
                             components={{
                                 table: ({ node, ...props }) => (
-                                    <div className="my-0 w-full overflow-hidden overflow-x-auto rounded-xl border border-border shadow-sm 
+                                    <div className="my-0 w-full overflow-hidden overflow-x-auto rounded-xl border border-border
       [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-track]:bg-transparent 
-      [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
+      [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full"> {/* changed: removed shadow-sm — eliminates unwanted box-shadow beneath tables */}
                                         <table
                                             className="w-full m-0 border-collapse text-sm text-left table-auto border-hidden"
                                             style={{ marginTop: 0, marginBottom: 0 }}
@@ -237,7 +237,7 @@ export default function MessageBubble({
                                     <th className="px-4 py-5 border border-border/70 font-semibold whitespace-nowrap first:border-l-0 last:border-r-0 border-t-0" {...props} />
                                 ),
                                 td: ({ node, ...props }) => (
-                                    <td className="px-4 py-2.5 border border-border/50 align-top first:border-l-0 last:border-r-0 last:border-b-0" {...props} />
+                                    <td className="px-4 py-2.5 border border-border/50 align-top text-foreground first:border-l-0 last:border-r-0 last:border-b-0" {...props} /> // changed: added text-foreground — fixes grey td text in light mode (prose default colour overridden)
                                 ),
                                 tr: ({ node, ...props }) => (
                                     <tr className="hover:bg-muted/30 transition-colors" {...props} />
