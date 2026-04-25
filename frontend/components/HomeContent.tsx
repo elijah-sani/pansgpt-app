@@ -52,6 +52,7 @@ export default function HomeContent() {
     const searchQueryParam = searchParams.get('q') || '';
     const viewMode = selectedCourse ? 'list' : 'groups';
     const [searchQuery, setSearchQuery] = useState(searchQueryParam);
+    const [mounted, setMounted] = useState(false);
 
     // Auth State
     const [user, setUser] = useState<SupabaseUser | null>(null);
@@ -73,6 +74,8 @@ export default function HomeContent() {
         };
         checkSystem();
     }, []);
+
+    useEffect(() => { setMounted(true); }, []);
 
     // Fetch documents from backend
     const fetchDocs = async () => {
@@ -269,7 +272,7 @@ export default function HomeContent() {
                             <p className="mt-4 text-lg text-muted-foreground max-w-2xl">
                                 {viewMode === 'groups'
                                     ? 'Select a course to view available topics.'
-                                    : currentCourseTitle}
+                                    : mounted ? currentCourseTitle : ''}
                             </p>
                         </div>
                         <div className="flex flex-col gap-3 md:flex-row md:items-center">
