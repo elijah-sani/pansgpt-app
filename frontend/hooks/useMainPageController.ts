@@ -22,7 +22,9 @@ type FailedRequest =
 const MAX_IMAGES = 4;
 // Number of messages shown immediately when a session is opened.
 // The rest are fetched in the background and prepended silently.
-const INITIAL_MESSAGE_LIMIT = 7;
+const INITIAL_MESSAGE_LIMIT = 8;
+const OLDER_MESSAGES_BATCH_SIZE = 30;
+const OLDER_MESSAGES_LOAD_DELAY_MS = 3000;
 
 let mainBootstrapCache:
   | {
@@ -79,7 +81,6 @@ export function useMainPageController() {
     hasLoadedHistory,
     fetchHistory,
     loadSession,
-    loadSessionFull,
     createSession,
   } = useChatSession();
   const { loadOlderMessages } = useChatHistory();
@@ -95,6 +96,9 @@ export function useMainPageController() {
   const isCreatingSessionRef = useRef(false);
   const lastFailedRequestRef = useRef<FailedRequest>(null);
   const isUserScrolledUpRef = useRef(false);
+  const isLoadingOlderRef = useRef(false);
+  const messagesRef = useRef<Message[]>([]); // changed: mirror the latest message list so older-message pagination can stay callback-stable
+  // changed: hasOlderMessagesRef removed — IntersectionObserver in MainConversation gates the call externally
   const prevMessagesLengthRef = useRef(0);
   const voiceBaseInputRef = useRef('');
   const inputMessageRef = useRef(inputMessage);
@@ -471,6 +475,12 @@ export function useMainPageController() {
   }, [inputMessage]);
 
   useEffect(() => {
+    messagesRef.current = messages; // changed: keep the stable messages ref synchronized with the latest rendered history
+  }, [messages]); // changed: update the mirror ref whenever chat messages change
+
+  // changed: hasOlderMessages sync effect removed — ref eliminated, observer in MainConversation handles the gate
+
+  useEffect(() => {
     if (!transcript && !interimTranscript) {
       return;
     }
@@ -547,7 +557,7 @@ export function useMainPageController() {
       isUserScrolledUpRef.current = false;
       setIsLoadingChat(true);
       try {
-        // Phase 1: fetch the 7 most recent messages — shows instantly
+        // Phase 1: fetch the 8 most recent messages - shows instantly
         const recent = await loadSession(id, INITIAL_MESSAGE_LIMIT);
         setMessages(recent as Message[]);
         setActiveSessionId(id);
@@ -559,26 +569,15 @@ export function useMainPageController() {
         setIsLoadingChat(false);
       }
 
-      // Phase 2: silently fetch ALL messages in the background
-      // When done, replace the visible messages so scrolling up is instant
-      loadSessionFull(id).then((all) => {
-        if (all.length > INITIAL_MESSAGE_LIMIT) {
-          // Preserve scroll position: stay at the bottom after prepend
-          const scrollEl = chatScrollRef.current;
-          const prevHeight = scrollEl?.scrollHeight ?? 0;
-          setMessages(all as Message[]);
-          setHasOlderMessages(false); // everything is now in memory
-          requestAnimationFrame(() => {
-            if (scrollEl) {
-              // Keep user at the same relative position
-              scrollEl.scrollTop = scrollEl.scrollHeight - prevHeight + scrollEl.scrollTop;
-            }
-          });
-        }
-      }).catch(() => { /* silently ignore background preload failures */ });
+      requestAnimationFrame(() => { // changed: wait for React to commit the session messages to the DOM
+        requestAnimationFrame(() => { // changed: wait one more frame so the browser paints and computes final scrollHeight
+          isUserScrolledUpRef.current = false; // changed: re-assert auto-scroll eligibility after the passive scroll listener may have flipped it
+          scrollToBottom(false); // changed: snap instantly to the bottom when a session opens
+        }); // changed: close post-paint session-open scroll pass
+      }); // changed: defer bottom snap until the message list exists in layout
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [loadSession, loadSessionFull]
+    [loadSession] // changed: removed loadSessionFull because session open no longer performs background full-history preload
   );
 
   // Keep a stable ref to handleLoadSession so the effect below only fires
@@ -603,13 +602,22 @@ export function useMainPageController() {
   }, [activeSessionId]);
 
   const handleLoadOlderMessages = useCallback(async () => {
-    if (!activeSessionId || isLoadingOlder || messages.length === 0) {
-      return;
+    if (
+      !activeSessionId || // changed: skip when there is no active chat session
+      isLoadingOlderRef.current || // changed: use ref-only loading guard so state flips do not affect callback identity
+      messagesRef.current.length === 0 // changed: use mirrored messages ref for stable callback reads
+    ) {
+      return; // changed: hasOlderMessages check removed — IntersectionObserver gate handles it externally
     }
 
+    isLoadingOlderRef.current = true;
     setIsLoadingOlder(true);
     try {
-      const oldestMessage = messages[0] as Message & { created_at?: string };
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, OLDER_MESSAGES_LOAD_DELAY_MS); // changed: 600ms UX delay before fetching
+      });
+
+      const oldestMessage = messagesRef.current[0] as Message & { created_at?: string }; // changed: read oldest from stable ref, not state
       const beforeCursor = oldestMessage?.created_at;
 
       if (!beforeCursor) {
@@ -617,24 +625,19 @@ export function useMainPageController() {
         return;
       }
 
-      const olderMessages = await loadOlderMessages(activeSessionId, beforeCursor, 30);
+      const olderMessages = await loadOlderMessages(activeSessionId, beforeCursor, OLDER_MESSAGES_BATCH_SIZE);
       if (olderMessages.length === 0) {
         setHasOlderMessages(false);
       } else {
-        const scrollElement = chatScrollRef.current;
-        const previousScrollHeight = scrollElement?.scrollHeight || 0;
+        // changed: NO scroll math here — DOM anchoring moved to useLayoutEffect in MainConversation
         setMessages((previous) => [...(olderMessages as Message[]), ...previous]);
-        setHasOlderMessages(olderMessages.length >= 30);
-        requestAnimationFrame(() => {
-          if (scrollElement) {
-            scrollElement.scrollTop = scrollElement.scrollHeight - previousScrollHeight;
-          }
-        });
+        setHasOlderMessages(olderMessages.length >= OLDER_MESSAGES_BATCH_SIZE);
       }
     } finally {
-      setIsLoadingOlder(false);
+      isLoadingOlderRef.current = false; // changed: always reset ref guard
+      setIsLoadingOlder(false); // changed: always reset loading state
     }
-  }, [activeSessionId, isLoadingOlder, loadOlderMessages, messages]);
+  }, [activeSessionId, loadOlderMessages]); // changed: dep array — all guards are refs, no state deps
 
   const friendlyErrorMessage = (status: number): string => {
     switch (status) {
@@ -1330,3 +1333,4 @@ export function useMainPageController() {
     isSyncingBackend,
   };
 }
+

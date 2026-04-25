@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import { useEffect } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'; // changed: added useLayoutEffect for synchronous scroll anchoring after DOM paint
 import type { CSSProperties, ChangeEvent, ClipboardEvent, Dispatch, RefObject, SetStateAction } from 'react';
-import { AlertCircle, Check, ChevronDown, Copy, Loader2, Pencil, RotateCw } from 'lucide-react';
+import { AlertCircle, Check, ChevronDown, Copy, Pencil, RotateCw } from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
 import ChatInput from '@/components/ChatInput';
 import ChatSkeleton from '@/components/ChatSkeleton';
 import MessageBubble, { type Message } from '@/components/MessageBubble';
@@ -9,6 +9,7 @@ import { CHAT_TEXT_SIZE_EVENT, CHAT_TEXT_SIZE_KEY, type ChatTextSize } from '@/l
 import type { WebSearchUsage } from './types';
 
 const MESSAGE_COLLAPSE_THRESHOLD = 300;
+// changed: LOAD_OLDER_SCROLL_THRESHOLD removed — IntersectionObserver replaces the scroll threshold check
 const CHAT_TEXT_SIZE_STYLES: Record<ChatTextSize, CSSProperties> = {
   small: { '--chat-text-size': '14px' } as CSSProperties,
   medium: { '--chat-text-size': '15px' } as CSSProperties,
@@ -132,6 +133,9 @@ export function MainConversation({
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [chatTextSize, setChatTextSize] = useState<ChatTextSize>('medium');
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const olderMessagesTriggerRef = useRef<HTMLDivElement | null>(null); // changed: sentinel div watched by IntersectionObserver to load older messages
+  const scrollContainerRef = useRef<HTMLDivElement>(null); // changed: local ref to the scroll container for synchronous height measurements
+  const previousScrollHeight = useRef<number>(0); // changed: captures scrollHeight right before fetch so useLayoutEffect can anchor position
 
   useEffect(() => {
     const savedSize = window.localStorage.getItem(CHAT_TEXT_SIZE_KEY);
@@ -173,18 +177,76 @@ export function MainConversation({
     }
   };
 
-  const handleConversationScroll = () => {
+  useEffect(() => {
     const container = chatScrollRef.current;
-    if (!container || isLoadingChat) {
-      setShowScrollToBottom(false);
+    if (!container) {
       return;
     }
 
-    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-    const isAtBottom = distanceFromBottom < 50;
-    setShowScrollToBottom(distanceFromBottom > 100);
-    onScrollStateChange?.(!isAtBottom);
-  };
+    const updateScrollState = () => { // changed: removed shouldTryLoadOlder param — scroll listener no longer triggers load
+      if (isLoadingChat) {
+        setShowScrollToBottom(false);
+        return;
+      }
+
+      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+      const isAtBottom = distanceFromBottom < 50;
+      setShowScrollToBottom(distanceFromBottom > 100);
+      onScrollStateChange?.(!isAtBottom);
+      // changed: removed scroll-top threshold check — IntersectionObserver handles older-message loading
+    };
+
+    const handleConversationScroll = () => {
+      updateScrollState(); // changed: no longer passes shouldTryLoadOlder flag
+    };
+
+    // changed: handleConversationWheel removed — wheel-based older-message trigger replaced by IntersectionObserver
+
+    container.addEventListener('scroll', handleConversationScroll, { passive: true });
+    updateScrollState(); // changed: initial state sync without older-message check
+
+    return () => {
+      container.removeEventListener('scroll', handleConversationScroll);
+      // changed: wheel listener removal no longer needed
+    };
+  }, [
+    chatScrollRef,
+    // changed: handleLoadOlderMessages removed from deps — scroll listener no longer calls it
+    // changed: hasOlderMessages removed from deps — no longer needed in scroll listener
+    isLoadingChat,
+    // changed: isLoadingOlder removed from deps — no longer gated here
+    onScrollStateChange,
+  ]);
+
+  // changed: IntersectionObserver watches invisible trigger div at top of message list
+  useEffect(() => {
+    const trigger = olderMessagesTriggerRef.current;
+    if (!trigger || !hasOlderMessages) return; // changed: only attach observer when there are older messages to load
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && scrollContainerRef.current) {
+          // changed: capture exact scrollHeight BEFORE the fetch so useLayoutEffect can compute the diff
+          previousScrollHeight.current = scrollContainerRef.current.scrollHeight;
+          void handleLoadOlderMessages();
+        }
+      },
+      { rootMargin: '300px 0px 0px 0px', threshold: 0 } // changed: 300px pre-load margin so fetch begins before user hits absolute top
+    );
+
+    observer.observe(trigger);
+    return () => observer.disconnect(); // changed: disconnect observer on cleanup
+  }, [hasOlderMessages, handleLoadOlderMessages]); // changed: only re-attach when these two change
+
+  // changed: runs synchronously after React commits new messages to the DOM, preventing the scroll-jump
+  useLayoutEffect(() => {
+    if (previousScrollHeight.current > 0 && scrollContainerRef.current) {
+      const newScrollHeight = scrollContainerRef.current.scrollHeight;
+      const heightDifference = newScrollHeight - previousScrollHeight.current; // changed: exact pixel height of the prepended messages
+      scrollContainerRef.current.scrollTop += heightDifference; // changed: bump scroll down instantly so viewport stays on the same message
+      previousScrollHeight.current = 0; // changed: reset so normal message updates are not affected
+    }
+  }, [messages]); // changed: fires whenever the messages array changes — only acts when previousScrollHeight was captured
 
   const handleScrollToBottom = () => {
     const container = chatScrollRef.current;
@@ -200,11 +262,33 @@ export function MainConversation({
 
   return (
     <div className="flex-1 w-full min-w-0 min-h-0 relative flex flex-col bg-background">
+      {/* changed: absolute at top-[73px] = exactly below the 73px header, no z-index tricks needed */}
+      <div className="absolute top-[73px] left-0 right-0 z-10 pointer-events-none">
+        <AnimatePresence>
+          {isLoadingOlder && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="w-full h-[3px] overflow-hidden bg-primary/10" // changed: bar sits flush at the bottom edge of the header
+            >
+              <motion.div
+                className="h-full w-1/3 bg-primary"
+                animate={{ x: ['-110%', '320%'] }}
+                transition={{ duration: 1.1, ease: 'easeInOut', repeat: Infinity }}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
       <div
-        ref={chatScrollRef}
-        onScroll={handleConversationScroll}
+        ref={(node) => { // changed: attach both the prop ref and the local scrollContainerRef to the same DOM node
+          (chatScrollRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+          (scrollContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+        }}
         className="flex-1 min-h-0 overflow-y-auto pt-16 pb-4"
-        style={CHAT_TEXT_SIZE_STYLES[chatTextSize]}
+        style={{ ...CHAT_TEXT_SIZE_STYLES[chatTextSize], overflowAnchor: 'none' }} // changed: overflowAnchor:'none' lets our useLayoutEffect own scroll anchoring
       >
         <div className="max-w-3xl mx-auto px-4 min-h-full flex flex-col">
           {isLoadingChat ? (
@@ -221,24 +305,7 @@ export function MainConversation({
             </div>
           ) : (
             <div className="py-4 flex flex-col">
-              {hasOlderMessages && (
-                <div className="flex justify-center py-2 mb-4">
-                  <button
-                    onClick={handleLoadOlderMessages}
-                    disabled={isLoadingOlder}
-                    className="px-4 py-2 text-sm font-medium text-primary bg-primary/5 hover:bg-primary/10 rounded-full transition-all active:bg-primary/15 disabled:opacity-50 flex items-center gap-2"
-                  >
-                    {isLoadingOlder ? (
-                      <>
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        Loading...
-                      </>
-                    ) : (
-                      'Load older messages'
-                    )}
-                  </button>
-                </div>
-              )}
+              <div ref={olderMessagesTriggerRef} className="h-1 w-full" /> {/* changed: invisible sentinel div — IntersectionObserver fires handleLoadOlderMessages when this enters viewport */}
               {messages.filter((message) => message.role !== 'system').map((message, index, filteredMessages) => {
                 const isStreamingAI = isLoading && index === filteredMessages.length - 1 && message.role !== 'user';
                 const messageKey = String(message.id ?? `msg-${index}`);
