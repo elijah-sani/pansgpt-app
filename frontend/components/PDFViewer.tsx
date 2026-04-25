@@ -1809,7 +1809,14 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     // --- RENDER HELPERS ---
 
     const renderChatUI = (isMobile = false) => (
-        <ChatInterface
+        <>
+            {isOffline && (
+                <div className="flex items-center gap-2 px-4 py-2 bg-muted border-b border-border text-xs text-muted-foreground">
+                    <WifiOff className="w-3.5 h-3.5 shrink-0" />
+                    <span>You&apos;re offline — AI features unavailable until reconnected.</span>
+                </div>
+            )}
+            <ChatInterface
             messages={chatHistory}
             isLoading={isLoading}
             isLoadingChat={isLoadingChat}
@@ -1919,6 +1926,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 }
             }}
         />
+        </>
     );
 
     const InitialLoading = () => (
@@ -2080,12 +2088,12 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                             )}
 
                             {isSnippingMode && (
-                                <div className="sticky top-0 z-20 bg-[#253920] border-b border-white/10 px-4 py-3 flex items-center justify-center gap-3 text-white shadow-lg backdrop-blur-sm animate-in fade-in slide-in-from-top-2">
-                                    <Scissors className="w-5 h-5 text-green-400" />
+                                <div className="sticky top-0 z-20 bg-primary/10 border-b border-primary/20 px-4 py-3 flex items-center justify-center gap-3 text-primary shadow-lg backdrop-blur-sm animate-in fade-in slide-in-from-top-2">
+                                    <Scissors className="w-5 h-5" />
                                     <span className="font-medium tracking-wide">Draw a rectangle to snip</span>
                                     <button
                                         onClick={() => { setIsSnippingMode(false); setIsSnipActive(false); setSnipRect(null); setSnipPopup(null); }}
-                                        className="ml-4 px-3 py-1 rounded-full bg-white/20 hover:bg-white/30 text-xs font-bold transition-all border border-white/10 uppercase tracking-wider"
+                                        className="ml-4 px-3 py-1 rounded-full bg-primary/20 hover:bg-primary/30 text-primary text-xs font-bold transition-all border border-primary/20 uppercase tracking-wider"
                                     >
                                         Cancel
                                     </button>
@@ -2162,7 +2170,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                             {/* Selection Rectangle */}
                                             {snipRect && (
                                                 <div
-                                                    className="absolute border-2 border-amber-500 bg-amber-500/15 rounded-sm"
+                                                    className="absolute border-2 border-primary bg-primary/15 rounded-sm"
                                                     style={{
                                                         left: snipRect.x,
                                                         top: snipRect.y,
@@ -2172,10 +2180,10 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                                     }}
                                                 >
                                                     {/* Corner handles */}
-                                                    <div className="absolute -top-1 -left-1 w-2.5 h-2.5 bg-amber-500 rounded-full" />
-                                                    <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-amber-500 rounded-full" />
-                                                    <div className="absolute -bottom-1 -left-1 w-2.5 h-2.5 bg-amber-500 rounded-full" />
-                                                    <div className="absolute -bottom-1 -right-1 w-2.5 h-2.5 bg-amber-500 rounded-full" />
+                                                    <div className="absolute -top-1 -left-1 w-2.5 h-2.5 bg-primary rounded-full" />
+                                                    <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-primary rounded-full" />
+                                                    <div className="absolute -bottom-1 -left-1 w-2.5 h-2.5 bg-primary rounded-full" />
+                                                    <div className="absolute -bottom-1 -right-1 w-2.5 h-2.5 bg-primary rounded-full" />
                                                 </div>
                                             )}
 
@@ -2437,28 +2445,14 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                         </div>
                         
                         {/* Chat Container (Mobile) */}
-                        <div className={`flex-1 h-full bg-background ${activeTab === 'chat' ? 'block' : 'hidden'} md:hidden relative`}>
+                        <div className={`flex-1 h-full bg-background ${activeTab === 'chat' ? 'block' : 'hidden'} md:hidden`}>
                             {renderChatUI(true)}
-                            {isOffline && (
-                                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-background/80 backdrop-blur-sm pointer-events-auto">
-                                    <WifiOff className="w-8 h-8 text-muted-foreground" />
-                                    <p className="text-sm font-medium text-foreground">You&apos;re offline</p>
-                                    <p className="text-xs text-muted-foreground text-center px-6">AI features are unavailable without an internet connection.</p>
-                                </div>
-                            )}
                         </div>
 
                         {/* Chat Sidebar (Desktop) - flex-based, pushes PDF */}
                         {isSidebarOpen && (
-                            <div className="hidden md:flex w-96 flex-shrink-0 h-full border-l border-border bg-card animate-in slide-in-from-right duration-300 relative">
+                            <div className="hidden md:flex w-96 flex-shrink-0 h-full border-l border-border bg-card animate-in slide-in-from-right duration-300">
                                 {renderChatUI(false)}
-                                {isOffline && (
-                                    <div className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-background/80 backdrop-blur-sm pointer-events-auto">
-                                        <WifiOff className="w-8 h-8 text-muted-foreground" />
-                                        <p className="text-sm font-medium text-foreground">You&apos;re offline</p>
-                                        <p className="text-xs text-muted-foreground text-center px-6">AI features are unavailable without an internet connection.</p>
-                                    </div>
-                                )}
                             </div>
                         )}
 
@@ -2503,7 +2497,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                             setSnipPopup(null);
                                         }}
                                         className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all active:scale-95 ${isSnippingMode
-                                            ? 'bg-amber-500/10 text-amber-600 border border-amber-500/30'
+                                            ? 'bg-primary/10 text-primary border border-primary/20'
                                             : 'text-foreground hover:bg-muted'
                                             }`}
                                     >
