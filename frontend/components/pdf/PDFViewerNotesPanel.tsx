@@ -240,7 +240,7 @@ export function PDFViewerNotesPanel({
                           }}
                           rows={4}
                           autoFocus
-                          maxLength={NOTE_MAX}  {/* changed: enforce NOTE_MAX on native input */}
+                          maxLength={NOTE_MAX}
                           className="w-full resize-none rounded-lg border border-primary/30 bg-background text-base md:text-xs text-foreground p-2 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
                         />
                         {/* changed: char counter for edit textarea */}
@@ -254,7 +254,7 @@ export function PDFViewerNotesPanel({
                         <div className="flex items-center gap-1.5">
                           <button
                             onClick={() => void onSaveEdit(String(note.id))}
-                            disabled={isSavingEdit || !editingText.trim() || editingText.length >= NOTE_MAX}  {/* changed: block save over limit */}
+                            disabled={isSavingEdit || !editingText.trim() || editingText.length >= NOTE_MAX}
                             className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-primary text-primary-foreground text-[10px] font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
                           >
                             {isSavingEdit ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
@@ -339,7 +339,7 @@ export function PDFViewerNotesPanel({
             onKeyDown={handlePersonalNoteKeyDown}
             placeholder="Write your own note… (Ctrl+Enter to save)"
             rows={3}
-            maxLength={NOTE_MAX}  {/* changed: enforce NOTE_MAX on native input */}
+            maxLength={NOTE_MAX}
             className="w-full resize-none rounded-lg border border-border bg-background text-base md:text-xs text-foreground placeholder:text-muted-foreground/60 p-2.5 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
           />
           {/* changed: char counter for personal note textarea */}
@@ -352,7 +352,7 @@ export function PDFViewerNotesPanel({
           )}
           <button
             onClick={() => void onSavePersonalNote()}
-            disabled={!personalNote.trim() || isSavingPersonal || personalNote.length >= NOTE_MAX}  {/* changed: block save over limit */}
+            disabled={!personalNote.trim() || isSavingPersonal || personalNote.length >= NOTE_MAX}
             className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {isSavingPersonal ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}

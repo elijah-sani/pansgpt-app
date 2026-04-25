@@ -281,7 +281,7 @@ export default function ChatInput({
                 <button
                   type="button"
                   onClick={onSendMessage}
-                  disabled={isOverLimit}  {/* changed: block send when over char limit */}
+                  disabled={isOverLimit}
                   className="p-2.5 bg-primary text-primary-foreground rounded-full hover:bg-primary/90 transition-all shadow-md flex items-center justify-center aspect-square animate-in zoom-in duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Send className="w-4 h-4" />
