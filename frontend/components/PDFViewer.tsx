@@ -2097,7 +2097,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                     <div className="w-full h-[3px] bg-border/50">
                                         {/* Fill */}
                                         <div
-                                            className="h-full bg-gradient-to-r from-primary via-green-400 to-emerald-400 transition-all duration-500 ease-out"
+                                            className="h-full bg-primary transition-all duration-500 ease-out"
                                             style={{ width: `${(currentPage / numPages) * 100}%` }}
                                         />
                                     </div>
