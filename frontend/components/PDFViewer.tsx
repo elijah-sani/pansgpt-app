@@ -63,6 +63,16 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         setIsMounted(true);
     }, []);
     const { isOffline } = useOfflineStatus();
+    const [showReconnected, setShowReconnected] = useState(false);
+    const prevOfflineRef = useRef(false);
+    useEffect(() => {
+        if (prevOfflineRef.current && !isOffline) {
+            setShowReconnected(true);
+            const t = setTimeout(() => setShowReconnected(false), 2000);
+            return () => clearTimeout(t);
+        }
+        prevOfflineRef.current = isOffline;
+    }, [isOffline]);
 
     // Fetch Metadata — declared early so it can be used in effects below
     const [meta, setMeta] = useState<{ topic?: string; lecturer?: string; filename: string; documentId?: string }>({ filename: "Document" });
@@ -1810,10 +1820,17 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
     const renderChatUI = (isMobile = false) => (
         <>
-            {isOffline && (
-                <div className="flex items-center gap-2 px-4 py-2 bg-muted border-b border-border text-xs text-muted-foreground">
-                    <WifiOff className="w-3.5 h-3.5 shrink-0" />
-                    <span>You&apos;re offline — AI features unavailable until reconnected.</span>
+            {(isOffline || showReconnected) && (
+                <div className={`flex items-center justify-center gap-2 px-4 py-1.5 text-xs font-medium transition-colors ${
+                    showReconnected
+                        ? 'bg-foreground/90 text-background'
+                        : 'bg-foreground text-background'
+                }`}>
+                    {showReconnected ? (
+                        <span>Back online</span>
+                    ) : (
+                        <span>Offline — AI features not available</span>
+                    )}
                 </div>
             )}
             <ChatInterface
@@ -2039,7 +2056,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                             
                             {/* Snipping Mode Banner */}
                             {isSnippingMode && (
-                                <div className="absolute top-0 left-0 right-0 bg-primary/90 text-primary-foreground px-4 py-2 text-sm font-medium flex items-center justify-between z-20 backdrop-blur-sm shadow-md">
+                                <div className="absolute top-0 left-0 right-0 bg-foreground text-background px-4 py-2 text-sm font-medium flex items-center justify-between z-20">
                                     <div className="flex items-center gap-2">
                                         <Scissors className="w-4 h-4" />
                                         <span>Select an area on the document to snip</span>
@@ -2051,7 +2068,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                             setSnipRect(null);
                                             setSnipPopup(null);
                                         }}
-                                        className="p-1 hover:bg-black/10 rounded-full transition-colors"
+                                        className="p-1 hover:bg-background/10 rounded-full transition-colors"
                                     >
                                         <X className="w-4 h-4" />
                                     </button>
@@ -2088,12 +2105,12 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                             )}
 
                             {isSnippingMode && (
-                                <div className="sticky top-0 z-20 bg-primary/10 border-b border-primary/20 px-4 py-3 flex items-center justify-center gap-3 text-primary shadow-lg backdrop-blur-sm animate-in fade-in slide-in-from-top-2">
+                                <div className="sticky top-0 z-20 bg-foreground text-background px-4 py-3 flex items-center justify-center gap-3 animate-in fade-in slide-in-from-top-2">
                                     <Scissors className="w-5 h-5" />
                                     <span className="font-medium tracking-wide">Draw a rectangle to snip</span>
                                     <button
                                         onClick={() => { setIsSnippingMode(false); setIsSnipActive(false); setSnipRect(null); setSnipPopup(null); }}
-                                        className="ml-4 px-3 py-1 rounded-full bg-primary/20 hover:bg-primary/30 text-primary text-xs font-bold transition-all border border-primary/20 uppercase tracking-wider"
+                                        className="ml-4 px-3 py-1 rounded-full bg-background/20 hover:bg-background/30 text-background text-xs font-bold transition-all border border-background/20 uppercase tracking-wider"
                                     >
                                         Cancel
                                     </button>
