@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Document, Page, pdfjs } from 'react-pdf';
-import { X, Sparkles, BookmarkPlus, BookOpen, Lightbulb, Brain, Loader2, FileText, MessageSquare, ZoomIn, ZoomOut, Scissors, Copy, Trash2, ListChecks, MoreHorizontal, ChevronDown, RefreshCw, Download, Send, Pencil, Check, HelpCircle, WifiOff } from 'lucide-react';
+import { X, Sparkles, BookmarkPlus, BookOpen, Lightbulb, Brain, Loader2, FileText, MessageSquare, ZoomIn, ZoomOut, Scissors, Copy, Trash2, ListChecks, MoreHorizontal, ChevronDown, ChevronLeft, ChevronRight, RefreshCw, Download, Send, Pencil, Check, HelpCircle, WifiOff, Maximize, Minimize } from 'lucide-react';
 import { useSimulatedProgress } from '../hooks/useSimulatedProgress';
 import { LoadingState } from './LoadingState';
 import { cropImageFromCanvas } from '../lib/pdf-utils';
@@ -63,6 +63,26 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         setIsMounted(true);
     }, []);
     const { isOffline } = useOfflineStatus();
+    const [isFullscreen, setIsFullscreen] = useState(false);
+    const viewerContainerRef = useRef<HTMLDivElement>(null);
+
+    const toggleFullscreen = () => {
+        const el = viewerContainerRef.current;
+        if (!el) return;
+        if (!document.fullscreenElement) {
+            el.requestFullscreen?.();
+            setIsFullscreen(true);
+        } else {
+            document.exitFullscreen?.();
+            setIsFullscreen(false);
+        }
+    };
+
+    useEffect(() => {
+        const handler = () => setIsFullscreen(!!document.fullscreenElement);
+        document.addEventListener('fullscreenchange', handler);
+        return () => document.removeEventListener('fullscreenchange', handler);
+    }, []);
     const [showReconnected, setShowReconnected] = useState(false);
     const prevOfflineRef = useRef(false);
     useEffect(() => {
@@ -1968,6 +1988,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
             }
         `}</style>
         <div
+            ref={viewerContainerRef}
             className="pdf-viewer-root flex flex-col h-[100dvh] bg-background relative overflow-hidden font-sans"
             onContextMenu={(e) => e.preventDefault()}
             onTouchStart={() => setSelectionMenu(null)}
@@ -2409,7 +2430,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                             setSnipRect(null);
                                             setSnipPopup(null);
                                         }} 
-                                        className={`p-2 rounded-full transition-all ${isSnippingMode ? 'bg-amber-500/15 text-amber-600' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}
+                                        className={`p-2 rounded-full transition-all ${isSnippingMode ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}
                                     >
                                         <Scissors className="w-5 h-5"/>
                                     </button>
@@ -2419,12 +2440,33 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                 </div>
                             </div>
 
-                            {/* Middle: Page Number */}
+                            {/* Middle: Page Navigation */}
                             <div className="flex items-center justify-center flex-1">
-                                <span className="flex items-center gap-1.5 px-3 py-1 text-sm font-medium text-muted-foreground bg-muted/40 rounded-full select-none border border-border/40">
-                                    <FileText className="w-3.5 h-3.5" />
-                                    {currentPage} / {numPages}
-                                </span>
+                                <div className="flex items-center gap-1 px-1 py-0.5 bg-muted/40 rounded-full border border-border/40">
+                                    <button
+                                        onClick={() => {
+                                            const prev = Math.max(1, currentPage - 1);
+                                            document.getElementById(`page-container-${prev}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                        }}
+                                        disabled={currentPage <= 1}
+                                        className="p-1 rounded-full text-muted-foreground hover:text-foreground hover:bg-background disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                                    >
+                                        <ChevronLeft className="w-3.5 h-3.5" />
+                                    </button>
+                                    <span className="flex items-center gap-1 px-2 text-sm font-medium text-muted-foreground select-none min-w-[4rem] justify-center">
+                                        {currentPage} / {numPages}
+                                    </span>
+                                    <button
+                                        onClick={() => {
+                                            const next = Math.min(numPages, currentPage + 1);
+                                            document.getElementById(`page-container-${next}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                        }}
+                                        disabled={currentPage >= numPages}
+                                        className="p-1 rounded-full text-muted-foreground hover:text-foreground hover:bg-background disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                                    >
+                                        <ChevronRight className="w-3.5 h-3.5" />
+                                    </button>
+                                </div>
                             </div>
 
                             {/* Right: Zoom, Help */}
@@ -2455,6 +2497,15 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                     </button>
                                     <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-foreground text-background text-xs font-medium rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap shadow-md pointer-events-none">
                                         Help & Tutorial
+                                    </span>
+                                </div>
+                                <div className="w-px h-5 bg-border mx-1" />
+                                <div className="relative group">
+                                    <button onClick={toggleFullscreen} className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-full transition-colors">
+                                        {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
+                                    </button>
+                                    <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-foreground text-background text-xs font-medium rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap shadow-md pointer-events-none">
+                                        {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
                                     </span>
                                 </div>
                             </div>
