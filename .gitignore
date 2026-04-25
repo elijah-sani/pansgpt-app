@@ -121,4 +121,5 @@ frontend/public/swe-worker-*.js.map
 frontend/public/fallback-*.js
 frontend/public/fallback-*.js.map
 
-.agent/skills/ui-ux-pro-max-skill
+# AI agent / Antigravity local files (never commit)
+.agent/
