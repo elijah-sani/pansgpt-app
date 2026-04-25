@@ -183,7 +183,7 @@ export function MainConversation({
       return;
     }
 
-    const updateScrollState = () => { // changed: removed shouldTryLoadOlder param — scroll listener no longer triggers load
+    const handleConversationScroll = () => {
       if (isLoadingChat) {
         setShowScrollToBottom(false);
         return;
@@ -193,54 +193,29 @@ export function MainConversation({
       const isAtBottom = distanceFromBottom < 50;
       setShowScrollToBottom(distanceFromBottom > 100);
       onScrollStateChange?.(!isAtBottom);
-      // changed: removed scroll-top threshold check — IntersectionObserver handles older-message loading
-    };
 
-    const handleConversationScroll = () => {
-      updateScrollState(); // changed: no longer passes shouldTryLoadOlder flag
+      // changed: scroll-based trigger — reliable on all browsers including iOS Safari.
+      // The old churn bug is gone: handleLoadOlderMessages is now stable (ref-based guards),
+      // so this listener never causes dependency churn.
+      if (hasOlderMessages && container.scrollTop <= 300 && scrollContainerRef.current) {
+        previousScrollHeight.current = scrollContainerRef.current.scrollHeight; // changed: capture height before fetch for useLayoutEffect anchoring
+        void handleLoadOlderMessages();
+      }
     };
-
-    // changed: handleConversationWheel removed — wheel-based older-message trigger replaced by IntersectionObserver
 
     container.addEventListener('scroll', handleConversationScroll, { passive: true });
-    updateScrollState(); // changed: initial state sync without older-message check
+    handleConversationScroll(); // changed: run once on mount to sync initial state
 
-    return () => {
-      container.removeEventListener('scroll', handleConversationScroll);
-      // changed: wheel listener removal no longer needed
-    };
+    return () => container.removeEventListener('scroll', handleConversationScroll);
   }, [
     chatScrollRef,
-    // changed: handleLoadOlderMessages removed from deps — scroll listener no longer calls it
-    // changed: hasOlderMessages removed from deps — no longer needed in scroll listener
+    handleLoadOlderMessages, // changed: safe to include — callback is now stable, won't cause churn
+    hasOlderMessages,         // changed: safe to include — only changes when older messages are exhausted
     isLoadingChat,
-    // changed: isLoadingOlder removed from deps — no longer gated here
     onScrollStateChange,
   ]);
 
-  // changed: IntersectionObserver watches invisible trigger div at top of message list
-  useEffect(() => {
-    const trigger = olderMessagesTriggerRef.current;
-    if (!trigger || !hasOlderMessages) return; // changed: only attach observer when there are older messages to load
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && scrollContainerRef.current) {
-          // changed: capture exact scrollHeight BEFORE the fetch so useLayoutEffect can compute the diff
-          previousScrollHeight.current = scrollContainerRef.current.scrollHeight;
-          void handleLoadOlderMessages();
-        }
-      },
-      {
-        root: scrollContainerRef.current, // changed: watch relative to the scroll container div, NOT the viewport — without this, scrolling inside the div doesn't move the sentinel viewport-wise so the observer never fires on mobile
-        rootMargin: '300px 0px 0px 0px', // changed: 300px pre-load margin triggers fetch before sentinel is fully visible
-        threshold: 0,
-      }
-    );
-
-    observer.observe(trigger);
-    return () => observer.disconnect(); // changed: disconnect observer on cleanup
-  }, [hasOlderMessages, handleLoadOlderMessages]); // changed: only re-attach when these two change
+  // changed: IntersectionObserver removed — replaced by scroll listener above (cross-browser reliable)
 
   // changed: runs synchronously after React commits new messages to the DOM, preventing the scroll-jump
   useLayoutEffect(() => {
@@ -309,7 +284,7 @@ export function MainConversation({
             </div>
           ) : (
             <div className="py-4 flex flex-col">
-              <div ref={olderMessagesTriggerRef} className="h-1 w-full" /> {/* changed: invisible sentinel div — IntersectionObserver fires handleLoadOlderMessages when this enters viewport */}
+              {/* changed: sentinel div removed — scroll listener replaces IntersectionObserver */}
               {messages.filter((message) => message.role !== 'system').map((message, index, filteredMessages) => {
                 const isStreamingAI = isLoading && index === filteredMessages.length - 1 && message.role !== 'user';
                 const messageKey = String(message.id ?? `msg-${index}`);
