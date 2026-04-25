@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Document, Page, pdfjs } from 'react-pdf';
-import { X, Sparkles, BookmarkPlus, BookOpen, Lightbulb, Brain, Loader2, FileText, MessageSquare, ZoomIn, ZoomOut, Scissors, Copy, Trash2, ListChecks, MoreHorizontal, ChevronDown, RefreshCw, Download, Send, Pencil, Check, HelpCircle } from 'lucide-react';
+import { X, Sparkles, BookmarkPlus, BookOpen, Lightbulb, Brain, Loader2, FileText, MessageSquare, ZoomIn, ZoomOut, Scissors, Copy, Trash2, ListChecks, MoreHorizontal, ChevronDown, RefreshCw, Download, Send, Pencil, Check, HelpCircle, WifiOff } from 'lucide-react';
 import { useSimulatedProgress } from '../hooks/useSimulatedProgress';
 import { LoadingState } from './LoadingState';
 import { cropImageFromCanvas } from '../lib/pdf-utils';
@@ -17,6 +17,7 @@ import { stripMarkdown } from '../lib/stripMarkdown';
 import { PDFViewerNotesPanel } from './pdf/PDFViewerNotesPanel';
 import { PDFViewerSelectedImageModal } from './pdf/PDFViewerSelectedImageModal';
 import type { PDFNote } from './pdf/types';
+import { useOfflineStatus } from '../hooks/useOfflineStatus';
 
 // Critical Fix: Use CDN for worker to prevent Next.js bundling issues
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
@@ -61,6 +62,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     useEffect(() => {
         setIsMounted(true);
     }, []);
+    const { isOffline } = useOfflineStatus();
 
     // Fetch Metadata — declared early so it can be used in effects below
     const [meta, setMeta] = useState<{ topic?: string; lecturer?: string; filename: string; documentId?: string }>({ filename: "Document" });
@@ -2435,14 +2437,28 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                         </div>
                         
                         {/* Chat Container (Mobile) */}
-                        <div className={`flex-1 h-full bg-background ${activeTab === 'chat' ? 'block' : 'hidden'} md:hidden`}>
+                        <div className={`flex-1 h-full bg-background ${activeTab === 'chat' ? 'block' : 'hidden'} md:hidden relative`}>
                             {renderChatUI(true)}
+                            {isOffline && (
+                                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-background/80 backdrop-blur-sm pointer-events-auto">
+                                    <WifiOff className="w-8 h-8 text-muted-foreground" />
+                                    <p className="text-sm font-medium text-foreground">You&apos;re offline</p>
+                                    <p className="text-xs text-muted-foreground text-center px-6">AI features are unavailable without an internet connection.</p>
+                                </div>
+                            )}
                         </div>
 
                         {/* Chat Sidebar (Desktop) - flex-based, pushes PDF */}
                         {isSidebarOpen && (
-                            <div className="hidden md:flex w-96 flex-shrink-0 h-full border-l border-border bg-card animate-in slide-in-from-right duration-300">
+                            <div className="hidden md:flex w-96 flex-shrink-0 h-full border-l border-border bg-card animate-in slide-in-from-right duration-300 relative">
                                 {renderChatUI(false)}
+                                {isOffline && (
+                                    <div className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-background/80 backdrop-blur-sm pointer-events-auto">
+                                        <WifiOff className="w-8 h-8 text-muted-foreground" />
+                                        <p className="text-sm font-medium text-foreground">You&apos;re offline</p>
+                                        <p className="text-xs text-muted-foreground text-center px-6">AI features are unavailable without an internet connection.</p>
+                                    </div>
+                                )}
                             </div>
                         )}
 
