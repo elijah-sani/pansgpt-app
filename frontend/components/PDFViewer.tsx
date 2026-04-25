@@ -1821,10 +1821,10 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     const renderChatUI = (isMobile = false) => (
         <>
             {(isOffline || showReconnected) && (
-                <div className={`flex items-center justify-center gap-2 px-4 py-1.5 text-xs font-medium transition-colors ${
+                <div className={`flex items-center justify-center gap-2 px-4 py-1.5 text-xs font-medium border-b border-border transition-colors ${
                     showReconnected
-                        ? 'bg-foreground/90 text-background'
-                        : 'bg-foreground text-background'
+                        ? 'bg-background/90 text-foreground'
+                        : 'bg-background text-foreground'
                 }`}>
                     {showReconnected ? (
                         <span>Back online</span>
@@ -2056,7 +2056,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                             
                             {/* Snipping Mode Banner */}
                             {isSnippingMode && (
-                                <div className="absolute top-0 left-0 right-0 bg-foreground text-background px-4 py-2 text-sm font-medium flex items-center justify-between z-20">
+                                <div className="absolute top-0 left-0 right-0 bg-background text-foreground border-b border-border px-4 py-2 text-sm font-medium flex items-center justify-between z-20">
                                     <div className="flex items-center gap-2">
                                         <Scissors className="w-4 h-4" />
                                         <span>Select an area on the document to snip</span>
@@ -2105,12 +2105,12 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                             )}
 
                             {isSnippingMode && (
-                                <div className="sticky top-0 z-20 bg-foreground text-background px-4 py-3 flex items-center justify-center gap-3 animate-in fade-in slide-in-from-top-2">
+                                <div className="sticky top-0 z-20 bg-background text-foreground border-b border-border px-4 py-3 flex items-center justify-center gap-3 animate-in fade-in slide-in-from-top-2">
                                     <Scissors className="w-5 h-5" />
                                     <span className="font-medium tracking-wide">Draw a rectangle to snip</span>
                                     <button
                                         onClick={() => { setIsSnippingMode(false); setIsSnipActive(false); setSnipRect(null); setSnipPopup(null); }}
-                                        className="ml-4 px-3 py-1 rounded-full bg-background/20 hover:bg-background/30 text-background text-xs font-bold transition-all border border-background/20 uppercase tracking-wider"
+                                        className="ml-4 px-3 py-1 rounded-full bg-foreground/10 hover:bg-foreground/20 text-foreground text-xs font-bold transition-all border border-foreground/20 uppercase tracking-wider"
                                     >
                                         Cancel
                                     </button>
