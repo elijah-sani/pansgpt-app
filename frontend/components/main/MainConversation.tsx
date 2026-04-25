@@ -231,7 +231,11 @@ export function MainConversation({
           void handleLoadOlderMessages();
         }
       },
-      { rootMargin: '300px 0px 0px 0px', threshold: 0 } // changed: 300px pre-load margin so fetch begins before user hits absolute top
+      {
+        root: scrollContainerRef.current, // changed: watch relative to the scroll container div, NOT the viewport — without this, scrolling inside the div doesn't move the sentinel viewport-wise so the observer never fires on mobile
+        rootMargin: '300px 0px 0px 0px', // changed: 300px pre-load margin triggers fetch before sentinel is fully visible
+        threshold: 0,
+      }
     );
 
     observer.observe(trigger);
