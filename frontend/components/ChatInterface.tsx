@@ -407,7 +407,12 @@ export default function ChatInterface({
             </div>
 
             {/* 2. MESSAGE AREA: Scrollable */}
-            <div ref={chatScrollRef} className="flex-1 overflow-y-auto py-6 scroll-smooth" onScroll={handleScroll}>
+            <div
+                ref={chatScrollRef}
+                className="flex-1 overflow-y-auto py-6 scroll-smooth"
+                onScroll={handleScroll}
+                style={isStudyMode ? ({ overscrollBehavior: 'auto' } as React.CSSProperties) : undefined}
+            >
                 <div className="px-4 space-y-8 h-full flex flex-col">
                     {isLoadingChat ? (
                         <ChatSkeleton />

@@ -415,21 +415,6 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         lastScrollY.current = currentY;
     };
 
-    const handlePdfWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-        const container = pdfWrapperRef.current;
-        if (!container) return;
-
-        // Keep browser pinch-to-zoom behavior untouched.
-        if (e.ctrlKey || e.metaKey || isSnippingMode) return;
-
-        const multiplier = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? container.clientHeight : 1;
-        const delta = e.deltaY * multiplier;
-        if (delta === 0) return;
-
-        container.scrollTop += delta;
-        e.preventDefault();
-    };
-
     // Chat State
     const [chatHistory, setChatHistory] = useState<Message[]>([]);
     const [isLoading, setIsLoading] = useState(false);
@@ -679,18 +664,27 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
     // --- KEYBOARD ARROW KEY — PDF PAGE NAVIGATION ---
     // ArrowRight / ArrowLeft scroll to next/prev page.
-    // Guard: skip when focus is inside a text input to avoid breaking note-writing.
+    // Guard: skip when focus is inside an editable control (chat input, note editor, etc.).
     useEffect(() => {
         if (!numPages) return;
         const handleKeyDown = (e: KeyboardEvent) => {
-            const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
-            const isEditable = tag === 'textarea' || tag === 'input' || (e.target as HTMLElement)?.isContentEditable;
+            const target = e.target as HTMLElement | null;
+            const activeElement = document.activeElement as HTMLElement | null;
+            const isEditable = [target, activeElement].some((el) => {
+                if (!el) return false;
+                const tag = el.tagName?.toLowerCase();
+                if (tag === 'textarea' || tag === 'input' || tag === 'select') return true;
+                if (el.isContentEditable) return true;
+                return Boolean(el.closest('textarea, input, select, [contenteditable="true"], [role="textbox"]'));
+            });
             if (isEditable) return;
 
-            if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+            if (e.key === 'ArrowRight') {
+                e.preventDefault();
                 const next = Math.min(currentPage + 1, numPages);
                 document.getElementById(`page-container-${next}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+            } else if (e.key === 'ArrowLeft') {
+                e.preventDefault();
                 const prev = Math.max(currentPage - 1, 1);
                 document.getElementById(`page-container-${prev}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }
@@ -2063,7 +2057,6 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                 `}
                             onTouchStart={() => triggerMobilePill()}
                             onScroll={handleMobileScroll}
-                            onWheel={handlePdfWheel}
                             onContextMenu={(e) => e.preventDefault()}
                             style={{ WebkitTouchCallout: 'none', touchAction: isSnipActive ? 'none' : 'pan-y' } as React.CSSProperties}
                         >
