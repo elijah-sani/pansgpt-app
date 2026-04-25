@@ -34,7 +34,7 @@ export default function OfflineBanner() {
       role="status"
       aria-live="polite"
       className={`
-        fixed bottom-6 left-1/2 -translate-x-1/2 z-[200]
+        fixed bottom-6 right-6 z-[200]
         flex items-center gap-2 px-4 py-2
         rounded-full text-xs font-medium text-white shadow-lg
         animate-in fade-in slide-in-from-bottom-2 duration-200
