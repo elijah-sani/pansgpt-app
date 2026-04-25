@@ -3,6 +3,7 @@ import React, { useState, useEffect, createContext, useContext } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Loader2, Pencil, Trash2, X } from "lucide-react";
 import AppSidebar from "@/components/AppSidebar";
+import OfflineBanner from "@/components/OfflineBanner";  // changed: offline PWA banner
 import PersonalInformationModal from "@/components/PersonalInformationModal";
 import PWAInstallBanner from "@/components/PWAInstallBanner";
 import ReportProblemModal from "@/components/ReportProblemModal";
@@ -343,6 +344,7 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                 isOpen={isReportProblemOpen}
                 onClose={() => setIsReportProblemOpen(false)}
             />
+            <OfflineBanner />  {/* changed: offline indicator banner */}
             <PWAInstallBanner />
         </SidebarTriggerContext.Provider>
     );

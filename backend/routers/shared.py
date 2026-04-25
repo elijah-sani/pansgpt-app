@@ -4,7 +4,7 @@ Handles AI-powered chat interactions using Groq with vector search.
 """
 from fastapi import APIRouter, HTTPException, Depends, Header, File, UploadFile, Request, Form
 from fastapi.responses import StreamingResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import List, Optional, Literal
 import logging
 import os
@@ -399,6 +399,17 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None # For history persistence
     is_retry: bool = False  # If True, skip saving user message (already in DB from failed attempt)
     web_search: bool = False  # If True, augment response with live Tavily web search results
+
+    @field_validator('text', mode='before')  # changed: strip HTML tags, null bytes, enforce 4000-char limit
+    @classmethod
+    def sanitize_text_field(cls, v: str) -> str:
+        import re, html as _h
+        if not v:
+            return ''
+        v = _h.unescape(str(v))
+        v = re.sub(r'<[^>]+>', '', v)
+        v = v.replace('\x00', '')
+        return v.strip()[:4000]
 
 class CreateSessionRequest(BaseModel):
     title: Optional[str] = "New Chat"

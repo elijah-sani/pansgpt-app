@@ -2,7 +2,7 @@
 Notes Router  Save, fetch, and delete document highlights/notes.
 """
 from fastapi import APIRouter, HTTPException, Depends, Header
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional, List
 import logging
 import asyncio
@@ -15,6 +15,7 @@ from .shared import (
     verify_api_key,
     logger,
 )
+from .sanitize import sanitize_text, NOTE_MAX  # changed: input sanitization helper
 
 router = APIRouter(prefix="/notes", tags=["notes"])
 
@@ -29,6 +30,13 @@ class SaveNoteRequest(BaseModel):
     image_base64: str = ''
     page_number: Optional[int] = None
     user_annotation: Optional[str] = None
+
+    @field_validator('user_annotation', mode='before')  # changed: strip HTML tags and enforce 2000-char limit
+    @classmethod
+    def sanitize_annotation(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        return sanitize_text(v, NOTE_MAX) or None
 
 
 class NoteResponse(BaseModel):
@@ -336,6 +344,11 @@ async def delete_note(
 
 class UpdateNoteRequest(BaseModel):
     user_annotation: str
+
+    @field_validator('user_annotation', mode='before')  # changed: strip HTML tags and enforce 2000-char limit
+    @classmethod
+    def sanitize_annotation(cls, v: str) -> str:
+        return sanitize_text(str(v), NOTE_MAX)
 
 
 @router.patch("/{note_id}", dependencies=[Depends(verify_api_key)])

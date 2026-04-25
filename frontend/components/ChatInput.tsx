@@ -60,6 +60,10 @@ export default function ChatInput({
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const dragCounter = useRef(0);
   const isWebSearchQuotaExhausted = (webSearchUsage?.remaining ?? 1) <= 0;
+  const CHAT_MAX = 4000;  // changed: keep in sync with backend sanitize.py CHAT_MAX
+  const charCount = inputMessage.length;
+  const isOverLimit = charCount >= CHAT_MAX;
+  const showCounter = charCount >= Math.floor(CHAT_MAX * 0.9); // show at 90%
 
   const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -144,7 +148,11 @@ export default function ChatInput({
           <textarea
             ref={textareaRef}
             value={inputMessage}
-            onChange={(e) => onInputMessageChange(e.target.value)}
+            onChange={(e) => {
+              // changed: strip null bytes before passing value up
+              const cleaned = e.target.value.replace(/\x00/g, '');
+              onInputMessageChange(cleaned);
+            }}
             onPaste={onPaste}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
@@ -157,6 +165,19 @@ export default function ChatInput({
             rows={1}
             autoFocus
           />
+        )}
+
+        {/* changed: character counter — appears near limit */}
+        {showCounter && (
+          <div className={`text-right text-[10px] font-medium px-2 pb-0.5 transition-colors ${
+            isOverLimit
+              ? 'text-destructive'
+              : charCount >= CHAT_MAX - 200
+                ? 'text-amber-500'
+                : 'text-muted-foreground'
+          }`}>
+            {charCount}/{CHAT_MAX}
+          </div>
         )}
 
         <div className="flex items-center justify-between mt-2">
@@ -260,7 +281,8 @@ export default function ChatInput({
                 <button
                   type="button"
                   onClick={onSendMessage}
-                  className="p-2.5 bg-primary text-primary-foreground rounded-full hover:bg-primary/90 transition-all shadow-md flex items-center justify-center aspect-square animate-in zoom-in duration-200"
+                  disabled={isOverLimit}  {/* changed: block send when over char limit */}
+                  className="p-2.5 bg-primary text-primary-foreground rounded-full hover:bg-primary/90 transition-all shadow-md flex items-center justify-center aspect-square animate-in zoom-in duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Send className="w-4 h-4" />
                 </button>

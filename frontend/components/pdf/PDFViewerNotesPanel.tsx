@@ -3,6 +3,8 @@ import { useRef, useEffect, type KeyboardEvent } from 'react';
 import type { PDFNote } from './types';
 import { stripMarkdown } from '@/lib/stripMarkdown';
 
+const NOTE_MAX = 2000; // changed: keep in sync with backend sanitize.py NOTE_MAX
+
 const NoteCardSkeleton = () => (
   <div className="bg-background border border-border rounded-xl overflow-hidden animate-pulse">
     <div className="flex items-center justify-between px-3 pt-2.5 pb-1">
@@ -232,15 +234,27 @@ export function PDFViewerNotesPanel({
                       <div className="px-3 pb-2 space-y-1.5">
                         <textarea
                           value={editingText}
-                          onChange={(event) => onEditingTextChange(event.target.value)}
+                          onChange={(event) => {
+                            const cleaned = event.target.value.replace(/\x00/g, ''); // changed: strip null bytes
+                            onEditingTextChange(cleaned);
+                          }}
                           rows={4}
                           autoFocus
+                          maxLength={NOTE_MAX}  {/* changed: enforce NOTE_MAX on native input */}
                           className="w-full resize-none rounded-lg border border-primary/30 bg-background text-base md:text-xs text-foreground p-2 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
                         />
+                        {/* changed: char counter for edit textarea */}
+                        {editingText.length >= NOTE_MAX - 200 && (
+                          <div className={`text-right text-[10px] font-medium transition-colors ${
+                            editingText.length >= NOTE_MAX ? 'text-destructive' : editingText.length >= NOTE_MAX - 50 ? 'text-amber-500' : 'text-muted-foreground'
+                          }`}>
+                            {editingText.length}/{NOTE_MAX}
+                          </div>
+                        )}
                         <div className="flex items-center gap-1.5">
                           <button
                             onClick={() => void onSaveEdit(String(note.id))}
-                            disabled={isSavingEdit || !editingText.trim()}
+                            disabled={isSavingEdit || !editingText.trim() || editingText.length >= NOTE_MAX}  {/* changed: block save over limit */}
                             className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-primary text-primary-foreground text-[10px] font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
                           >
                             {isSavingEdit ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
@@ -318,15 +332,27 @@ export function PDFViewerNotesPanel({
         <div className="px-3 py-3 border-t border-border space-y-2">
           <textarea
             value={personalNote}
-            onChange={(event) => onPersonalNoteChange(event.target.value)}
+            onChange={(event) => {
+              const cleaned = event.target.value.replace(/\x00/g, ''); // changed: strip null bytes
+              onPersonalNoteChange(cleaned);
+            }}
             onKeyDown={handlePersonalNoteKeyDown}
             placeholder="Write your own note… (Ctrl+Enter to save)"
             rows={3}
+            maxLength={NOTE_MAX}  {/* changed: enforce NOTE_MAX on native input */}
             className="w-full resize-none rounded-lg border border-border bg-background text-base md:text-xs text-foreground placeholder:text-muted-foreground/60 p-2.5 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
           />
+          {/* changed: char counter for personal note textarea */}
+          {personalNote.length >= NOTE_MAX - 200 && (
+            <div className={`text-right text-[10px] font-medium transition-colors ${
+              personalNote.length >= NOTE_MAX ? 'text-destructive' : personalNote.length >= NOTE_MAX - 50 ? 'text-amber-500' : 'text-muted-foreground'
+            }`}>
+              {personalNote.length}/{NOTE_MAX}
+            </div>
+          )}
           <button
             onClick={() => void onSavePersonalNote()}
-            disabled={!personalNote.trim() || isSavingPersonal}
+            disabled={!personalNote.trim() || isSavingPersonal || personalNote.length >= NOTE_MAX}  {/* changed: block save over limit */}
             className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {isSavingPersonal ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
