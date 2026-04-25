@@ -11,19 +11,19 @@ import { useEffect, useState } from 'react';
  * hydrate a mismatch.
  */
 export function useOfflineStatus() {
-  const [isOnline, setIsOnline] = useState<boolean>(
-    typeof window !== 'undefined' ? navigator.onLine : true
-  );
+  // Always start online — safe for SSR (never touch navigator during render).
+  // The real value is synced inside useEffect, which only runs on the client.
+  const [isOnline, setIsOnline] = useState(true);
 
   useEffect(() => {
+    // Sync immediately on mount
+    setIsOnline(navigator.onLine);
+
     const goOnline = () => setIsOnline(true);
     const goOffline = () => setIsOnline(false);
 
     window.addEventListener('online', goOnline);
     window.addEventListener('offline', goOffline);
-
-    // Sync immediately in case the state changed before the listeners attached
-    setIsOnline(navigator.onLine);
 
     return () => {
       window.removeEventListener('online', goOnline);
