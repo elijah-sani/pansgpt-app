@@ -1840,19 +1840,6 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
     const renderChatUI = (isMobile = false) => (
         <>
-            {(isOffline || showReconnected) && (
-                <div className={`flex items-center justify-center gap-2 px-4 py-1.5 text-xs font-medium border-b border-border transition-colors ${
-                    showReconnected
-                        ? 'bg-background/90 text-foreground'
-                        : 'bg-background text-foreground'
-                }`}>
-                    {showReconnected ? (
-                        <span>Back online</span>
-                    ) : (
-                        <span>Offline — AI features not available</span>
-                    )}
-                </div>
-            )}
             <ChatInterface
             messages={chatHistory}
             isLoading={isLoading}
@@ -1865,6 +1852,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
             isMobile={isMobile}
             onCloseSidebar={() => setIsSidebarOpen(false)}
             onNewChat={handleNewChat}
+            isOffline={isOffline}
 
             // Premium UX Props
             isError={isError}

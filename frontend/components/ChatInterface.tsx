@@ -69,6 +69,7 @@ interface ChatInterfaceProps {
     currentSessionId?: string | null;
     onRegenerate?: () => void;
     onNoteAdded?: (savedNote?: unknown) => Promise<void> | void;
+    isOffline?: boolean;
 }
 
 // Helper to safely parse image_data (JSON or raw string)
@@ -113,7 +114,8 @@ export default function ChatInterface({
     contextId,
     currentSessionId,
     onRegenerate,
-    onNoteAdded
+    onNoteAdded,
+    isOffline = false,
 }: ChatInterfaceProps) {
     const MAX_IMAGES = 4;
     const isStudyMode = Boolean(contextId);
@@ -658,9 +660,15 @@ export default function ChatInterface({
                             ))}
                         </div>
                     )}
+                    {/* Offline Banner — above input card */}
+                    {isOffline && (
+                        <div className="flex items-center px-4 py-2 mb-2 rounded-2xl bg-muted/60 border border-border text-sm text-muted-foreground">
+                            <span className="font-medium">Offline — Reconnect to send messages</span>
+                        </div>
+                    )}
 
                     {/* Input Card — matching main chat layout */}
-                    <div className={`relative flex flex-col bg-card rounded-3xl p-3 shadow-sm transition-all duration-300 ${!isStudyMode ? 'border border-border' : ''} ${isListening ? 'ring-2 ring-primary/20' : ''}`}>
+                    <div className={`relative flex flex-col bg-card rounded-3xl p-3 shadow-sm transition-all duration-300 ${!isStudyMode ? 'border border-border' : ''} ${isListening ? 'ring-2 ring-primary/20' : ''} ${isOffline ? 'opacity-50 pointer-events-none select-none' : ''}`}>
                         {/* Textarea / Waveform / Processing */}
                         {isListening ? (
                             <div className="w-full flex items-center justify-center py-3 px-2">
