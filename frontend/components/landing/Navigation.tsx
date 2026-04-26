@@ -16,7 +16,7 @@ export default function Navigation() {
         <div className="flex items-center justify-between">
           {/* Logo */}
           <Link
-            href="/"
+            href="/home"
             className="flex items-center hover:opacity-80 transition-opacity p-0"
           >
             <div className="w-16 h-16 md:w-20 md:h-20 relative p-0">
@@ -31,7 +31,7 @@ export default function Navigation() {
 
           {/* Desktop Navigation */}
           <div className="hidden lg:flex items-center gap-6">
-            <Link href="/" className="text-muted-foreground hover:text-primary transition-colors">
+            <Link href="/home" className="text-muted-foreground hover:text-primary transition-colors">
               Home
             </Link>
             <Link href="/about" className="text-muted-foreground hover:text-primary transition-colors">
@@ -79,7 +79,7 @@ export default function Navigation() {
         {/* Mobile Menu */}
         {mobileMenuOpen && (
           <div className="lg:hidden mt-4 pt-4 border-t border-border space-y-2">
-            <Link href="/" className="block py-2 text-muted-foreground hover:text-primary transition-colors" onClick={() => setMobileMenuOpen(false)}>
+            <Link href="/home" className="block py-2 text-muted-foreground hover:text-primary transition-colors" onClick={() => setMobileMenuOpen(false)}>
               Home
             </Link>
             <Link href="/about" className="block py-2 text-muted-foreground hover:text-primary transition-colors" onClick={() => setMobileMenuOpen(false)}>

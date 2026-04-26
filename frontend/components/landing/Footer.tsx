@@ -26,7 +26,7 @@ export default function Footer() {
           <div>
             <h4 className="text-foreground mb-4">Product</h4>
             <div className="space-y-2">
-              <Link href="/" className="block text-muted-foreground hover:text-primary text-sm transition-colors">
+              <Link href="/home" className="block text-muted-foreground hover:text-primary text-sm transition-colors">
                 Home
               </Link>
               <Link href="/about" className="block text-muted-foreground hover:text-primary text-sm transition-colors">

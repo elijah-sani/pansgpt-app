@@ -22,6 +22,11 @@ export const analytics = {
             console.debug('[analytics] downloadClick', source);
         }
     },
+    trackStartStudyingClick: () => {
+        if (process.env.NODE_ENV === 'development') {
+            console.debug('[analytics] startStudyingClick');
+        }
+    },
     trackPageView: noop,
     trackEvent: noop,
 };
