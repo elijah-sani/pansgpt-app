@@ -1,4 +1,4 @@
-import { BookOpen, Brain, Loader2, MessageSquare, Plus, SlidersHorizontal } from 'lucide-react';
+import { BookOpen, Brain, Loader2, MessageSquare, Plus, SlidersHorizontal, NotepadText } from 'lucide-react';
 import { SidebarLink, scoreColor } from './SidebarPrimitives';
 import type { QuizHistoryItem } from './types';
 
@@ -27,6 +27,7 @@ export function QuizSidebarContent({
         <SidebarLink icon={MessageSquare} label="Chat" onClick={() => routerPush('/main')} isIconOnly={isIconOnly} />
         <SidebarLink icon={BookOpen} label="Study" onClick={() => routerPush('/reader')} isIconOnly={isIconOnly} />
         <SidebarLink icon={Plus} label="New Quiz" onClick={() => routerPush('/quiz')} active={pathname === '/quiz'} isIconOnly={isIconOnly} />
+        <SidebarLink icon={NotepadText} label="Notes" onClick={() => routerPush('/notes')} isIconOnly={isIconOnly} />
       </nav>
 
       {!isIconOnly && (

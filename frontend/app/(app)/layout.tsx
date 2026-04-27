@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, createContext, useContext } from "react";
+import React, { useState, useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Loader2, Pencil, Trash2, X } from "lucide-react";
 import AppSidebar from "@/components/AppSidebar";
@@ -12,13 +12,12 @@ import SettingsModal from "@/components/SettingsModal";
 import type { MainUser } from "@/components/main/types";
 import { ChatSessionProvider, useChatSession } from "@/lib/ChatSessionContext";
 import { PROFILE_UPDATED_EVENT, type ProfileUpdateDetail } from "@/lib/profile-events";
+import { SidebarControlsContext } from "@/lib/sidebar-controls";
 import { supabase } from "@/lib/supabase";
 import { api } from "@/lib/api";
 
 // ── Sidebar trigger context ──────────────────────────────────────────────────
 // Allows any child page to call openSidebar() without prop drilling.
-export const SidebarTriggerContext = createContext<() => void>(() => { });
-export const useSidebarTrigger = () => useContext(SidebarTriggerContext);
 
 // ── Inner layout — runs inside ChatSessionProvider so it can call useChatSession
 function AppLayoutContent({ children }: { children: React.ReactNode }) {
@@ -82,6 +81,13 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
     // Auto-close sidebar on mobile whenever the route changes
     useEffect(() => {
         if (typeof window !== "undefined" && window.innerWidth < 768) {
+            setIsSidebarOpen(false);
+        }
+    }, [pathname]);
+
+    // Force collapsed sidebar whenever Notes is opened.
+    useEffect(() => {
+        if (pathname?.startsWith("/notes")) {
             setIsSidebarOpen(false);
         }
     }, [pathname]);
@@ -188,7 +194,14 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
     };
 
     return (
-        <SidebarTriggerContext.Provider value={() => setIsSidebarOpen(true)}>
+        <SidebarControlsContext.Provider
+            value={{
+                isOpen: isSidebarOpen,
+                open: () => setIsSidebarOpen(true),
+                close: () => setIsSidebarOpen(false),
+                toggle: () => setIsSidebarOpen((prev) => !prev),
+            }}
+        >
             <div className="flex h-[100dvh] w-full overflow-hidden bg-background">
                 {/* Mobile overlay */}
                 {isSidebarOpen && !isQuizTaking && (
@@ -346,7 +359,7 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
             />
             <OfflineBanner />  {/* changed: offline indicator banner */}
             <PWAInstallBanner />
-        </SidebarTriggerContext.Provider>
+        </SidebarControlsContext.Provider>
     );
 }
 

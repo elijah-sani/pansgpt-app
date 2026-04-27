@@ -6,7 +6,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import rehypeRaw from 'rehype-raw';
 import 'katex/dist/katex.min.css';
-import { ThumbsUp, ThumbsDown, Copy, Check, RotateCcw, StopCircle, Quote, BookmarkPlus, Loader2 } from 'lucide-react';
+import { ThumbsUp, ThumbsDown, Copy, Check, RotateCcw, StopCircle, Quote, BookmarkPlus, Bookmark, Loader2 } from 'lucide-react';
 import FeedbackModal from './FeedbackModal';
 import { api } from '@/lib/api';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
@@ -32,7 +32,8 @@ interface MessageBubbleProps {
     isThinking?: boolean;
     isStreaming?: boolean;
     showCitationsButton?: boolean;
-    onAddToNote?: (content: string) => Promise<void> | void;
+    onAddToNote?: (content: string) => Promise<boolean | void> | boolean | void;
+    noteActionIcon?: 'bookmark' | 'bookmark-plus';
 }
 
 export default function MessageBubble({
@@ -42,6 +43,7 @@ export default function MessageBubble({
     isStreaming = false,
     showCitationsButton = true,
     onAddToNote,
+    noteActionIcon = 'bookmark-plus',
 }: MessageBubbleProps) {
     const [feedback, setFeedback] = useState<'up' | 'down' | null>(null);
     const [copied, setCopied] = useState(false);
@@ -156,9 +158,22 @@ export default function MessageBubble({
             return;
         }
 
+        const strippedContent = stripMarkdown(message.content).trim();
+        const cleanContent = strippedContent.length > 0 ? strippedContent : message.content.trim();
+        if (!cleanContent) {
+            return;
+        }
         try {
-            setIsSavingNote(true);
-            await onAddToNote(stripMarkdown(message.content));
+            const maybeResult = onAddToNote(cleanContent);
+            if (maybeResult instanceof Promise) {
+                setIsSavingNote(true);
+                const resolved = await maybeResult;
+                if (resolved === false) {
+                    return;
+                }
+            } else if (maybeResult === false) {
+                return;
+            }
             setNoteSaved(true);
             window.setTimeout(() => setNoteSaved(false), 2000);
         } catch (err) {
@@ -309,7 +324,7 @@ export default function MessageBubble({
                             ) : noteSaved ? (
                                 <Check className="w-4 h-4 text-primary" />
                             ) : (
-                                <BookmarkPlus className="w-4 h-4" />
+                                noteActionIcon === 'bookmark' ? <Bookmark className="w-4 h-4" /> : <BookmarkPlus className="w-4 h-4" />
                             )}
                         </button>
                     )}

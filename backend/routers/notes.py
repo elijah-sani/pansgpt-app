@@ -7,6 +7,7 @@ from typing import Optional, List
 import logging
 import asyncio
 import uuid
+from datetime import datetime, timezone
 from dependencies import get_current_user, User
 from services import llm_engine
 from . import shared
@@ -15,7 +16,7 @@ from .shared import (
     verify_api_key,
     logger,
 )
-from .sanitize import sanitize_text, NOTE_MAX  # changed: input sanitization helper
+from .sanitize import sanitize_text, NOTE_MAX
 
 router = APIRouter(prefix="/notes", tags=["notes"])
 
@@ -25,29 +26,53 @@ _doc_uuid_cache: dict[str, str] = {}
 
 
 # ---------- Models ----------
-class SaveNoteRequest(BaseModel):
-    document_id: str
-    image_base64: str = ''
-    page_number: Optional[int] = None
+class NoteCreateRequest(BaseModel):
+    document_id: Optional[str] = None
+    image_base64: Optional[str] = ''
+    ai_explanation: Optional[str] = None
     user_annotation: Optional[str] = None
+    page_number: Optional[int] = None
+    title: Optional[str] = None
+    content: Optional[list] = None
+    tags: List[str] = []
 
-    @field_validator('user_annotation', mode='before')  # changed: strip HTML tags and enforce 2000-char limit
+    @field_validator('user_annotation', mode='before')
     @classmethod
     def sanitize_annotation(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
             return None
         return sanitize_text(v, NOTE_MAX) or None
 
+class NoteUpdateRequest(BaseModel):
+    user_annotation: Optional[str] = None
+    title: Optional[str] = None
+    content: Optional[list] = None
+    tags: Optional[List[str]] = None
+    append_blocks: Optional[bool] = False
+    image_base64: Optional[str] = None
+    page_number: Optional[int] = None
+
+    @field_validator('user_annotation', mode='before')
+    @classmethod
+    def sanitize_annotation(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        return sanitize_text(v, NOTE_MAX) or None
 
 class NoteResponse(BaseModel):
     id: str
-    document_id: str
-    image_base64: str
-    ai_explanation: Optional[str]
-    category: Optional[str]
-    page_number: Optional[int]
-    user_annotation: Optional[str]
+    user_id: str
+    document_id: Optional[str] = None
+    image_base64: Optional[str] = None
+    ai_explanation: Optional[str] = None
+    category: Optional[str] = None
+    page_number: Optional[int] = None
+    user_annotation: Optional[str] = None
     created_at: str
+    title: Optional[str] = None
+    content: Optional[list] = None
+    tags: Optional[List[str]] = None
+    last_edited_at: Optional[str] = None
 
 
 async def _resolve_document_uuid(sb, document_id: str) -> str:
@@ -55,17 +80,14 @@ async def _resolve_document_uuid(sb, document_id: str) -> str:
     Results are cached in _doc_uuid_cache so the extra DB lookup runs at most
     once per server start per unique document ID.
     """
-    # Fast path 1: already a valid UUID — no lookup needed
     try:
         return str(uuid.UUID(document_id))
     except Exception:
         pass
 
-    # Fast path 2: cached from a previous request
     if document_id in _doc_uuid_cache:
         return _doc_uuid_cache[document_id]
 
-    # Slow path: hit the DB, then cache the result
     try:
         res = await _execute_with_retry(
             lambda: sb.table("pans_library")
@@ -83,81 +105,11 @@ async def _resolve_document_uuid(sb, document_id: str) -> str:
         raise HTTPException(status_code=404, detail="Document not found.")
 
     resolved = res.data[0]["id"]
-    _doc_uuid_cache[document_id] = resolved  # cache for all future requests
+    _doc_uuid_cache[document_id] = resolved
     return resolved
 
 
-# ---------- AI Categorization ----------
-async def _categorize_note(image_base64: str, annotation: Optional[str] = None) -> dict:
-    """
-    Use Gemma 3 12B to generate a brief explanation and category for a saved note.
-    Returns dict with 'explanation' and 'category'.
-    Falls back gracefully on any error.
-    """
-    if not image_base64:
-        # Text-only note  classify based on annotation text
-        return {"explanation": None, "category": "Key Point"}
-
-    try:
-        if llm_engine.google_client is None:
-            return {"explanation": None, "category": "Key Point"}
-
-        prompt = (
-            "You are analyzing a snippet from a pharmacy textbook or lecture slide.\n"
-            "Provide:\n"
-            "1. CATEGORY: One of: Definition, Key Point, Formula, Important\n"
-            "2. EXPLANATION: A single concise sentence (max 30 words) summarizing what this snippet contains.\n\n"
-            "Respond in this exact format:\n"
-            "CATEGORY: <category>\n"
-            "EXPLANATION: <explanation>"
-        )
-
-        response = await asyncio.wait_for(
-            llm_engine.google_client.chat.completions.create(
-                model="gemma-3-4b-it",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": f"data:image/png;base64,{image_base64}"}
-                            },
-                            {"type": "text", "text": prompt}
-                        ]
-                    }
-                ],
-                temperature=0.2,
-                max_tokens=100,
-                stream=False,
-            ),
-            timeout=8.0,
-        )
-
-        raw = (response.choices[0].message.content or "").strip()
-        category = "Key Point"
-        explanation = None
-
-        for line in raw.splitlines():
-            if line.startswith("CATEGORY:"):
-                val = line.replace("CATEGORY:", "").strip()
-                if val in ("Definition", "Key Point", "Formula", "Important"):
-                    category = val
-            elif line.startswith("EXPLANATION:"):
-                explanation = line.replace("EXPLANATION:", "").strip()
-
-        return {"explanation": explanation, "category": category}
-
-    except asyncio.TimeoutError:
-        logger.warning("Note categorization skipped: model took too long")
-        return {"explanation": None, "category": "Key Point"}
-    except Exception as e:
-        logger.warning(f"Note categorization failed: {e}")
-        return {"explanation": None, "category": "Key Point"}
-
-
 async def _fix_typos(text: str) -> str:
-    """Use Gemma 3 4B to fix typos — lightweight model, 5s hard timeout."""
     if not text or len(text.strip()) < 3:
         return text
     try:
@@ -198,31 +150,11 @@ async def _fix_typos(text: str) -> str:
         return text
 
 
-async def _background_categorize_and_update(note_id: str, image_base64: str, annotation: Optional[str], sb):
-    """Background task: categorize image note then update DB silently."""
-    try:
-        result = await _categorize_note(image_base64, annotation)
-        await _execute_with_retry(
-            lambda: sb.table("document_notes")
-                .update({
-                    "ai_explanation": result["explanation"],
-                    "category": result["category"],
-                })
-                .eq("id", str(note_id))
-                .execute(),
-            "Background note categorization",
-        )
-        logger.info(f"Background categorization applied for note {note_id}: {result['category']}")
-    except Exception as e:
-        logger.warning(f"Background note categorization failed (non-fatal): {e}")
-
-
 async def _background_fix_and_update(note_id: str, text: str):
-    """Background task: fix typos then update the DB record silently."""
     try:
         corrected = await _fix_typos(text)
         if corrected == text:
-            return  # Nothing to update
+            return
         sb = shared.supabase_service_client or shared.supabase_client
         if not sb:
             return
@@ -239,48 +171,80 @@ async def _background_fix_and_update(note_id: str, text: str):
 
 
 # ---------- Routes ----------
-@router.post("", dependencies=[Depends(verify_api_key)])
-async def save_note(
-    body: SaveNoteRequest,
+
+@router.get("", dependencies=[Depends(verify_api_key)])
+async def get_all_notes(
+    search: Optional[str] = None,
+    tag: Optional[str] = None,
+    category: Optional[str] = None,
     current_user: User = Depends(get_current_user)
 ):
-    """Save a highlighted snippet as a note with AI categorization."""
+    """Fetch all notes for the current user globally (not filtered by document)."""
     sb = shared.supabase_service_client or shared.supabase_client
     if not sb:
         raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
 
-    resolved_document_id = await _resolve_document_uuid(sb, body.document_id)
+    try:
+        query = sb.table("document_notes").select("*").eq("user_id", current_user.id)
+        
+        if search:
+            query = query.or_(f"title.ilike.%{search}%,user_annotation.ilike.%{search}%")
+        if tag:
+            query = query.contains("tags", [tag])
+        if category:
+            query = query.eq("category", category)
+            
+        res = await _execute_with_retry(
+            lambda: query.order("last_edited_at", desc=True).execute(),
+            "Fetch all notes",
+        )
+        return {"notes": res.data or []}
+    except Exception as e:
+        logger.error(f"Fetch all notes error: {e}")
+        raise HTTPException(status_code=500, detail="Unable to load notes. Please try again.")
 
-    # For text-only notes: categorize instantly (no AI call needed)
-    # For image notes: save immediately with defaults, categorize in background
-    if not body.image_base64:
-        initial_category = "Key Point"
-        initial_explanation = None
-    else:
-        initial_category = "Key Point"
-        initial_explanation = None
+
+@router.post("", dependencies=[Depends(verify_api_key)])
+async def save_note(
+    body: NoteCreateRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Save a highlighted snippet as a note."""
+    sb = shared.supabase_service_client or shared.supabase_client
+    if not sb:
+        raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
+
+    resolved_document_id = None
+    if body.document_id:
+        resolved_document_id = await _resolve_document_uuid(sb, body.document_id)
+
+    initial_category = None
+    initial_explanation = None
 
     try:
+        insert_payload = {
+            "user_id": current_user.id,
+            "document_id": resolved_document_id,
+            "image_base64": body.image_base64 or '',
+            "ai_explanation": initial_explanation,
+            "category": initial_category,
+            "page_number": body.page_number,
+            "user_annotation": body.user_annotation,
+            "last_edited_at": datetime.now(timezone.utc).isoformat()
+        }
+        if body.title is not None:
+            insert_payload["title"] = body.title
+        if body.content is not None:
+            insert_payload["content"] = body.content
+        if body.tags is not None:
+            insert_payload["tags"] = body.tags
+
         res = await _execute_with_retry(
-            lambda: sb.table("document_notes").insert({
-                "user_id": current_user.id,
-                "document_id": resolved_document_id,
-                "image_base64": body.image_base64,
-                "ai_explanation": initial_explanation,
-                "category": initial_category,
-                "page_number": body.page_number,
-                "user_annotation": body.user_annotation,
-            }).execute(),
+            lambda: sb.table("document_notes").insert(insert_payload).execute(),
             "Save document note",
         )
         saved = res.data[0]
 
-        # Fire-and-forget background tasks — never block the response
-        if body.image_base64:
-            # Categorize image note in background and update DB when done
-            asyncio.create_task(_background_categorize_and_update(
-                saved["id"], body.image_base64, body.user_annotation, sb
-            ))
         if body.user_annotation and body.user_annotation.strip():
             asyncio.create_task(_background_fix_and_update(saved["id"], body.user_annotation))
         return saved
@@ -289,12 +253,16 @@ async def save_note(
         raise HTTPException(status_code=500, detail="Unable to save note. Please try again.")
 
 
-@router.get("/{document_id}", dependencies=[Depends(verify_api_key)])
+@router.get(
+    "/{document_id}",
+    response_model=Optional[NoteResponse],
+    dependencies=[Depends(verify_api_key)],
+)
 async def get_notes(
     document_id: str,
     current_user: User = Depends(get_current_user)
 ):
-    """Fetch all notes for a document belonging to the current user."""
+    """Fetch the most recent note for a document belonging to the current user."""
     sb = shared.supabase_service_client or shared.supabase_client
     if not sb:
         raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
@@ -307,14 +275,177 @@ async def get_notes(
                 .select("*")
                 .eq("user_id", current_user.id)
                 .eq("document_id", resolved_document_id)
-                .order("created_at", desc=False)
+                .order("created_at", desc=True)
+                .limit(1)
                 .execute(),
             "Fetch document notes",
         )
-        return {"notes": res.data or []}
+        if not res.data:
+            return None
+        return res.data[0]
     except Exception as e:
         logger.error(f"Fetch notes error: {e}")
         raise HTTPException(status_code=500, detail="Unable to load notes. Please try again.")
+
+
+@router.patch("/{note_id}", dependencies=[Depends(verify_api_key)])
+async def update_note(
+    note_id: str,
+    body: NoteUpdateRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Update a specific note owned by the current user."""
+    sb = shared.supabase_service_client or shared.supabase_client
+    if not sb:
+        raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
+
+    try:
+        update_payload = {
+            "last_edited_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        if body.user_annotation is not None:
+            update_payload["user_annotation"] = body.user_annotation
+        if body.title is not None:
+            update_payload["title"] = body.title
+        if body.tags is not None:
+            update_payload["tags"] = body.tags
+        if body.image_base64 is not None:
+            update_payload["image_base64"] = body.image_base64
+        if body.page_number is not None:
+            update_payload["page_number"] = body.page_number
+
+        if body.content is not None:
+            if getattr(body, 'append_blocks', False):
+                res = await _execute_with_retry(
+                    lambda: sb.table("document_notes")
+                        .select("content")
+                        .eq("id", note_id)
+                        .eq("user_id", current_user.id)
+                        .execute(),
+                    "Fetch note content for append",
+                )
+                if not res.data:
+                    raise HTTPException(status_code=404, detail="Note not found.")
+                existing_content = res.data[0].get("content") or []
+                update_payload["content"] = existing_content + body.content
+            else:
+                update_payload["content"] = body.content
+
+        res = await _execute_with_retry(
+            lambda: sb.table("document_notes")
+                .update(update_payload)
+                .eq("id", note_id)
+                .eq("user_id", current_user.id)
+                .execute(),
+            "Update document note",
+        )
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Note not found.")
+        saved = res.data[0]
+
+        if body.user_annotation and body.user_annotation.strip():
+            asyncio.create_task(_background_fix_and_update(note_id, body.user_annotation))
+        return saved
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update note error: {e}")
+        raise HTTPException(status_code=500, detail="Unable to update note. Please try again.")
+
+
+@router.post("/{note_id}/ai-title", dependencies=[Depends(verify_api_key)])
+async def generate_ai_title(
+    note_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Generate an AI title for a note based on its content."""
+    sb = shared.supabase_service_client or shared.supabase_client
+    if not sb:
+        raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
+
+    try:
+        # 1. Fetch the note from DB
+        res = await _execute_with_retry(
+            lambda: sb.table("document_notes")
+                .select("*")
+                .eq("id", note_id)
+                .eq("user_id", current_user.id)
+                .execute(),
+            "Fetch note for AI title",
+        )
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Note not found.")
+        note = res.data[0]
+
+        # 2. Extract plain text from the content jsonb array
+        extracted_text = ""
+        if note.get("content"):
+            for block in note["content"]:
+                if isinstance(block, dict) and "content" in block:
+                    for item in block["content"]:
+                        if isinstance(item, dict) and item.get("type") == "text":
+                            extracted_text += item.get("text", "") + " "
+        elif note.get("user_annotation"):
+            extracted_text = note["user_annotation"]
+
+        extracted_text = extracted_text.strip()
+
+        # 3. If no text found return error
+        if not extracted_text:
+            return {"error": "Not enough content to generate a title"}
+
+        # 4. Call existing LLM via asyncio.wait_for (same pattern as _categorize_note)
+        prompt = (
+            "Generate a short, specific title (max 8 words) for this pharmacy study note. "
+            "Return ONLY the title text, nothing else, no quotes, no punctuation at the end.\n"
+            f"Note content: {extracted_text}"
+        )
+
+        if llm_engine.google_client is None:
+            raise HTTPException(status_code=503, detail="AI service unavailable.")
+
+        response = await asyncio.wait_for(
+            llm_engine.google_client.chat.completions.create(
+                model="gemma-3-4b-it",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.2,
+                max_tokens=20,
+                stream=False,
+            ),
+            timeout=8.0,
+        )
+
+        generated_title = (response.choices[0].message.content or "").strip().strip('"').strip("'").rstrip(".")
+
+        # 5. Save generated title back to note
+        await _execute_with_retry(
+            lambda: sb.table("document_notes")
+                .update({
+                    "title": generated_title,
+                    "last_edited_at": datetime.now(timezone.utc).isoformat()
+                })
+                .eq("id", note_id)
+                .execute(),
+            "Update note AI title",
+        )
+
+        # 6. Return generated title
+        return {"title": generated_title}
+
+    except HTTPException:
+        raise
+    except asyncio.TimeoutError:
+        logger.warning("AI title generation timed out")
+        raise HTTPException(status_code=504, detail="AI service timed out.")
+    except Exception as e:
+        logger.error(f"AI title generation error: {e}")
+        raise HTTPException(status_code=500, detail="Unable to generate title. Please try again.")
 
 
 @router.delete("/{note_id}", dependencies=[Depends(verify_api_key)])
@@ -340,46 +471,3 @@ async def delete_note(
     except Exception as e:
         logger.error(f"Delete note error: {e}")
         raise HTTPException(status_code=500, detail="Unable to delete note. Please try again.")
-
-
-class UpdateNoteRequest(BaseModel):
-    user_annotation: str
-
-    @field_validator('user_annotation', mode='before')  # changed: strip HTML tags and enforce 2000-char limit
-    @classmethod
-    def sanitize_annotation(cls, v: str) -> str:
-        return sanitize_text(str(v), NOTE_MAX)
-
-
-@router.patch("/{note_id}", dependencies=[Depends(verify_api_key)])
-async def update_note(
-    note_id: str,
-    body: UpdateNoteRequest,
-    current_user: User = Depends(get_current_user)
-):
-    """Update the annotation text of a specific note owned by the current user."""
-    sb = shared.supabase_service_client or shared.supabase_client
-    if not sb:
-        raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
-
-    try:
-        res = await _execute_with_retry(
-            lambda: sb.table("document_notes")
-                .update({"user_annotation": body.user_annotation})
-                .eq("id", note_id)
-                .eq("user_id", current_user.id)
-                .execute(),
-            "Update document note",
-        )
-        if not res.data:
-            raise HTTPException(status_code=404, detail="Note not found.")
-        saved = res.data[0]
-        # Fire-and-forget: correct typos in background
-        if body.user_annotation and body.user_annotation.strip():
-            asyncio.create_task(_background_fix_and_update(note_id, body.user_annotation))
-        return saved
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Update note error: {e}")
-        raise HTTPException(status_code=500, detail="Unable to update note. Please try again.")

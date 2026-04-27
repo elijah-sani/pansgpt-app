@@ -20,7 +20,6 @@ const SnippetMenu: React.FC<SnippetMenuProps> = ({
     onAddToInput,
     onSaveNote
 }) => {
-
     const handleAskAI = () => {
         const attachment = typeof imageBlob === 'string' ? imageBlob : '';
         if (!attachment) return;

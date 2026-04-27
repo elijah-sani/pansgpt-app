@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { User as SupabaseUser } from '@supabase/supabase-js';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useSidebarTrigger } from '@/app/(app)/layout';
+import { useSidebarTrigger } from '@/lib/sidebar-controls';
 
 import { api } from '@/lib/api';
 import { supabase } from '@/lib/supabase';

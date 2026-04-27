@@ -14,3 +14,18 @@
 
 
 
+
+.bn-editor {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  background: transparent !important;
+}
+
+.bn-block-outer {
+  padding-left: 0 !important;
+}
+
+.bn-editor .ProseMirror {
+  padding: 0 0 5rem 0 !important;
+}
+

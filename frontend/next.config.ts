@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import withPWA from "@ducanh2912/next-pwa";
+import path from "path";
 
 const withPWAConfig = withPWA({
   dest: "public",
@@ -28,6 +29,23 @@ const withPWAConfig = withPWA({
 });
 
 const nextConfig: NextConfig = {
+  transpilePackages: [
+    "@blocknote/core",
+    "@blocknote/react",
+    "@tiptap/core",
+    "@tiptap/pm",
+    "@tiptap/react",
+    "@handlewithcare/prosemirror-inputrules",
+  ],
+  webpack: (config) => {
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      react: path.resolve('./node_modules/react'),
+      'react-dom': path.resolve('./node_modules/react-dom'),
+      'pdfjs-dist$': path.resolve('./node_modules/pdfjs-dist/legacy/build/pdf.mjs'),
+    }
+    return config
+  },
   turbopack: {},
   typescript: {
     ignoreBuildErrors: false,

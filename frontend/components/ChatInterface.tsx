@@ -1,3 +1,5 @@
+'use client';
+
 import React, { useRef, useEffect, useState } from 'react';
 import {
     Clock,
@@ -37,6 +39,7 @@ import MessageBubble from './MessageBubble';
 import ReportProblemModal from './ReportProblemModal';
 import ChatSkeleton from './ChatSkeleton';
 import { api } from '@/lib/api';
+import { toast } from 'sonner';
 
 interface ChatInterfaceProps {
     messages: Message[];
@@ -89,6 +92,52 @@ const getImages = (imgData: string | undefined): string[] => {
 };
 
 const MESSAGE_COLLAPSE_WORD_THRESHOLD = 20;
+type NoteBlock = {
+    type: 'paragraph';
+    content: Array<{
+        type: 'text';
+        text: string;
+        styles: Record<string, never>;
+    }>;
+};
+
+type NoteSummary = {
+    id: string | number;
+    title?: string | null;
+};
+
+type NotesResponse = {
+    notes?: NoteSummary[];
+};
+
+const getExistingNoteIdFromDocumentPayload = (payload: unknown): string | null => {
+    if (!payload || typeof payload !== 'object') {
+        return null;
+    }
+
+    const maybeList = (payload as NotesResponse).notes;
+    if (Array.isArray(maybeList) && maybeList.length > 0 && maybeList[0]?.id !== undefined && maybeList[0]?.id !== null) {
+        return String(maybeList[0].id);
+    }
+
+    const maybeSingle = payload as Partial<NoteSummary>;
+    if (maybeSingle.id !== undefined && maybeSingle.id !== null) {
+        return String(maybeSingle.id);
+    }
+
+    return null;
+};
+
+const createParagraphBlock = (text: string): NoteBlock => ({
+    type: 'paragraph',
+    content: [
+        {
+            type: 'text',
+            text,
+            styles: {},
+        },
+    ],
+});
 
 export default function ChatInterface({
     messages,
@@ -327,21 +376,36 @@ export default function ChatInterface({
             return;
         }
 
-        const res = await api.fetch('/notes', {
-            method: 'POST',
-            body: JSON.stringify({
+        const trimmedContent = content.trim();
+        if (!trimmedContent) {
+            return;
+        }
+
+        const block = createParagraphBlock(trimmedContent);
+        const notesResponse = await api.get(`/notes/${contextId}`);
+        if (!notesResponse.ok && notesResponse.status !== 404) {
+            throw new Error(`Failed to load note: ${notesResponse.status}`);
+        }
+
+        const notesData = notesResponse.status === 404 ? null : await notesResponse.json();
+        const existingNoteId = getExistingNoteIdFromDocumentPayload(notesData);
+
+        const res = existingNoteId
+            ? await api.patch(`/notes/${existingNoteId}`, {
+                append_blocks: true,
+                content: [block],
+            })
+            : await api.post('/notes', {
                 document_id: contextId,
-                image_base64: '',
-                page_number: null,
-                user_annotation: content,
-            }),
-        });
+                content: [block],
+            });
 
         if (!res.ok) {
             throw new Error(`Failed to save note: ${res.status}`);
         }
 
         const saved = await res.json();
+        toast.success('Added to your notes');
         await onNoteAdded?.(saved);
     };
 

@@ -1,4 +1,4 @@
-import { BookOpen, Brain, MessageSquare } from 'lucide-react';
+import { BookOpen, Brain, MessageSquare, NotepadText } from 'lucide-react';
 import { SidebarLink } from './SidebarPrimitives';
 
 type StudySidebarContentProps = {
@@ -18,6 +18,7 @@ export function StudySidebarContent({
         <SidebarLink icon={MessageSquare} label="Chat" onClick={() => routerPush('/main')} isIconOnly={isIconOnly} />
         <SidebarLink icon={BookOpen} label="All Courses" onClick={() => routerPush('/reader')} active={pathname === '/reader'} isIconOnly={isIconOnly} />
         <SidebarLink icon={Brain} label="Quiz" onClick={() => routerPush('/quiz')} isIconOnly={isIconOnly} />
+        <SidebarLink icon={NotepadText} label="Notes" onClick={() => routerPush('/notes')} isIconOnly={isIconOnly} />
       </nav>
       {!isIconOnly && (
         <>

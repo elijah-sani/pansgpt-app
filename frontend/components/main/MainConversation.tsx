@@ -1,3 +1,5 @@
+'use client';
+
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'; // changed: added useLayoutEffect for synchronous scroll anchoring after DOM paint
 import type { CSSProperties, ChangeEvent, ClipboardEvent, Dispatch, RefObject, SetStateAction } from 'react';
 import { AlertCircle, Check, ChevronDown, Copy, Pencil, RotateCw } from 'lucide-react';
@@ -5,8 +7,10 @@ import { AnimatePresence, motion } from 'framer-motion';
 import ChatInput from '@/components/ChatInput';
 import ChatSkeleton from '@/components/ChatSkeleton';
 import MessageBubble, { type Message } from '@/components/MessageBubble';
+import { api } from '@/lib/api';
 import { CHAT_TEXT_SIZE_EVENT, CHAT_TEXT_SIZE_KEY, type ChatTextSize } from '@/lib/settings-events';
 import type { WebSearchUsage } from './types';
+import { toast } from 'sonner';
 
 const MESSAGE_COLLAPSE_THRESHOLD = 300;
 // changed: LOAD_OLDER_SCROLL_THRESHOLD removed — IntersectionObserver replaces the scroll threshold check
@@ -33,6 +37,38 @@ const getImages = (imgData: string | undefined): string[] => {
     return [imgData];
   }
 };
+
+type NoteParagraphBlock = {
+  type: 'paragraph';
+  content: Array<{
+    type: 'text';
+    text: string;
+    styles: Record<string, never>;
+  }>;
+};
+
+type ExistingNote = {
+  id: string;
+  title: string;
+};
+
+type NotesListResponse = {
+  notes?: Array<{
+    id?: string | number | null;
+    title?: string | null;
+  }>;
+};
+
+const createParagraphBlock = (text: string): NoteParagraphBlock => ({
+  type: 'paragraph',
+  content: [
+    {
+      type: 'text',
+      text,
+      styles: {},
+    },
+  ],
+});
 
 type MainConversationProps = {
   activeSessionId: string | null;
@@ -136,6 +172,15 @@ export function MainConversation({
   const olderMessagesTriggerRef = useRef<HTMLDivElement | null>(null); // changed: sentinel div watched by IntersectionObserver to load older messages
   const scrollContainerRef = useRef<HTMLDivElement>(null); // changed: local ref to the scroll container for synchronous height measurements
   const previousScrollHeight = useRef<number>(0); // changed: captures scrollHeight right before fetch so useLayoutEffect can anchor position
+  const [isBookmarkModalOpen, setIsBookmarkModalOpen] = useState(false);
+  const [bookmarkMode, setBookmarkMode] = useState<'new' | 'existing'>('new');
+  const [bookmarkMessage, setBookmarkMessage] = useState('');
+  const [newNoteTitle, setNewNoteTitle] = useState('');
+  const [existingNotes, setExistingNotes] = useState<ExistingNote[]>([]);
+  const [isLoadingExistingNotes, setIsLoadingExistingNotes] = useState(false);
+  const [isSavingBookmark, setIsSavingBookmark] = useState(false);
+  const [selectedExistingNoteId, setSelectedExistingNoteId] = useState<string | null>(null);
+  const [existingNoteSearch, setExistingNoteSearch] = useState('');
 
   useEffect(() => {
     const savedSize = window.localStorage.getItem(CHAT_TEXT_SIZE_KEY);
@@ -176,6 +221,113 @@ export function MainConversation({
       console.error('Failed to copy message:', error);
     }
   };
+
+  const closeBookmarkModal = () => {
+    setIsBookmarkModalOpen(false);
+    setIsSavingBookmark(false);
+    setBookmarkMode('new');
+    setNewNoteTitle('');
+    setBookmarkMessage('');
+    setSelectedExistingNoteId(null);
+    setExistingNoteSearch('');
+  };
+
+  const loadExistingNotes = async () => {
+    if (isLoadingExistingNotes) {
+      return;
+    }
+
+    setIsLoadingExistingNotes(true);
+    try {
+      const response = await api.get('/notes');
+      if (!response.ok) {
+        throw new Error(`Failed to load notes: ${response.status}`);
+      }
+
+      const payload = (await response.json()) as NotesListResponse;
+      const mappedNotes = (payload.notes ?? [])
+        .filter((note): note is { id: string | number; title?: string | null } => note.id !== undefined && note.id !== null)
+        .map((note) => ({
+          id: String(note.id),
+          title: typeof note.title === 'string' && note.title.trim().length > 0 ? note.title.trim() : 'Untitled note',
+        }));
+      setExistingNotes(mappedNotes);
+    } catch (error) {
+      console.error('Failed to load existing notes:', error);
+      toast.error('Unable to load notes');
+    } finally {
+      setIsLoadingExistingNotes(false);
+    }
+  };
+
+  const openBookmarkModal = (content: string): boolean => {
+    if (!content.trim()) {
+      return false;
+    }
+
+    setBookmarkMessage(content);
+    setNewNoteTitle('');
+    setBookmarkMode('new');
+    setSelectedExistingNoteId(null);
+    setExistingNoteSearch('');
+    setIsBookmarkModalOpen(true);
+    return false;
+  };
+
+  const handleBookmarkModeChange = (mode: 'new' | 'existing') => {
+    setBookmarkMode(mode);
+    if (mode === 'existing') {
+      void loadExistingNotes();
+    }
+  };
+
+  const handleSaveBookmark = async () => {
+    const normalizedMessage = bookmarkMessage.trim();
+    if (!normalizedMessage || isSavingBookmark) {
+      return;
+    }
+
+    const paragraphBlock = createParagraphBlock(normalizedMessage);
+    setIsSavingBookmark(true);
+    try {
+      if (bookmarkMode === 'new') {
+        const response = await api.post('/notes', {
+          title: newNoteTitle.trim() ? newNoteTitle.trim() : null,
+          content: [paragraphBlock],
+          document_id: null,
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to save note: ${response.status}`);
+        }
+        toast.success('Note saved');
+        closeBookmarkModal();
+        return;
+      }
+
+      if (!selectedExistingNoteId) {
+        return;
+      }
+
+      const response = await api.patch(`/notes/${selectedExistingNoteId}`, {
+        append_blocks: true,
+        content: [paragraphBlock],
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to update note: ${response.status}`);
+      }
+      toast.success('Added to note');
+      closeBookmarkModal();
+    } catch (error) {
+      console.error('Failed to bookmark message:', error);
+      toast.error('Unable to save note');
+    } finally {
+      setIsSavingBookmark(false);
+    }
+  };
+
+  const filteredExistingNotes = existingNotes.filter((note) =>
+    note.title.toLowerCase().includes(existingNoteSearch.trim().toLowerCase())
+  );
 
   useEffect(() => {
     const container = chatScrollRef.current;
@@ -417,6 +569,8 @@ export function MainConversation({
                         message={message}
                         isThinking={Boolean(message.isThinking)}
                         isStreaming={isStreamingAI}
+                        onAddToNote={openBookmarkModal}
+                        noteActionIcon="bookmark"
                         onRegenerate={index === messages.length - 1 && activeSessionId ? handleRegenerate : undefined}
                       />
                     )}
@@ -459,6 +613,102 @@ export function MainConversation({
           <ChevronDown className="w-5 h-5" />
         </button>
       </div>
+
+      {isBookmarkModalOpen && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-xl">
+            <div className="mb-4">
+              <h3 className="text-lg font-semibold text-foreground">Save to notes</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {bookmarkMessage.slice(0, 100)}
+                {bookmarkMessage.length > 100 ? '...' : ''}
+              </p>
+            </div>
+
+            <div className="mb-4 grid grid-cols-2 gap-2 rounded-xl bg-muted/60 p-1">
+              <button
+                type="button"
+                onClick={() => handleBookmarkModeChange('new')}
+                className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                  bookmarkMode === 'new' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                Save as new note
+              </button>
+              <button
+                type="button"
+                onClick={() => handleBookmarkModeChange('existing')}
+                className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                  bookmarkMode === 'existing' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                Add to existing
+              </button>
+            </div>
+
+            {bookmarkMode === 'new' ? (
+              <div className="space-y-3">
+                <input
+                  type="text"
+                  value={newNoteTitle}
+                  onChange={(event) => setNewNoteTitle(event.target.value)}
+                  placeholder="Note title..."
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary/40"
+                />
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <input
+                  type="text"
+                  value={existingNoteSearch}
+                  onChange={(event) => setExistingNoteSearch(event.target.value)}
+                  placeholder="Search notes..."
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary/40"
+                />
+                <div className="max-h-40 overflow-y-auto rounded-lg border border-border bg-background">
+                  {isLoadingExistingNotes ? (
+                    <div className="px-3 py-3 text-sm text-muted-foreground">Loading notes...</div>
+                  ) : filteredExistingNotes.length === 0 ? (
+                    <div className="px-3 py-3 text-sm text-muted-foreground">No notes found</div>
+                  ) : (
+                    filteredExistingNotes.map((note) => (
+                      <button
+                        key={note.id}
+                        type="button"
+                        onClick={() => setSelectedExistingNoteId(note.id)}
+                        className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm transition-colors ${
+                          selectedExistingNoteId === note.id ? 'bg-primary/10 text-foreground' : 'text-foreground hover:bg-muted'
+                        }`}
+                      >
+                        <span className="truncate">{note.title}</span>
+                        {selectedExistingNoteId === note.id && <Check className="h-4 w-4 text-primary" />}
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => closeBookmarkModal()}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleSaveBookmark()}
+                disabled={isSavingBookmark || (bookmarkMode === 'existing' && !selectedExistingNoteId)}
+                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isSavingBookmark ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <ChatInput
         pendingAttachments={pendingAttachments}

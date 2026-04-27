@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import { PanelLeft } from "lucide-react";
-import { useSidebarTrigger } from "@/app/(app)/layout";
+import { useSidebarTrigger } from "@/lib/sidebar-controls";
 
 export default function QuizResultsHeader() {
     const openSidebar = useSidebarTrigger();

@@ -1,4 +1,4 @@
-import { BookOpen, Loader2, MessageSquare, MoreVertical, Pencil, Search, SquarePen, Trash2, Brain } from 'lucide-react';
+import { BookOpen, Loader2, MessageSquare, MoreVertical, Pencil, Search, SquarePen, Trash2, Brain, NotepadText } from 'lucide-react';
 import { SidebarLink } from './SidebarPrimitives';
 
 type ChatSession = {
@@ -41,6 +41,7 @@ export function MainSidebarContent({
         <SidebarLink icon={SquarePen} label="New Chat" onClick={handleNewChat} isIconOnly={isIconOnly} />
         <SidebarLink icon={BookOpen} label="Study" onClick={() => routerPush('/reader')} isIconOnly={isIconOnly} />
         <SidebarLink icon={Brain} label="Quiz" onClick={() => routerPush('/quiz')} isIconOnly={isIconOnly} />
+        <SidebarLink icon={NotepadText} label="Notes" onClick={() => routerPush('/notes')} isIconOnly={isIconOnly} />
       </nav>
 
       {!isIconOnly && (

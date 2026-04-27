@@ -5,4 +5,5 @@ export type PDFNote = {
   user_annotation?: string | null;
   page_number?: number | null;
   image_base64?: string | null;
+  tags?: string[] | null;
 };

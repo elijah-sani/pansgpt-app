@@ -8,7 +8,7 @@ import ImageLightbox from '@/components/shared/ImageLightbox';
 import { MainConversation } from '@/components/main/MainConversation';
 import { MainHeader } from '@/components/main/MainHeader';
 import { MainProfileSidebar } from '@/components/main/MainProfileSidebar';
-import { useSidebarTrigger } from '@/app/(app)/layout';
+import { useSidebarTrigger } from '@/lib/sidebar-controls';
 import { useMainPageController } from '@/hooks/useMainPageController';
 
 export default function MainPage() {

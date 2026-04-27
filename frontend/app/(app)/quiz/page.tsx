@@ -2,7 +2,7 @@
 import React from 'react';
 import QuizSelectionForm from '@/components/QuizSelectionForm';
 import { PanelLeft } from 'lucide-react';
-import { useSidebarTrigger } from '@/app/(app)/layout';
+import { useSidebarTrigger } from '@/lib/sidebar-controls';
 
 export default function QuizPage() {
     const openSidebar = useSidebarTrigger();

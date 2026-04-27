@@ -18,6 +18,7 @@ import { PDFViewerNotesPanel } from './pdf/PDFViewerNotesPanel';
 import { PDFViewerSelectedImageModal } from './pdf/PDFViewerSelectedImageModal';
 import type { PDFNote } from './pdf/types';
 import { useOfflineStatus } from '../hooks/useOfflineStatus';
+import { toast } from 'sonner';
 
 // Critical Fix: Use CDN for worker to prevent Next.js bundling issues
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
@@ -41,6 +42,64 @@ interface Message {
     isStopped?: boolean;
 }
 
+type NoteParagraphBlock = {
+    type: 'paragraph';
+    content: Array<{
+        type: 'text';
+        text: string;
+        styles: Record<string, never>;
+    }>;
+    props?: {
+        source_page?: number;
+        source_rect?: NoteSourceRect;
+        source_quote?: string;
+    };
+};
+
+type NoteImageBlock = {
+    type: 'image';
+    props: {
+        url: string;
+        name?: string;
+        caption?: string;
+        showPreview?: boolean;
+        previewWidth?: number;
+    };
+};
+
+type NoteSourceRect = {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+};
+
+type SelectionSource = {
+    page: number;
+    rect: NoteSourceRect;
+};
+
+type DocumentNotesResponse = {
+    notes?: PDFNote[];
+};
+
+const normalizeDocumentNotes = (payload: unknown): PDFNote[] => {
+    if (!payload) return [];
+    if (typeof payload !== 'object') return [];
+
+    const maybeList = (payload as DocumentNotesResponse).notes;
+    if (Array.isArray(maybeList)) {
+        return maybeList;
+    }
+
+    const maybeSingle = payload as Partial<PDFNote>;
+    if (maybeSingle.id !== undefined && maybeSingle.id !== null) {
+        return [maybeSingle as PDFNote];
+    }
+
+    return [];
+};
+
 const extractApiErrorMessage = (errorBody: unknown, fallback: string): string => {
     if (!errorBody || typeof errorBody !== 'object') return fallback;
     const payload = errorBody as Record<string, unknown>;
@@ -52,6 +111,13 @@ const extractApiErrorMessage = (errorBody: unknown, fallback: string): string =>
     if (!raw) return fallback;
     // Truncate long technical errors to a user-friendly length
     return raw.length > 120 ? raw.slice(0, 117) + '…' : raw;
+};
+
+const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
+
+const buildLocationTag = (source: SelectionSource, quote: string): string => {
+    const normalizedQuote = encodeURIComponent(quote.slice(0, 140));
+    return `loc:v1;p=${source.page};x=${source.rect.x.toFixed(4)};y=${source.rect.y.toFixed(4)};w=${source.rect.w.toFixed(4)};h=${source.rect.h.toFixed(4)};q=${normalizedQuote}`;
 };
 
 export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
@@ -96,6 +162,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
     // Fetch Metadata — declared early so it can be used in effects below
     const [meta, setMeta] = useState<{ topic?: string; lecturer?: string; filename: string; documentId?: string }>({ filename: "Document" });
+    const resolvedDocumentId = meta.documentId ?? fileId;
     const [showMoreMenu, setShowMoreMenu] = useState(false);
 
     // Eagerly fetch notes in the background so the panel opens instantly
@@ -128,6 +195,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     const notesFetchedRef = useRef(false); // true once notes have been loaded for this doc
     const [noteMobileFlash, setNoteMobileFlash] = useState<'saved' | 'error' | null>(null);
     const [noteSavedFlash, setNoteSavedFlash] = useState(false);
+    const [notesPanelRefreshKey, setNotesPanelRefreshKey] = useState(0);
     // Mobile floating pill visibility
     const [showMobilePill, setShowMobilePill] = useState(false);
     const mobilePillTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -141,6 +209,10 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
             if (next.has(id)) next.delete(id); else next.add(id);
             return next;
         });
+    };
+
+    const refreshNotesPanel = () => {
+        setNotesPanelRefreshKey((previous) => previous + 1);
     };
 
     const triggerMobilePill = () => {
@@ -412,6 +484,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         x: number;
         y: number;
         text: string;
+        source?: SelectionSource | null;
     } | null>(null);
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
@@ -873,6 +946,32 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         ]);
     }, [fileId]);
 
+    const getSelectionSource = (range: Range): SelectionSource | null => {
+        const containerNode = range.commonAncestorContainer;
+        const containerElement =
+            containerNode.nodeType === Node.ELEMENT_NODE
+                ? (containerNode as Element)
+                : containerNode.parentElement;
+        const pageElement = containerElement?.closest('[data-page-number]') as HTMLElement | null;
+        if (!pageElement) return null;
+
+        const page = Number(pageElement.getAttribute('data-page-number'));
+        if (!Number.isFinite(page)) return null;
+
+        const pageRect = pageElement.getBoundingClientRect();
+        const rangeRect = range.getBoundingClientRect();
+        if (pageRect.width <= 0 || pageRect.height <= 0 || rangeRect.width <= 0 || rangeRect.height <= 0) {
+            return null;
+        }
+
+        const x = clamp01((rangeRect.left - pageRect.left) / pageRect.width);
+        const y = clamp01((rangeRect.top - pageRect.top) / pageRect.height);
+        const w = clamp01(rangeRect.width / pageRect.width);
+        const h = clamp01(rangeRect.height / pageRect.height);
+
+        return { page, rect: { x, y, w, h } };
+    };
+
     // --- TEXT SELECTION LISTENER (RESTORED) ---
     useEffect(() => {
         const handleSelectionChange = () => {
@@ -899,13 +998,15 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 if (pdfWrapperRef.current && pdfWrapperRef.current.contains(selection.anchorNode)) {
                     const range = selection.getRangeAt(0);
                     const rect = range.getBoundingClientRect();
+                    const source = getSelectionSource(range);
 
                     // Show menu above the selection
                     setSelectionMenu({
                         visible: true,
                         x: rect.left + rect.width / 2,
                         y: rect.top - 10, // 10px above
-                        text: text
+                        text: text,
+                        source,
                     });
                 } else {
                     // Clicked outside PDF (e.g. Chat or Header) -> Hide
@@ -1607,7 +1708,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
      * 3. Network (always refreshes and updates both caches)
      */
     const fetchNotes = async (background = false) => {
-        if (!meta.documentId) return;
+        if (!resolvedDocumentId) return;
 
         let servedFromCache = false;
 
@@ -1646,10 +1747,10 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
         // --- Layer 3: always refresh from network ---
         try {
-            const res = await api.fetch(`/notes/${meta.documentId}`);
+            const res = await api.fetch(`/notes/${resolvedDocumentId}`);
             if (res.ok) {
                 const data = await res.json();
-                const fresh = (data.notes || []) as PDFNote[];
+                const fresh = normalizeDocumentNotes(data);
                 setNotes(fresh);
                 void persistNotesToCache(fresh);
             }
@@ -1660,38 +1761,113 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         }
     };
 
-    const handleSaveNote = async (image: string, sourceText?: string) => {
-        if (!meta.documentId) return;
+    const createParagraphBlock = (text: string, source?: SelectionSource | null): NoteParagraphBlock => ({
+        type: 'paragraph',
+        content: [
+            {
+                type: 'text',
+                text,
+                styles: {},
+            },
+        ],
+        props: source
+            ? {
+                source_page: source.page,
+                source_rect: source.rect,
+                source_quote: text.slice(0, 280),
+            }
+            : undefined,
+    });
+
+    const createImageBlock = (base64Image: string): NoteImageBlock => ({
+        type: 'image',
+        props: {
+            url: `data:image/png;base64,${base64Image}`,
+            name: 'Snip',
+            caption: '',
+            showPreview: true,
+            previewWidth: 420,
+        },
+    });
+
+    const upsertDocumentNote = (savedNote: PDFNote) => {
+        setNotes((previous) => {
+            const savedNoteId = String(savedNote.id);
+            const existingIndex = previous.findIndex((note) => String(note.id) === savedNoteId);
+            const updated =
+                existingIndex >= 0
+                    ? previous.map((note) => (String(note.id) === savedNoteId ? savedNote : note))
+                    : [savedNote, ...previous];
+            void persistNotesToCache(updated);
+            return updated;
+        });
+    };
+
+    const getExistingDocumentNoteId = async (): Promise<string | null> => {
+        const existingId = notes.find((note) => note?.id !== undefined && note?.id !== null)?.id;
+        if (existingId !== undefined && existingId !== null) {
+            return String(existingId);
+        }
+
+        if (!resolvedDocumentId) {
+            return null;
+        }
+
+        const response = await api.get(`/notes/${resolvedDocumentId}`);
+        if (!response.ok && response.status !== 404) {
+            throw new Error(`Failed to load notes: ${response.status}`);
+        }
+
+        if (response.status === 404) {
+            return null;
+        }
+
+        const payload = await response.json();
+        const fetchedNotes = normalizeDocumentNotes(payload);
+        if (fetchedNotes.length > 0) {
+            setNotes(fetchedNotes);
+            void persistNotesToCache(fetchedNotes);
+            return String(fetchedNotes[0].id);
+        }
+
+        return null;
+    };
+
+    const handleSaveNote = async (image: string) => {
+        const documentIdForNote = resolvedDocumentId;
+        if (!documentIdForNote) return;
         setIsSavingNote(true);
         setNoteSaveError(null);
-        const isMobile = window.innerWidth < 768;
+        setNotesOpen(true);
+
         try {
-            const res = await api.fetch('/notes', {
-                method: 'POST',
-                body: JSON.stringify({
-                    document_id: meta.documentId,
+            const imageBlock = createImageBlock(image);
+            const existingNoteId = await getExistingDocumentNoteId();
+            const res = existingNoteId
+                ? await api.patch(`/notes/${existingNoteId}`, {
+                    append_blocks: true,
+                    content: [imageBlock],
                     image_base64: image,
                     page_number: currentPage ?? null,
-                    user_annotation: sourceText || null,
-                }),
-            });
-            if (res.ok) {
-                const saved = await res.json();
-                setNotes(prev => {
-                    const updated = [...prev, saved];
-                    void persistNotesToCache(updated);
-                    return updated;
+                })
+                : await api.post('/notes', {
+                    document_id: documentIdForNote,
+                    content: [imageBlock],
+                    image_base64: image,
+                    page_number: currentPage ?? null,
                 });
-                setNoteSavedFlash(true);
-                setTimeout(() => setNoteSavedFlash(false), 2500);
-                if (!isMobile) setNotesOpen(true); // only open panel on desktop
-            } else {
-                if (!isMobile) setNotesOpen(true);
-                setNoteSaveError('Failed to save note. Please try again.');
-                setTimeout(() => setNoteSaveError(null), 4000);
+
+            if (!res.ok) {
+                throw new Error(`Failed to save snippet: ${res.status}`);
             }
+
+            const saved = (await res.json()) as PDFNote;
+            upsertDocumentNote(saved);
+            refreshNotesPanel();
+            setNoteSavedFlash(true);
+            setTimeout(() => setNoteSavedFlash(false), 2500);
+            toast.success('Snippet added to your notes');
         } catch {
-            if (!isMobile) setNotesOpen(true);
             setNoteSaveError('Network error — note not saved. Check your connection.');
             setTimeout(() => setNoteSaveError(null), 4000);
         } finally {
@@ -1699,38 +1875,55 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         }
     };
 
-    const handleSaveTextNote = async (text: string) => {
-        if (!meta.documentId) return;
+    const handleSaveTextNote = async (text: string, source?: SelectionSource | null) => {
+        const documentIdForNote = resolvedDocumentId;
+        if (!documentIdForNote) return;
+        const trimmedText = text.trim();
+        if (!trimmedText) return;
+
         setIsSavingNote(true);
         setNoteSaveError(null);
-        const isMobile = window.innerWidth < 768;
+        setNotesOpen(true);
+
         try {
-            const res = await api.fetch('/notes', {
-                method: 'POST',
-                body: JSON.stringify({
-                    document_id: meta.documentId,
-                    image_base64: '',
-                    page_number: currentPage ?? null,
-                    user_annotation: text,
-                }),
-            });
-            if (res.ok) {
-                const saved = await res.json();
-                setNotes(prev => {
-                    const updated = [...prev, saved];
-                    void persistNotesToCache(updated);
-                    return updated;
+            const paragraphBlock = createParagraphBlock(trimmedText, source);
+            const locationTag = source ? buildLocationTag(source, trimmedText) : null;
+            const existingNoteId = await getExistingDocumentNoteId();
+            const existingNote = existingNoteId
+                ? notes.find((note) => String(note.id) === existingNoteId)
+                : null;
+            const mergedTags = locationTag
+                ? [
+                    ...((existingNote?.tags ?? []).filter((tag): tag is string => typeof tag === 'string')),
+                    locationTag,
+                ].slice(-100)
+                : undefined;
+            const pageNumber = source?.page ?? currentPage ?? null;
+            const res = existingNoteId
+                ? await api.patch(`/notes/${existingNoteId}`, {
+                    append_blocks: true,
+                    content: [paragraphBlock],
+                    page_number: pageNumber,
+                    ...(mergedTags ? { tags: mergedTags } : {}),
+                })
+                : await api.post('/notes', {
+                    document_id: documentIdForNote,
+                    content: [paragraphBlock],
+                    page_number: pageNumber,
+                    ...(locationTag ? { tags: [locationTag] } : {}),
                 });
-                setNoteSavedFlash(true);
-                setTimeout(() => setNoteSavedFlash(false), 2500);
-                if (!isMobile) setNotesOpen(true);
-            } else {
-                if (!isMobile) setNotesOpen(true);
-                setNoteSaveError('Failed to save note. Please try again.');
-                setTimeout(() => setNoteSaveError(null), 4000);
+
+            if (!res.ok) {
+                throw new Error(`Failed to save highlight: ${res.status}`);
             }
+
+            const saved = (await res.json()) as PDFNote;
+            upsertDocumentNote(saved);
+            refreshNotesPanel();
+            setNoteSavedFlash(true);
+            setTimeout(() => setNoteSavedFlash(false), 2500);
+            toast.success('Text added to your notes');
         } catch {
-            if (!isMobile) setNotesOpen(true);
             setNoteSaveError('Network error — note not saved. Check your connection.');
             setTimeout(() => setNoteSaveError(null), 4000);
         } finally {
@@ -1762,6 +1955,26 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
             notesFetchedRef.current = true;
             void fetchNotes();
         }
+    };
+
+    const handleJumpToSource = (source: { page: number; rect?: NoteSourceRect }) => {
+        const pageElement = document.getElementById(`page-container-${source.page}`) as HTMLElement | null;
+        if (!pageElement || !pdfWrapperRef.current) return;
+
+        pageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        if (!source.rect) return;
+        const sourceRect = source.rect;
+
+        const wrapper = pdfWrapperRef.current;
+        setTimeout(() => {
+            const pageBounds = pageElement.getBoundingClientRect();
+            const wrapperBounds = wrapper.getBoundingClientRect();
+            const currentScroll = wrapper.scrollTop;
+            const offsetWithinPage = pageElement.clientHeight * sourceRect.y;
+            const target = currentScroll + (pageBounds.top - wrapperBounds.top) + offsetWithinPage - 84;
+            wrapper.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+        }, 260);
     };
 
     // --- Option 3: Prefetch notes eagerly as soon as the document UUID is known ---
@@ -1871,16 +2084,18 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 deleteSession(id);
                 if (currentSessionId === id) handleNewChat();
             }}
-            contextId={fileId}
+            contextId={resolvedDocumentId}
             onNoteAdded={async (savedNote?: unknown) => {
                 setNotesOpen(true);
                 setNoteSavedFlash(true);
                 setTimeout(() => setNoteSavedFlash(false), 2500);
                 if (savedNote && typeof savedNote === 'object') {
                     // Optimistic append — same as highlight/snip save
-                    setNotes(prev => [...prev, savedNote as PDFNote]);
+                    upsertDocumentNote(savedNote as PDFNote);
+                    refreshNotesPanel();
                 } else {
                     await fetchNotes();
+                    refreshNotesPanel();
                 }
             }}
             onRegenerate={async () => {
@@ -2280,7 +2495,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                             <button
                                                 onClick={() => {
                                                     const text = selectionMenu?.text || '';
-                                                    if (text) void handleSaveTextNote(text);
+                                                    const source = selectionMenu?.source ?? null;
+                                                    if (text) void handleSaveTextNote(text, source);
                                                     setSelectionMenu(null);
                                                     setShowMoreMenu(false);
                                                     // Clear the text selection highlight
@@ -2379,7 +2595,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                         </div>
 
                         {/* Desktop Bottom Toolbar (Footer) */}
-                        <div className="hidden md:flex items-center justify-between px-6 border-t border-border bg-card/95 backdrop-blur-md h-14 shrink-0 z-40 w-full relative">
+                        <div className={`hidden md:flex items-center justify-between px-6 border-t border-border bg-card/95 backdrop-blur-md h-14 z-40 fixed bottom-0 left-0 transition-all duration-300 ease-in-out ${isSidebarOpen ? 'right-96' : 'right-0'}`}>
                             {/* Desktop Progress Bar */}
                             {numPages > 0 && (
                                 <div className="absolute top-0 left-0 right-0 w-full h-[3px] bg-border/50 pointer-events-none">
@@ -2506,11 +2722,15 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                         </div>
 
                         {/* Chat Sidebar (Desktop) - flex-based, pushes PDF */}
-                        {isSidebarOpen && (
-                            <div className="hidden md:flex w-96 flex-shrink-0 h-full border-l border-border bg-card animate-in slide-in-from-right duration-300">
+                        <div 
+                            className={`hidden md:flex h-full border-l border-border bg-card transition-all duration-300 ease-in-out overflow-hidden ${
+                                isSidebarOpen ? 'w-96 opacity-100' : 'w-0 opacity-0 pointer-events-none border-l-0'
+                            }`}
+                        >
+                            <div className="w-96 h-full flex-shrink-0">
                                 {renderChatUI(false)}
                             </div>
-                        )}
+                        </div>
 
                         {/* Mobile Floating Pill — Snip & Notes (appears on tap, fades after 3s) */}
                         {activeTab === 'document' && (
@@ -2583,50 +2803,16 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                         )}
 
                         <PDFViewerNotesPanel
-                            copiedNotes={copiedNotes}
-                            deletingNoteId={deletingNoteId}
-                            editingNoteId={editingNoteId}
-                            editingText={editingText}
-                            expandedNotes={expandedNotes}
-                            isExporting={isExporting}
-                            isLoadingNotes={isLoadingNotes}
+                            key={`notes-panel-${resolvedDocumentId}-${notesPanelRefreshKey}`}
                             isOpen={notesOpen}
-                            showSavedFlash={noteSavedFlash}
-                            noteSaveError={noteSaveError}
-                            isSavingEdit={isSavingEdit}
-                            isSavingNote={isSavingNote}
-                            isSavingPersonal={isSavingPersonal}
-                            notes={notes}
                             onClose={() => setNotesOpen(false)}
-                            onCopyNotes={() => {
-                                const text = notes
-                                    .map(
-                                        (note) =>
-                                            `[${note.category || 'Key Point'}] ${stripMarkdown(note.ai_explanation || note.user_annotation || '')}${note.page_number ? ` (p.${note.page_number})` : ''}`
-                                    )
-                                    .join('\n\n');
-                                navigator.clipboard.writeText(text).then(() => {
-                                    setCopiedNotes(true);
-                                    setTimeout(() => setCopiedNotes(false), 2000);
-                                });
+                            documentId={resolvedDocumentId}
+                            documentTitle={meta.topic || meta.filename}
+                            currentPage={currentPage}
+                            onNoteChanged={() => {
+                                void fetchNotes(true);
                             }}
-                            onDeleteNote={(noteId) => {
-                                void handleDeleteNote(String(noteId));
-                            }}
-                            onEditingTextChange={setEditingText}
-                            onExportPdf={exportNotesPDF}
-                            onPersonalNoteChange={setPersonalNote}
-                            onSaveEdit={(noteId) => handleUpdateNote(noteId)}
-                            onSavePersonalNote={handleSavePersonalNote}
-                            onSetEditingNoteId={setEditingNoteId}
-                            onSetEditingText={setEditingText}
-                            onStartEdit={(note) => {
-                                setEditingNoteId(String(note.id));
-                                setEditingText(note.user_annotation || '');
-                            }}
-                            onToggleExpanded={toggleNoteExpanded}
-                            personalNote={personalNote}
-                            onRetryLoadNotes={() => void fetchNotes(true)}
+                            onJumpToSource={handleJumpToSource}
                         />
                     </div>
                     <PDFViewerSelectedImageModal
@@ -2639,3 +2825,4 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         </>
     );
 }
+

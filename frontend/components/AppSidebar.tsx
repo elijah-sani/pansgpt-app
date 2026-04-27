@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
-import { Bug, ChevronRight, CircleHelp, FileText, Mail, PanelLeft, Settings } from "lucide-react";
+import { Bug, ChevronRight, CircleHelp, FileText, Mail, PanelLeft, Settings, NotepadText, MessageSquare, BookOpen, Brain } from "lucide-react";
 import Logo from "@/components/Logo";
 import { useChatSession } from "@/lib/ChatSessionContext";
 import { MainSidebarContent } from "@/components/sidebar/MainSidebarContent";
@@ -54,6 +54,7 @@ export default function AppSidebar({
   const isOnMain = pathname === "/main";
   const isOnReader = pathname.startsWith("/reader");
   const isOnQuiz = pathname.startsWith("/quiz");
+  const isOnNotes = pathname.startsWith("/notes");
   const isIconOnly = !isOpen;
 
   const {
@@ -193,9 +194,9 @@ export default function AppSidebar({
     <>
       <aside
         className={`
-          fixed inset-y-0 left-0 z-50 w-[80vw] max-w-sm transform transition-transform duration-300 bg-card
+          fixed inset-y-0 left-0 z-[100] w-[80vw] max-w-sm transform transition-transform duration-300 bg-card
           ${isOpen ? "translate-x-0" : "-translate-x-full"}
-          md:relative md:inset-auto md:z-auto md:max-w-none md:translate-x-0
+          md:relative md:inset-auto md:z-[100] md:max-w-none md:translate-x-0
           md:transition-[width,opacity] md:duration-300 md:ease-in-out md:flex-shrink-0 md:overflow-visible
           ${isOpen ? "md:w-72" : "md:w-[63px] md:translate-x-0"}
         `}
@@ -248,6 +249,15 @@ export default function AppSidebar({
               routerPush={(path) => router.push(path)}
               showFilters={() => setShowFilterModal(true)}
             />
+          )}
+
+          {isOnNotes && (
+            <nav className={isIconOnly ? 'flex flex-col items-center py-1 gap-0.5' : 'px-2 space-y-0.5'}>
+              <SidebarLink icon={MessageSquare} label="Chat" onClick={() => router.push('/main')} isIconOnly={isIconOnly} />
+              <SidebarLink icon={BookOpen} label="Study" onClick={() => router.push('/reader')} isIconOnly={isIconOnly} />
+              <SidebarLink icon={Brain} label="Quiz" onClick={() => router.push('/quiz')} isIconOnly={isIconOnly} />
+              <SidebarLink icon={NotepadText} label="Notes" onClick={() => router.push('/notes')} isIconOnly={isIconOnly} active />
+            </nav>
           )}
 
           <div
