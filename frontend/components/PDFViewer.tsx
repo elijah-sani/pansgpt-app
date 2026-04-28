@@ -43,7 +43,7 @@ interface Message {
 }
 
 type NoteParagraphBlock = {
-    type: 'paragraph';
+    type: 'paragraph' | 'bulletListItem';
     content: Array<{
         type: 'text';
         text: string;
@@ -64,6 +64,9 @@ type NoteImageBlock = {
         caption?: string;
         showPreview?: boolean;
         previewWidth?: number;
+        source_page?: number;
+        source_rect?: NoteSourceRect;
+        source_quote?: string;
     };
 };
 
@@ -77,6 +80,12 @@ type NoteSourceRect = {
 type SelectionSource = {
     page: number;
     rect: NoteSourceRect;
+};
+
+type FocusPulseTarget = {
+    page: number;
+    rect: NoteSourceRect;
+    pulseId: number;
 };
 
 type DocumentNotesResponse = {
@@ -494,9 +503,11 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     const [isDrawing, setIsDrawing] = useState(false);
     const [snipRect, setSnipRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
     const [snipStart, setSnipStart] = useState<{ x: number; y: number } | null>(null);
-    const [snipPopup, setSnipPopup] = useState<{ x: number; y: number; imageBase64: string } | null>(null);
+    const [snipPopup, setSnipPopup] = useState<{ x: number; y: number; imageBase64: string; source?: SelectionSource | null } | null>(null);
     const [selectedImage, setSelectedImage] = useState<string | null>(null);
     const snipOverlayRef = useRef<HTMLDivElement>(null);
+    const [focusPulseTarget, setFocusPulseTarget] = useState<FocusPulseTarget | null>(null);
+    const focusPulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // Tutorial — show once per user
     const [showTutorial, setShowTutorial] = useState(false);
@@ -542,6 +553,9 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         return () => {
             if (progressSaveTimer.current) {
                 clearTimeout(progressSaveTimer.current);
+            }
+            if (focusPulseTimerRef.current) {
+                clearTimeout(focusPulseTimerRef.current);
             }
         };
     }, []);
@@ -972,6 +986,44 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         return { page, rect: { x, y, w, h } };
     };
 
+    const getSourceFromScreenRect = (screenRect: { left: number; top: number; width: number; height: number }): SelectionSource | null => {
+        if (!pdfWrapperRef.current) return null;
+
+        const pageElements = Array.from(
+            pdfWrapperRef.current.querySelectorAll('[data-page-number]')
+        ) as HTMLElement[];
+        if (pageElements.length === 0) return null;
+
+        const centerX = screenRect.left + screenRect.width / 2;
+        const centerY = screenRect.top + screenRect.height / 2;
+
+        const pageElement =
+            pageElements.find((el) => {
+                const rect = el.getBoundingClientRect();
+                return centerX >= rect.left && centerX <= rect.right && centerY >= rect.top && centerY <= rect.bottom;
+            }) ||
+            pageElements.find((el) => {
+                const rect = el.getBoundingClientRect();
+                return centerY >= rect.top && centerY <= rect.bottom;
+            }) ||
+            null;
+
+        if (!pageElement) return null;
+
+        const page = Number(pageElement.getAttribute('data-page-number'));
+        if (!Number.isFinite(page)) return null;
+
+        const pageRect = pageElement.getBoundingClientRect();
+        if (pageRect.width <= 0 || pageRect.height <= 0) return null;
+
+        const x = clamp01((screenRect.left - pageRect.left) / pageRect.width);
+        const y = clamp01((screenRect.top - pageRect.top) / pageRect.height);
+        const w = Math.max(0, Math.min(1 - x, screenRect.width / pageRect.width));
+        const h = Math.max(0, Math.min(1 - y, screenRect.height / pageRect.height));
+
+        return { page, rect: { x, y, w, h } };
+    };
+
     // --- TEXT SELECTION LISTENER (RESTORED) ---
     useEffect(() => {
         const handleSelectionChange = () => {
@@ -1156,12 +1208,14 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
             };
 
             const imageBase64 = cropImageFromCanvas(pdfWrapperRef.current, screenRect);
+            const source = getSourceFromScreenRect(screenRect);
 
             if (imageBase64) {
                 setSnipPopup({
                     x: snipRect.x + (snipRect.w / 2),
                     y: snipRect.y + (snipRect.h / 2),
-                    imageBase64
+                    imageBase64,
+                    source
                 });
             }
         }
@@ -1233,12 +1287,14 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
             };
 
             const imageBase64 = cropImageFromCanvas(pdfWrapperRef.current, screenRect);
+            const source = getSourceFromScreenRect(screenRect);
 
             if (imageBase64) {
                 setSnipPopup({
                     x: snipRect.x + (snipRect.w / 2),
                     y: snipRect.y + (snipRect.h / 2),
-                    imageBase64
+                    imageBase64,
+                    source
                 });
             }
         }
@@ -1762,7 +1818,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     };
 
     const createParagraphBlock = (text: string, source?: SelectionSource | null): NoteParagraphBlock => ({
-        type: 'paragraph',
+        type: 'bulletListItem',
         content: [
             {
                 type: 'text',
@@ -1779,7 +1835,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
             : undefined,
     });
 
-    const createImageBlock = (base64Image: string): NoteImageBlock => ({
+    const createImageBlock = (base64Image: string, source?: SelectionSource | null): NoteImageBlock => ({
         type: 'image',
         props: {
             url: `data:image/png;base64,${base64Image}`,
@@ -1787,6 +1843,13 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
             caption: '',
             showPreview: true,
             previewWidth: 420,
+            ...(source
+                ? {
+                    source_page: source.page,
+                    source_rect: source.rect,
+                    source_quote: 'Image snippet',
+                }
+                : {}),
         },
     });
 
@@ -1833,7 +1896,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         return null;
     };
 
-    const handleSaveNote = async (image: string) => {
+    const handleSaveNote = async (image: string, source?: SelectionSource | null) => {
         const documentIdForNote = resolvedDocumentId;
         if (!documentIdForNote) return;
         setIsSavingNote(true);
@@ -1841,20 +1904,21 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         setNotesOpen(true);
 
         try {
-            const imageBlock = createImageBlock(image);
+            const imageBlock = createImageBlock(image, source);
             const existingNoteId = await getExistingDocumentNoteId();
+            const pageNumber = source?.page ?? currentPage ?? null;
             const res = existingNoteId
                 ? await api.patch(`/notes/${existingNoteId}`, {
                     append_blocks: true,
                     content: [imageBlock],
                     image_base64: image,
-                    page_number: currentPage ?? null,
+                    page_number: pageNumber,
                 })
                 : await api.post('/notes', {
                     document_id: documentIdForNote,
                     content: [imageBlock],
                     image_base64: image,
-                    page_number: currentPage ?? null,
+                    page_number: pageNumber,
                 });
 
             if (!res.ok) {
@@ -1962,6 +2026,21 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         if (!pageElement || !pdfWrapperRef.current) return;
 
         pageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        if (source.rect) {
+            const pulseId = Date.now();
+            setFocusPulseTarget({
+                page: source.page,
+                rect: source.rect,
+                pulseId,
+            });
+            if (focusPulseTimerRef.current) {
+                clearTimeout(focusPulseTimerRef.current);
+            }
+            focusPulseTimerRef.current = setTimeout(() => {
+                setFocusPulseTarget((current) => (current?.pulseId === pulseId ? null : current));
+            }, 3400);
+        }
 
         if (!source.rect) return;
         const sourceRect = source.rect;
@@ -2376,7 +2455,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                                     key={`page_${index + 1}`}
                                                     id={`page-container-${index + 1}`}
                                                     data-page-number={index + 1}
-                                                    className="mb-6 shadow-2xl rounded-sm w-full flex justify-center transition-transform duration-200"
+                                                    className="relative mb-6 shadow-2xl rounded-sm w-full flex justify-center transition-transform duration-200"
                                                 >
                                                     <Page
                                                         pageNumber={index + 1}
@@ -2387,6 +2466,19 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                                         loading={<div className="h-[800px] w-full bg-card animate-pulse" />}
                                                         error={<div className="p-4 text-destructive text-sm">Failed to load page</div>}
                                                     />
+                                                    {focusPulseTarget && focusPulseTarget.page === index + 1 && (
+                                                        <div
+                                                            key={`pulse-${focusPulseTarget.pulseId}`}
+                                                            className="pointer-events-none absolute bg-green-400/30 rounded-sm shadow-[0_0_0_4px_rgba(34,197,94,0.26)] animate-pulse"
+                                                            style={{
+                                                                left: `${focusPulseTarget.rect.x * 100}%`,
+                                                                top: `${focusPulseTarget.rect.y * 100}%`,
+                                                                width: `${focusPulseTarget.rect.w * 100}%`,
+                                                                height: `${focusPulseTarget.rect.h * 100}%`,
+                                                                zIndex: 25,
+                                                            }}
+                                                        />
+                                                    )}
                                                 </div>
                                             ))}
                                         </Document>
@@ -2448,7 +2540,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                                         onClose={() => { setSnipPopup(null); setIsSnipActive(false); setIsSnippingMode(false); }}
                                                         onSend={handleMenuSend}
                                                         onAddToInput={handleMenuAddToInput}
-                                                        onSaveNote={handleSaveNote}
+                                                        onSaveNote={(image) => handleSaveNote(image, snipPopup?.source ?? null)}
                                                     />
                                                 </div>
                                             )}

@@ -11,6 +11,7 @@ import { QuizSidebarContent } from "@/components/sidebar/QuizSidebarContent";
 import { QuizFilterModal } from "@/components/sidebar/QuizFilterModal";
 import { SidebarLink } from "@/components/sidebar/SidebarPrimitives";
 import { useSidebarQuizHistory } from "@/hooks/useSidebarQuizHistory";
+import { api } from "@/lib/api";
 
 interface AppSidebarProps {
   isOpen: boolean;
@@ -24,6 +25,13 @@ interface AppSidebarProps {
 }
 
 const HELP_SUBMENU_HEIGHT = 196;
+const NOTES_SWITCH_THRESHOLD = 3;
+const QUICK_NOTES_LIMIT = 2;
+
+type SidebarNoteItem = {
+  id: string;
+  title: string;
+};
 
 export default function AppSidebar({
   isOpen,
@@ -37,6 +45,8 @@ export default function AppSidebar({
   const pathname = usePathname();
   const router = useRouter();
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [notesList, setNotesList] = useState<SidebarNoteItem[]>([]);
+  const [notesCount, setNotesCount] = useState(0);
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
   const [isHelpSubmenuOpen, setIsHelpSubmenuOpen] = useState(false);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
@@ -56,6 +66,8 @@ export default function AppSidebar({
   const isOnQuiz = pathname.startsWith("/quiz");
   const isOnNotes = pathname.startsWith("/notes");
   const isIconOnly = !isOpen;
+  const useCompactNotesList = notesCount > NOTES_SWITCH_THRESHOLD;
+  const quickNotes = useCompactNotesList ? notesList.slice(0, QUICK_NOTES_LIMIT) : [];
 
   const {
     applyFilters,
@@ -74,6 +86,71 @@ export default function AppSidebar({
       setShowFilterModal(false);
     }
   }, [isOnQuiz, setShowFilterModal, showFilterModal]);
+
+  useEffect(() => {
+    if (!(isOnMain || isOnQuiz) || isIconOnly) return;
+
+    let isCancelled = false;
+    const loadNotes = async () => {
+      try {
+        const response = await api.get("/notes");
+        if (!response.ok) return;
+
+        const payload = (await response.json()) as { notes?: Array<{ id: string | number; title?: string | null; created_at?: string; last_edited_at?: string | null }> };
+        const raw = Array.isArray(payload.notes) ? payload.notes : [];
+        if (!isCancelled) {
+          setNotesCount(raw.length);
+        }
+        const mapped = raw
+          .map((note, index) => {
+            const id = String(note.id);
+            const normalizedTitle = typeof note.title === "string" ? note.title.trim() : "";
+            return {
+              id,
+              title: normalizedTitle || `Untitled note ${index + 1}`,
+              timestamp: new Date(note.last_edited_at || note.created_at || 0).getTime(),
+            };
+          })
+          .sort((a, b) => b.timestamp - a.timestamp)
+          .slice(0, QUICK_NOTES_LIMIT)
+          .map(({ id, title }) => ({ id, title }));
+
+        if (!isCancelled) {
+          setNotesList(mapped);
+        }
+      } catch {
+        if (!isCancelled) {
+          setNotesCount(0);
+          setNotesList([]);
+        }
+      }
+    };
+
+    void loadNotes();
+
+    const handleRefresh = () => {
+      void loadNotes();
+    };
+
+    const handleFocus = () => {
+      void loadNotes();
+    };
+
+    const handleNotesUpdated = () => {
+      void loadNotes();
+    };
+
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener("storage", handleRefresh);
+    window.addEventListener("pansgpt-notes-updated", handleNotesUpdated);
+
+    return () => {
+      isCancelled = true;
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("storage", handleRefresh);
+      window.removeEventListener("pansgpt-notes-updated", handleNotesUpdated);
+    };
+  }, [isIconOnly, isOnMain, isOnQuiz]);
 
   useEffect(() => {
     setIsSettingsMenuOpen(false);
@@ -225,6 +302,7 @@ export default function AppSidebar({
               onRenameRequest={onRenameRequest}
               onSearchOpen={onSearchOpen}
               openMenuId={openMenuId}
+              quickNotes={quickNotes}
               routerPush={(path) => router.push(path)}
               sessions={sessions}
               setOpenMenuId={setOpenMenuId}
@@ -244,6 +322,7 @@ export default function AppSidebar({
               hasActiveFilters={hasActiveFilters}
               isIconOnly={isIconOnly}
               pathname={pathname}
+              quickNotes={quickNotes}
               quizLoading={quizLoading}
               quizResults={quizResults}
               routerPush={(path) => router.push(path)}

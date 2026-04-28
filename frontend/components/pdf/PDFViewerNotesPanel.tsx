@@ -17,12 +17,19 @@ type NotePayload = {
 
 type SourceLocation = {
   page: number;
+  quote?: string;
   rect?: {
     x: number;
     y: number;
     w: number;
     h: number;
   };
+};
+
+type CursorSourceContext = {
+  page?: number;
+  rect?: SourceLocation['rect'];
+  quote?: string;
 };
 
 type ExportLine = {
@@ -159,16 +166,107 @@ const parseLocationTag = (tag: string): SourceLocation | null => {
   const y = Number(map.get('y'));
   const w = Number(map.get('w'));
   const h = Number(map.get('h'));
+  const quoteRaw = map.get('q');
+  const quote = quoteRaw ? decodeURIComponent(quoteRaw) : undefined;
 
   const hasRect = [x, y, w, h].every((value) => Number.isFinite(value));
   if (!hasRect) {
-    return { page };
+    return { page, quote };
   }
 
   return {
     page,
     rect: { x, y, w, h },
+    quote,
   };
+};
+
+const parseLocationTags = (tags: string[] | null | undefined): Array<SourceLocation & { quote?: string }> => {
+  if (!Array.isArray(tags)) return [];
+  return tags
+    .map((tag) => (typeof tag === 'string' ? parseLocationTag(tag) : null))
+    .filter((entry): entry is SourceLocation & { quote?: string } => Boolean(entry));
+};
+
+const normalizeText = (text: string): string => text.toLowerCase().replace(/\s+/g, ' ').trim();
+
+const findMatchingTagSource = (
+  cursorQuote: string,
+  tagSources: Array<SourceLocation & { quote?: string }>,
+): SourceLocation | null => {
+  const normalizedCursor = normalizeText(cursorQuote);
+  if (!normalizedCursor || tagSources.length === 0) return null;
+
+  const ranked = tagSources
+    .map((source) => {
+      const sourceQuote = typeof source.quote === 'string' ? normalizeText(source.quote) : '';
+      if (!sourceQuote) return { source, score: 0 };
+      if (sourceQuote.includes(normalizedCursor)) return { source, score: 3 };
+      if (normalizedCursor.includes(sourceQuote)) return { source, score: 2 };
+
+      const cursorHead = normalizedCursor.slice(0, 48);
+      const sourceHead = sourceQuote.slice(0, 48);
+      if (cursorHead && sourceHead && (sourceHead.includes(cursorHead) || cursorHead.includes(sourceHead))) {
+        return { source, score: 1 };
+      }
+      return { source, score: 0 };
+    })
+    .filter((row) => row.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  return ranked[0]?.source ?? null;
+};
+
+const getBlockText = (block: Record<string, unknown>): string => {
+  const blockContent = Array.isArray(block.content) ? block.content : [];
+  const parts: string[] = [];
+  for (const item of blockContent) {
+    if (!isRecord(item)) continue;
+    if (item.type === 'text' && typeof item.text === 'string') {
+      parts.push(item.text);
+    }
+  }
+  return parts.join(' ').replace(/\s+/g, ' ').trim();
+};
+
+const parseSourceRect = (value: unknown): SourceLocation['rect'] | undefined => {
+  if (!isRecord(value)) return undefined;
+  const x = Number(value.x);
+  const y = Number(value.y);
+  const w = Number(value.w);
+  const h = Number(value.h);
+  if (![x, y, w, h].every((n) => Number.isFinite(n))) return undefined;
+  return { x, y, w, h };
+};
+
+const extractSourceSnippets = (blocks: BlockNoteContent): Array<{ page: number; rect?: SourceLocation['rect']; quote: string }> => {
+  if (!Array.isArray(blocks)) return [];
+
+  const snippets: Array<{ page: number; rect?: SourceLocation['rect']; quote: string }> = [];
+  blocks.forEach((block, index) => {
+    if (!isRecord(block) || !isRecord(block.props)) return;
+
+    const sourcePage = Number(block.props.source_page);
+    if (!Number.isFinite(sourcePage)) return;
+
+    const rect = parseSourceRect(block.props.source_rect);
+    const quoteFromProps =
+      typeof block.props.source_quote === 'string' ? block.props.source_quote.trim() : '';
+    const quoteFromContent = getBlockText(block);
+    const blockType = typeof block.type === 'string' ? block.type : 'paragraph';
+    const quote =
+      quoteFromProps ||
+      quoteFromContent ||
+      (blockType === 'image' ? 'Image snippet' : `Snippet ${index + 1}`);
+
+    snippets.push({
+      page: sourcePage,
+      rect,
+      quote,
+    });
+  });
+
+  return snippets;
 };
 
 export function PDFViewerNotesPanel({ isOpen, onClose, documentId, documentTitle, currentPage, onNoteChanged, onJumpToSource }: PDFViewerNotesPanelProps) {
@@ -180,6 +278,8 @@ export function PDFViewerNotesPanel({ isOpen, onClose, documentId, documentTitle
   const [isAutosaving, setIsAutosaving] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [latestSource, setLatestSource] = useState<SourceLocation | null>(null);
+  const [cursorSource, setCursorSource] = useState<CursorSourceContext | null>(null);
+  const [locationTagSources, setLocationTagSources] = useState<Array<SourceLocation & { quote?: string }>>([]);
 
   const titleDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedSignatureRef = useRef('');
@@ -190,11 +290,17 @@ export function PDFViewerNotesPanel({ isOpen, onClose, documentId, documentTitle
   const contentRef = useRef<BlockNoteContent>([]);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const autosaveInFlightRef = useRef(0);
+  const lastAutoJumpKeyRef = useRef<string>('');
 
   const defaultNoteTitle = useMemo(() => {
     const resolved = typeof documentTitle === 'string' ? documentTitle.trim() : '';
     return resolved ? `${resolved} - Notes` : 'My Notes';
   }, [documentTitle]);
+  const canJumpToSource = useMemo(() => {
+    if (cursorSource?.page && Number.isFinite(cursorSource.page)) return true;
+    if (cursorSource?.quote && locationTagSources.length > 0) return true;
+    return Boolean(latestSource);
+  }, [cursorSource, latestSource, locationTagSources]);
 
   useEffect(() => {
     noteIdRef.current = noteId;
@@ -206,6 +312,13 @@ export function PDFViewerNotesPanel({ isOpen, onClose, documentId, documentTitle
 
   useEffect(() => {
     contentRef.current = content;
+  }, [content]);
+
+  useEffect(() => {
+    const snippets = extractSourceSnippets(content);
+    if (snippets.length === 0) return;
+    const latest = snippets[snippets.length - 1];
+    setLatestSource({ page: latest.page, rect: latest.rect });
   }, [content]);
 
   const queueSave = useCallback(
@@ -320,17 +433,24 @@ export function PDFViewerNotesPanel({ isOpen, onClose, documentId, documentTitle
           setNoteId(loadedId);
           setTitle(loadedTitle);
           setContent(loadedContent);
-          const candidateTags = Array.isArray(data.tags) ? data.tags : [];
+          setCursorSource(null);
+          const contentSources = extractSourceSnippets(loadedContent);
+          const latestContentSource =
+            contentSources.length > 0
+              ? {
+                  page: contentSources[contentSources.length - 1].page,
+                  rect: contentSources[contentSources.length - 1].rect,
+                }
+              : null;
+          const parsedTagSources = parseLocationTags(data.tags);
+          setLocationTagSources(parsedTagSources);
           const parsedTagSource =
-            [...candidateTags]
-              .reverse()
-              .map((tag) => (typeof tag === 'string' ? parseLocationTag(tag) : null))
-              .find((source): source is SourceLocation => Boolean(source)) || null;
+            parsedTagSources.length > 0 ? parsedTagSources[parsedTagSources.length - 1] : null;
           const fallbackSource =
             data.page_number && Number.isFinite(Number(data.page_number))
               ? { page: Number(data.page_number) }
               : null;
-          setLatestSource(parsedTagSource || fallbackSource);
+          setLatestSource(latestContentSource || parsedTagSource || fallbackSource);
           lastSavedSignatureRef.current = buildSignature(loadedTitle, loadedContent);
         } else {
           noteIdRef.current = null;
@@ -338,6 +458,8 @@ export function PDFViewerNotesPanel({ isOpen, onClose, documentId, documentTitle
           setTitle(defaultNoteTitle);
           setContent([]);
           setLatestSource(null);
+          setCursorSource(null);
+          setLocationTagSources([]);
           lastSavedSignatureRef.current = buildSignature(defaultNoteTitle, []);
         }
 
@@ -359,11 +481,48 @@ export function PDFViewerNotesPanel({ isOpen, onClose, documentId, documentTitle
     };
   }, [defaultNoteTitle, documentId, isOpen]);
 
+  const resolvePreferredSource = useCallback((): SourceLocation | null => {
+    const preferredFromCursor =
+      cursorSource?.page && Number.isFinite(cursorSource.page)
+        ? ({ page: cursorSource.page, rect: cursorSource.rect } as SourceLocation)
+        : null;
+    const preferredFromTags =
+      cursorSource?.quote && locationTagSources.length > 0
+        ? findMatchingTagSource(cursorSource.quote, locationTagSources)
+        : null;
+    return preferredFromCursor || preferredFromTags || latestSource || null;
+  }, [cursorSource, latestSource, locationTagSources]);
+
   const handleJumpToSource = () => {
-    if (!latestSource || !onJumpToSource) return;
-    onJumpToSource(latestSource);
+    if (!onJumpToSource) return;
+    const preferred = resolvePreferredSource();
+    if (!preferred) return;
+    onJumpToSource(preferred);
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      onClose();
+    }
     setMenuOpen(false);
   };
+
+  useEffect(() => {
+    if (!isOpen || !onJumpToSource || !cursorSource) return;
+    const preferred = resolvePreferredSource();
+    if (!preferred) return;
+
+    const rectKey = preferred.rect
+      ? `${preferred.rect.x.toFixed(4)}:${preferred.rect.y.toFixed(4)}:${preferred.rect.w.toFixed(4)}:${preferred.rect.h.toFixed(4)}`
+      : 'no-rect';
+    const quoteKey = (cursorSource.quote || '').slice(0, 120);
+    const jumpKey = `${preferred.page}:${rectKey}:${quoteKey}`;
+
+    if (jumpKey === lastAutoJumpKeyRef.current) return;
+    lastAutoJumpKeyRef.current = jumpKey;
+
+    onJumpToSource(preferred);
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      onClose();
+    }
+  }, [cursorSource, isOpen, onClose, onJumpToSource, resolvePreferredSource]);
 
   useEffect(() => {
     if (!isOpen || !documentId || isHydratingRef.current) return;
@@ -514,7 +673,7 @@ export function PDFViewerNotesPanel({ isOpen, onClose, documentId, documentTitle
               <div className="absolute right-0 top-full z-20 mt-2 w-44 rounded-md border border-border bg-card p-1 shadow-xl">
                 <button
                   onClick={handleJumpToSource}
-                  disabled={!latestSource || !onJumpToSource}
+                  disabled={!canJumpToSource || !onJumpToSource}
                   className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
                 >
                   Jump to source
@@ -545,6 +704,17 @@ export function PDFViewerNotesPanel({ isOpen, onClose, documentId, documentTitle
               key={editorKey}
               initialContent={content}
               onChange={setContent}
+              onCursorSourceChange={(source) =>
+                setCursorSource(
+                  source
+                    ? {
+                        page: source.page,
+                        rect: source.rect,
+                        quote: source.quote,
+                      }
+                    : null,
+                )
+              }
               compact={false}
               placeholder="Start writing your notes for this document..."
               editable

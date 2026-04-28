@@ -1,6 +1,24 @@
 // FILE: frontend/types/types.ts
 
-export type BlockNoteContent = Record<string, unknown>[];
+export interface NoteSourceRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface NoteSourceProps {
+  source_page?: number;
+  source_rect?: NoteSourceRect;
+  source_quote?: string;
+}
+
+export type NoteBlock = Record<string, unknown> & {
+  props?: Record<string, unknown> & NoteSourceProps;
+  content?: Record<string, unknown>[];
+};
+
+export type BlockNoteContent = NoteBlock[];
 
 export type NoteCategory = 'Definition' | 'Key Point' | 'Formula' | 'Important';
 

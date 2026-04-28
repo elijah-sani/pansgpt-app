@@ -20,6 +20,11 @@ import "@blocknote/react/style.css";
 export interface RichNoteEditorProps {
   initialContent?: BlockNoteContent;
   onChange: (content: BlockNoteContent) => void;
+  onCursorSourceChange?: (source: {
+    page?: number;
+    rect?: { x: number; y: number; w: number; h: number };
+    quote?: string;
+  } | null) => void;
   placeholder?: string;
   compact?: boolean;
   editable?: boolean;
@@ -107,6 +112,7 @@ function LocalSlashMenu({
 export default function RichNoteEditor({
   initialContent,
   onChange,
+  onCursorSourceChange,
   placeholder = "Start writing your note...",
   compact = false,
   editable = true,
@@ -192,6 +198,81 @@ export default function RichNoteEditor({
     }, 1500);
   }, [editor, onChange]);
 
+  const readSourceFromCurrentBlock = useCallback(() => {
+    if (!onCursorSourceChange) return;
+
+    try {
+      const selection = (editor.getSelection?.() as { blocks?: unknown[] } | undefined) ?? undefined;
+      const selectedBlock =
+        Array.isArray(selection?.blocks) && selection.blocks.length > 0
+          ? (selection.blocks[0] as unknown)
+          : undefined;
+
+      const cursor = editor.getTextCursorPosition();
+      const cursorBlock = cursor?.block as unknown;
+
+      const block =
+        (selectedBlock as { type?: string; props?: Record<string, unknown>; content?: unknown[] } | undefined) ??
+        (cursorBlock as { type?: string; props?: Record<string, unknown>; content?: unknown[] } | undefined);
+      if (!block) {
+        onCursorSourceChange(null);
+        return;
+      }
+      const props = block?.props;
+      const sourcePage = Number(props?.source_page);
+
+      let rect: { x: number; y: number; w: number; h: number } | undefined;
+      const rectValue = props?.source_rect;
+      if (rectValue && typeof rectValue === "object") {
+        const map = rectValue as Record<string, unknown>;
+        const x = Number(map.x);
+        const y = Number(map.y);
+        const w = Number(map.w);
+        const h = Number(map.h);
+        if ([x, y, w, h].every((n) => Number.isFinite(n))) {
+          rect = { x, y, w, h };
+        }
+      }
+
+      const quoteFromProps =
+        typeof props?.source_quote === "string" ? props.source_quote.trim() : "";
+      const quoteFromContent = Array.isArray(block?.content)
+        ? block.content
+            .map((item) => {
+              if (item && typeof item === "object") {
+                const entry = item as Record<string, unknown>;
+                if (entry.type === "text" && typeof entry.text === "string") {
+                  return entry.text;
+                }
+              }
+              return "";
+            })
+            .join(" ")
+            .replace(/\s+/g, " ")
+            .trim()
+        : "";
+      const blockType = typeof block.type === "string" ? block.type : "";
+      const fallbackQuote = blockType === "image" ? "Image snippet" : undefined;
+
+      const payload = {
+        ...(Number.isFinite(sourcePage) ? { page: sourcePage } : {}),
+        ...(rect ? { rect } : {}),
+        quote: quoteFromProps || quoteFromContent || fallbackQuote,
+      };
+
+      if (!payload.page && !payload.quote) {
+        onCursorSourceChange(null);
+        return;
+      }
+
+      onCursorSourceChange({
+        ...payload,
+      });
+    } catch {
+      onCursorSourceChange(null);
+    }
+  }, [editor, onCursorSourceChange]);
+
   // Clean up the timeout on unmount
   useEffect(() => {
     return () => {
@@ -200,6 +281,10 @@ export default function RichNoteEditor({
       }
     };
   }, []);
+
+  useEffect(() => {
+    readSourceFromCurrentBlock();
+  }, [editor, readSourceFromCurrentBlock]);
 
   useEffect(() => {
     const container = editorContainerRef.current;
@@ -236,6 +321,7 @@ export default function RichNoteEditor({
         theme={resolvedTheme}
         editable={editable}
         onChange={handleChange}
+        onSelectionChange={readSourceFromCurrentBlock}
       >
         <SuggestionMenuController
           triggerCharacter="/"

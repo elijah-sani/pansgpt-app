@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 import { PDFNote, BlockNoteContent } from "@/types/types";
 import dynamic from "next/dynamic";
@@ -79,6 +80,7 @@ function formatEditedDate(dateString?: string | null): string {
 }
 
 export default function NotesPage() {
+  const searchParams = useSearchParams();
   const { toggle: toggleSidebar } = useSidebarControls();
   const [notes, setNotes] = useState<PDFNote[]>([]);
   const [selectedNote, setSelectedNote] = useState<PDFNote | null>(null);
@@ -140,21 +142,31 @@ export default function NotesPage() {
     return [];
   }, []);
 
+  const broadcastNotesUpdate = () => {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(new Event("pansgpt-notes-updated"));
+  };
+
   // Initial load
   useEffect(() => {
     setIsLoading(true);
     fetchNotes().then(fetched => {
+      const preferredNoteId = searchParams.get("note");
+      const preferred = preferredNoteId
+        ? fetched.find((note: PDFNote) => String(note.id) === preferredNoteId)
+        : null;
+
       if (!isMobileView && fetched.length > 0) {
-        setSelectedNote(fetched[0]);
-        setTitleInput(getEditableTitle(fetched[0].title));
+        const initial = preferred || fetched[0];
+        setSelectedNote(initial);
+        setTitleInput(getEditableTitle(initial.title));
       } else {
         setSelectedNote(null);
         setTitleInput("");
       }
       setIsLoading(false);
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fetchNotes, isMobileView, searchParams]);
 
   useEffect(() => {
     let cancelled = false;
@@ -248,6 +260,7 @@ export default function NotesPage() {
         setNotes(prev => [newNote, ...prev]);
         setSelectedNote(newNote);
         setTitleInput("");
+        broadcastNotesUpdate();
       }
     } catch (e) {
       console.error(e);
@@ -279,6 +292,7 @@ export default function NotesPage() {
 
       const filtered = notes.filter((n) => !targetIds.includes(String(n.id)));
       setNotes(filtered);
+      broadcastNotesUpdate();
 
       if (isSelectionMode) {
         setIsSelectionMode(false);
@@ -309,14 +323,14 @@ export default function NotesPage() {
       setIsSaving(true);
       try {
         const res = await api.patch(`/notes/${selectedNote.id}`, { title: payloadTitle });
-        if (res.ok) {
-          const updated = await res.json();
-          updateLocalNote(selectedNote.id, {
-            title: typeof updated.title === "string" ? updated.title : null,
-            last_edited_at: updated.last_edited_at,
-          });
-          showSaved();
-        }
+      if (res.ok) {
+        const updated = await res.json();
+        updateLocalNote(selectedNote.id, {
+          title: typeof updated.title === "string" ? updated.title : null,
+          last_edited_at: updated.last_edited_at,
+        });
+        showSaved();
+      }
       } finally {
         setIsSaving(false);
       }
