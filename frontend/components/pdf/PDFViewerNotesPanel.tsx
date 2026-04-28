@@ -32,6 +32,21 @@ type CursorSourceContext = {
   quote?: string;
 };
 
+const sameCursorSource = (
+  a: CursorSourceContext | null,
+  b: CursorSourceContext | null,
+): boolean => {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if ((a.page ?? null) !== (b.page ?? null)) return false;
+  if ((a.quote ?? '') !== (b.quote ?? '')) return false;
+  const ar = a.rect;
+  const br = b.rect;
+  if (!ar && !br) return true;
+  if (!ar || !br) return false;
+  return ar.x === br.x && ar.y === br.y && ar.w === br.w && ar.h === br.h;
+};
+
 type ExportLine = {
   text: string;
   variant: 'heading' | 'body';
@@ -280,6 +295,9 @@ export function PDFViewerNotesPanel({ isOpen, onClose, documentId, documentTitle
   const [latestSource, setLatestSource] = useState<SourceLocation | null>(null);
   const [cursorSource, setCursorSource] = useState<CursorSourceContext | null>(null);
   const [locationTagSources, setLocationTagSources] = useState<Array<SourceLocation & { quote?: string }>>([]);
+  const [isLoadingRemote, setIsLoadingRemote] = useState(false);
+  const [loadedFromCache, setLoadedFromCache] = useState(false);
+  const [autoJumpEnabled, setAutoJumpEnabled] = useState(true);
 
   const titleDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedSignatureRef = useRef('');
@@ -291,16 +309,15 @@ export function PDFViewerNotesPanel({ isOpen, onClose, documentId, documentTitle
   const menuRef = useRef<HTMLDivElement | null>(null);
   const autosaveInFlightRef = useRef(0);
   const lastAutoJumpKeyRef = useRef<string>('');
+  const noteCacheKey = useMemo(
+    () => (documentId ? `pansgpt_document_note_${documentId}` : null),
+    [documentId],
+  );
 
   const defaultNoteTitle = useMemo(() => {
     const resolved = typeof documentTitle === 'string' ? documentTitle.trim() : '';
     return resolved ? `${resolved} - Notes` : 'My Notes';
   }, [documentTitle]);
-  const canJumpToSource = useMemo(() => {
-    if (cursorSource?.page && Number.isFinite(cursorSource.page)) return true;
-    if (cursorSource?.quote && locationTagSources.length > 0) return true;
-    return Boolean(latestSource);
-  }, [cursorSource, latestSource, locationTagSources]);
 
   useEffect(() => {
     noteIdRef.current = noteId;
@@ -367,6 +384,19 @@ export function PDFViewerNotesPanel({ isOpen, onClose, documentId, documentTitle
           }
 
           lastSavedSignatureRef.current = signature;
+          if (noteCacheKey) {
+            const payloadToCache: NotePayload = {
+              id: noteIdRef.current ?? 'local',
+              title: normalizedTitle || null,
+              content: nextContent,
+              page_number: currentPage ?? null,
+            };
+            try {
+              localStorage.setItem(noteCacheKey, JSON.stringify(payloadToCache));
+            } catch {
+              // Non-fatal; network save already completed.
+            }
+          }
           onNoteChanged?.();
         } catch (error) {
           console.error('Autosave failed', error);
@@ -379,7 +409,7 @@ export function PDFViewerNotesPanel({ isOpen, onClose, documentId, documentTitle
         }
       });
     },
-    [currentPage, documentId, isOpen, onNoteChanged],
+    [currentPage, documentId, isOpen, noteCacheKey, onNoteChanged],
   );
 
   useEffect(() => {
@@ -411,7 +441,32 @@ export function PDFViewerNotesPanel({ isOpen, onClose, documentId, documentTitle
 
     const controller = new AbortController();
     isHydratingRef.current = true;
+    setIsLoadingRemote(true);
+    setLoadedFromCache(false);
     setTitle(defaultNoteTitle);
+
+    if (noteCacheKey) {
+      try {
+        const raw = localStorage.getItem(noteCacheKey);
+        if (raw) {
+          const cached = JSON.parse(raw) as NotePayload;
+          const cachedTitle = typeof cached.title === 'string' && cached.title.trim().length > 0
+            ? cached.title.trim()
+            : defaultNoteTitle;
+          const cachedContent = normalizeLoadedContent(cached);
+          if (cachedContent.length > 0 || cachedTitle !== defaultNoteTitle) {
+            setNoteId(cached.id !== undefined && cached.id !== null ? String(cached.id) : null);
+            setTitle(cachedTitle);
+            setContent(cachedContent);
+            setLoadedFromCache(true);
+            setEditorKey((prev) => prev + 1);
+            lastSavedSignatureRef.current = buildSignature(cachedTitle, cachedContent);
+          }
+        }
+      } catch {
+        // Ignore malformed cache; network fetch below is source of truth.
+      }
+    }
 
     void (async () => {
       try {
@@ -452,6 +507,13 @@ export function PDFViewerNotesPanel({ isOpen, onClose, documentId, documentTitle
               : null;
           setLatestSource(latestContentSource || parsedTagSource || fallbackSource);
           lastSavedSignatureRef.current = buildSignature(loadedTitle, loadedContent);
+          if (noteCacheKey) {
+            try {
+              localStorage.setItem(noteCacheKey, JSON.stringify(data));
+            } catch {
+              // Ignore local cache failure.
+            }
+          }
         } else {
           noteIdRef.current = null;
           setNoteId(null);
@@ -461,6 +523,13 @@ export function PDFViewerNotesPanel({ isOpen, onClose, documentId, documentTitle
           setCursorSource(null);
           setLocationTagSources([]);
           lastSavedSignatureRef.current = buildSignature(defaultNoteTitle, []);
+          if (noteCacheKey) {
+            try {
+              localStorage.removeItem(noteCacheKey);
+            } catch {
+              // Ignore local cache failure.
+            }
+          }
         }
 
         setEditorKey((prev) => prev + 1);
@@ -472,6 +541,7 @@ export function PDFViewerNotesPanel({ isOpen, onClose, documentId, documentTitle
       } finally {
         if (!controller.signal.aborted) {
           isHydratingRef.current = false;
+          setIsLoadingRemote(false);
         }
       }
     })();
@@ -479,7 +549,27 @@ export function PDFViewerNotesPanel({ isOpen, onClose, documentId, documentTitle
     return () => {
       controller.abort();
     };
-  }, [defaultNoteTitle, documentId, isOpen]);
+  }, [defaultNoteTitle, documentId, isOpen, noteCacheKey]);
+
+  useEffect(() => {
+    if (!documentId || typeof window === 'undefined') return;
+    try {
+      const raw = localStorage.getItem(`pansgpt_notes_auto_jump_${documentId}`);
+      if (raw === '0') setAutoJumpEnabled(false);
+      if (raw === '1') setAutoJumpEnabled(true);
+    } catch {
+      // ignore
+    }
+  }, [documentId]);
+
+  useEffect(() => {
+    if (!documentId || typeof window === 'undefined') return;
+    try {
+      localStorage.setItem(`pansgpt_notes_auto_jump_${documentId}`, autoJumpEnabled ? '1' : '0');
+    } catch {
+      // ignore
+    }
+  }, [autoJumpEnabled, documentId]);
 
   const resolvePreferredSource = useCallback((): SourceLocation | null => {
     const preferredFromCursor =
@@ -490,22 +580,16 @@ export function PDFViewerNotesPanel({ isOpen, onClose, documentId, documentTitle
       cursorSource?.quote && locationTagSources.length > 0
         ? findMatchingTagSource(cursorSource.quote, locationTagSources)
         : null;
-    return preferredFromCursor || preferredFromTags || latestSource || null;
+    // If the user is actively on a block (cursorSource exists), never fall back to
+    // latestSource, otherwise image taps can incorrectly jump to the last saved snippet.
+    if (cursorSource) {
+      return preferredFromCursor || preferredFromTags || null;
+    }
+    return latestSource || null;
   }, [cursorSource, latestSource, locationTagSources]);
 
-  const handleJumpToSource = () => {
-    if (!onJumpToSource) return;
-    const preferred = resolvePreferredSource();
-    if (!preferred) return;
-    onJumpToSource(preferred);
-    if (typeof window !== 'undefined' && window.innerWidth < 768) {
-      onClose();
-    }
-    setMenuOpen(false);
-  };
-
   useEffect(() => {
-    if (!isOpen || !onJumpToSource || !cursorSource) return;
+    if (!isOpen || !onJumpToSource || !cursorSource || !autoJumpEnabled) return;
     const preferred = resolvePreferredSource();
     if (!preferred) return;
 
@@ -519,10 +603,7 @@ export function PDFViewerNotesPanel({ isOpen, onClose, documentId, documentTitle
     lastAutoJumpKeyRef.current = jumpKey;
 
     onJumpToSource(preferred);
-    if (typeof window !== 'undefined' && window.innerWidth < 768) {
-      onClose();
-    }
-  }, [cursorSource, isOpen, onClose, onJumpToSource, resolvePreferredSource]);
+  }, [autoJumpEnabled, cursorSource, isOpen, onJumpToSource, resolvePreferredSource]);
 
   useEffect(() => {
     if (!isOpen || !documentId || isHydratingRef.current) return;
@@ -625,6 +706,21 @@ export function PDFViewerNotesPanel({ isOpen, onClose, documentId, documentTitle
     }
   };
 
+  const handleCursorSourceChange = useCallback(
+    (source: { page?: number; rect?: SourceLocation['rect']; quote?: string } | null) => {
+      const next: CursorSourceContext | null = source
+        ? {
+            page: source.page,
+            rect: source.rect,
+            quote: source.quote,
+          }
+        : null;
+
+      setCursorSource((prev) => (sameCursorSource(prev, next) ? prev : next));
+    },
+    [],
+  );
+
   return (
     <>
       <div 
@@ -670,17 +766,34 @@ export function PDFViewerNotesPanel({ isOpen, onClose, documentId, documentTitle
             </button>
 
             {menuOpen && (
-              <div className="absolute right-0 top-full z-20 mt-2 w-44 rounded-md border border-border bg-card p-1 shadow-xl">
+              <div className="absolute right-0 top-full z-20 mt-2 w-60 overflow-hidden rounded-xl border border-border/80 bg-card/95 backdrop-blur-sm shadow-2xl">
+                <div className="px-3 py-2 border-b border-border/70 bg-muted/30">
+                  <p className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Note Settings</p>
+                </div>
+                <div className="p-2 space-y-1">
                 <button
-                  onClick={handleJumpToSource}
-                  disabled={!canJumpToSource || !onJumpToSource}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+                  onClick={() => setAutoJumpEnabled((prev) => !prev)}
+                  className="group flex w-full items-center justify-between gap-3 rounded-sm px-2.5 py-2 text-left transition-colors hover:bg-muted/80"
                 >
-                  Jump to source
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-foreground">Auto jump to source</p>
+                  </div>
+                  <span
+                    aria-hidden="true"
+                    className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+                      autoJumpEnabled ? 'bg-primary/80' : 'bg-muted'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
+                        autoJumpEnabled ? 'translate-x-4' : 'translate-x-0.5'
+                      }`}
+                    />
+                  </span>
                 </button>
                 <button
                   onClick={() => void handleCopy()}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-muted"
+                  className="flex w-full items-center gap-2 rounded-sm px-2.5 py-2 text-left text-xs text-foreground transition-colors hover:bg-muted/80"
                 >
                   <Copy className="h-3.5 w-3.5" />
                   Copy note
@@ -688,15 +801,21 @@ export function PDFViewerNotesPanel({ isOpen, onClose, documentId, documentTitle
                 <button
                   onClick={() => void handleExportPdf()}
                   disabled={isExporting}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-60"
+                  className="flex w-full items-center gap-2 rounded-sm px-2.5 py-2 text-left text-xs text-foreground transition-colors hover:bg-muted/80 disabled:opacity-60"
                 >
                   {isExporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
                   Download as PDF
                 </button>
+                </div>
               </div>
             )}
           </div>
         </div>
+        {isLoadingRemote && (
+          <div className="px-4 py-2 text-xs text-muted-foreground border-b border-border/70">
+            {loadedFromCache ? 'Showing cached notes, syncing latest...' : 'Loading notes...'}
+          </div>
+        )}
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 pt-6 pb-44 md:min-w-[384px] w-full">
           <div className="h-full">
@@ -704,17 +823,7 @@ export function PDFViewerNotesPanel({ isOpen, onClose, documentId, documentTitle
               key={editorKey}
               initialContent={content}
               onChange={setContent}
-              onCursorSourceChange={(source) =>
-                setCursorSource(
-                  source
-                    ? {
-                        page: source.page,
-                        rect: source.rect,
-                        quote: source.quote,
-                      }
-                    : null,
-                )
-              }
+              onCursorSourceChange={handleCursorSourceChange}
               compact={false}
               placeholder="Start writing your notes for this document..."
               editable

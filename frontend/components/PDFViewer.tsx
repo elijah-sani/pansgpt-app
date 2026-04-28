@@ -1839,17 +1839,10 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         type: 'image',
         props: {
             url: `data:image/png;base64,${base64Image}`,
-            name: 'Snip',
+            name: source ? `Snip|${buildLocationTag(source, 'Image snippet')}` : 'Snip',
             caption: '',
             showPreview: true,
             previewWidth: 420,
-            ...(source
-                ? {
-                    source_page: source.page,
-                    source_rect: source.rect,
-                    source_quote: 'Image snippet',
-                }
-                : {}),
         },
     });
 

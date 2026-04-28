@@ -14,7 +14,6 @@ import {
 import { filterSuggestionItems } from "@blocknote/core/extensions";
 import { BlockNoteContent } from "../../types/types";
 
-import "@blocknote/core/fonts/inter.css";
 import "@blocknote/react/style.css";
 
 export interface RichNoteEditorProps {
@@ -48,6 +47,34 @@ const getBlockText = (block: PartialBlock | undefined): string => {
       return "";
     })
     .join("");
+};
+
+const parseSourceTag = (value: string): { page?: number; rect?: { x: number; y: number; w: number; h: number }; quote?: string } | null => {
+  if (!value.includes("loc:v1;")) return null;
+  const source = value.slice(value.indexOf("loc:v1;"));
+  const parts = source.split(";").slice(1);
+  const map = new Map<string, string>();
+  for (const part of parts) {
+    const [key, raw] = part.split("=");
+    if (!key || raw === undefined) continue;
+    map.set(key, raw);
+  }
+
+  const page = Number(map.get("p"));
+  const x = Number(map.get("x"));
+  const y = Number(map.get("y"));
+  const w = Number(map.get("w"));
+  const h = Number(map.get("h"));
+  const quoteRaw = map.get("q");
+  const quote = quoteRaw ? decodeURIComponent(quoteRaw) : undefined;
+
+  const parsed: { page?: number; rect?: { x: number; y: number; w: number; h: number }; quote?: string } = {};
+  if (Number.isFinite(page)) parsed.page = page;
+  if ([x, y, w, h].every((n) => Number.isFinite(n))) {
+    parsed.rect = { x, y, w, h };
+  }
+  if (quote && quote.trim()) parsed.quote = quote.trim();
+  return parsed.page || parsed.rect || parsed.quote ? parsed : null;
 };
 
 function LocalSlashMenu({
@@ -120,6 +147,8 @@ export default function RichNoteEditor({
   const { theme } = useTheme();
   const editorContainerRef = useRef<HTMLDivElement | null>(null);
   const [slashMenuWidth, setSlashMenuWidth] = useState<number>(220);
+  const selectionSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const selectionSyncRafRef = useRef<number | null>(null);
 
   // Explicitly resolve theme since BlockNote expects "light" or "dark"
   const resolvedTheme = theme === "dark" ? "dark" : "light";
@@ -236,6 +265,11 @@ export default function RichNoteEditor({
 
       const quoteFromProps =
         typeof props?.source_quote === "string" ? props.source_quote.trim() : "";
+      const blockType = typeof block.type === "string" ? block.type : "";
+      const imageNameTag =
+        blockType === "image" && typeof props?.name === "string"
+          ? parseSourceTag(props.name)
+          : null;
       const quoteFromContent = Array.isArray(block?.content)
         ? block.content
             .map((item) => {
@@ -251,13 +285,14 @@ export default function RichNoteEditor({
             .replace(/\s+/g, " ")
             .trim()
         : "";
-      const blockType = typeof block.type === "string" ? block.type : "";
       const fallbackQuote = blockType === "image" ? "Image snippet" : undefined;
 
       const payload = {
         ...(Number.isFinite(sourcePage) ? { page: sourcePage } : {}),
         ...(rect ? { rect } : {}),
-        quote: quoteFromProps || quoteFromContent || fallbackQuote,
+        ...(!Number.isFinite(sourcePage) && imageNameTag?.page ? { page: imageNameTag.page } : {}),
+        ...(!rect && imageNameTag?.rect ? { rect: imageNameTag.rect } : {}),
+        quote: quoteFromProps || quoteFromContent || imageNameTag?.quote || fallbackQuote,
       };
 
       if (!payload.page && !payload.quote) {
@@ -278,6 +313,12 @@ export default function RichNoteEditor({
     return () => {
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
+      }
+      if (selectionSyncTimeoutRef.current) {
+        clearTimeout(selectionSyncTimeoutRef.current);
+      }
+      if (selectionSyncRafRef.current !== null) {
+        cancelAnimationFrame(selectionSyncRafRef.current);
       }
     };
   }, []);
@@ -312,6 +353,22 @@ export default function RichNoteEditor({
   return (
     <div
       ref={editorContainerRef}
+      onMouseUp={() => {
+        if (selectionSyncTimeoutRef.current) {
+          clearTimeout(selectionSyncTimeoutRef.current);
+        }
+        selectionSyncTimeoutRef.current = setTimeout(() => {
+          readSourceFromCurrentBlock();
+        }, 0);
+      }}
+      onTouchEnd={() => {
+        if (selectionSyncRafRef.current !== null) {
+          cancelAnimationFrame(selectionSyncRafRef.current);
+        }
+        selectionSyncRafRef.current = requestAnimationFrame(() => {
+          readSourceFromCurrentBlock();
+        });
+      }}
       className={`w-full bg-transparent border-none outline-none ${
         compact ? "h-[200px] overflow-y-auto" : "h-full"
       }`}
@@ -321,7 +378,15 @@ export default function RichNoteEditor({
         theme={resolvedTheme}
         editable={editable}
         onChange={handleChange}
-        onSelectionChange={readSourceFromCurrentBlock}
+        onSelectionChange={() => {
+          readSourceFromCurrentBlock();
+          if (selectionSyncRafRef.current !== null) {
+            cancelAnimationFrame(selectionSyncRafRef.current);
+          }
+          selectionSyncRafRef.current = requestAnimationFrame(() => {
+            readSourceFromCurrentBlock();
+          });
+        }}
       >
         <SuggestionMenuController
           triggerCharacter="/"
