@@ -59,5 +59,8 @@
     "tailwindcss": "^4.2.1",
     "typescript": "^5",
     "webpack": "^5.105.4"
+  },
+  "optionalDependencies": {
+    "lightningcss-linux-x64-gnu": "*"
   }
 }

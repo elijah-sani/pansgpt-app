@@ -40,11 +40,9 @@ const nextConfig: NextConfig = {
   webpack: (config) => {
     config.resolve.alias = {
       ...config.resolve.alias,
-      react: path.resolve('./node_modules/react'),
-      'react-dom': path.resolve('./node_modules/react-dom'),
-      'pdfjs-dist$': path.resolve('./node_modules/pdfjs-dist/legacy/build/pdf.mjs'),
-    }
-    return config
+      "pdfjs-dist$": path.resolve("./node_modules/pdfjs-dist/legacy/build/pdf.mjs"),
+    };
+    return config;
   },
   turbopack: {},
   typescript: {

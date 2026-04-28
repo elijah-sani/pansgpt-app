@@ -79,7 +79,7 @@ function formatEditedDate(dateString?: string | null): string {
   })}`;
 }
 
-export default function NotesPage() {
+function NotesPageContent() {
   const searchParams = useSearchParams();
   const { toggle: toggleSidebar } = useSidebarControls();
   const [notes, setNotes] = useState<PDFNote[]>([]);
@@ -761,5 +761,13 @@ export default function NotesPage() {
         onClose={() => setIsReportModalOpen(false)} 
       />
     </div>
+  );
+}
+
+export default function NotesPage() {
+  return (
+    <React.Suspense fallback={<div className="h-[100dvh] w-full bg-background" />}>
+      <NotesPageContent />
+    </React.Suspense>
   );
 }
