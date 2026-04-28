@@ -61,6 +61,8 @@
     "webpack": "^5.105.4"
   },
   "optionalDependencies": {
+    "@tailwindcss/oxide-linux-x64-gnu": "*",
+    "@tailwindcss/oxide-linux-x64-musl": "*",
     "lightningcss-linux-x64-gnu": "*"
   }
 }
