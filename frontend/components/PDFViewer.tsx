@@ -1,7 +1,7 @@
 'use client';
 import React, { useState, useRef, useEffect } from 'react';
+import dynamic from 'next/dynamic';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Document, Page, pdfjs } from 'react-pdf';
 import { X, Sparkles, BookmarkPlus, BookOpen, Lightbulb, Brain, Loader2, FileText, MessageSquare, ZoomIn, ZoomOut, Scissors, Copy, Trash2, ListChecks, MoreHorizontal, ChevronDown, ChevronLeft, ChevronRight, RefreshCw, Download, Send, Pencil, Check, HelpCircle, WifiOff, Maximize, Minimize } from 'lucide-react';
 import { useSimulatedProgress } from '../hooks/useSimulatedProgress';
 import { LoadingState } from './LoadingState';
@@ -20,10 +20,31 @@ import type { PDFNote } from './pdf/types';
 import { useOfflineStatus } from '../hooks/useOfflineStatus';
 import { toast } from 'sonner';
 
-// Critical Fix: Use CDN for worker to prevent Next.js bundling issues
-pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
-// Silence noisy worker warnings (like TT font parsing) by forcing verbosity to ERRORS (0)
-(pdfjs.GlobalWorkerOptions as unknown as { verbosity: number }).verbosity = 0;
+let reactPdfModulePromise: Promise<typeof import('react-pdf')> | null = null;
+
+const loadReactPdf = async () => {
+    if (!reactPdfModulePromise) {
+        reactPdfModulePromise = import('react-pdf').then((mod) => {
+            mod.pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${mod.pdfjs.version}/build/pdf.worker.min.mjs`;
+            (mod.pdfjs.GlobalWorkerOptions as unknown as { verbosity: number }).verbosity = 0;
+            return mod;
+        });
+    }
+    return reactPdfModulePromise;
+};
+
+const Document = dynamic(() => loadReactPdf().then((mod) => mod.Document), {
+    ssr: false,
+    loading: () => (
+        <div className="flex items-center justify-center py-12 text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin" />
+        </div>
+    ),
+});
+
+const Page = dynamic(() => loadReactPdf().then((mod) => mod.Page), {
+    ssr: false,
+});
 
 interface PDFViewerProps {
     fileId: string;

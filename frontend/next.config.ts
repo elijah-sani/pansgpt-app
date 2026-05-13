@@ -36,20 +36,23 @@ const nextConfig: NextConfig = {
     "@tiptap/pm",
     "@tiptap/react",
     "@handlewithcare/prosemirror-inputrules",
+    "react-pdf",
+    "pdfjs-dist",
   ],
   webpack: (config) => {
     config.resolve.alias = {
       ...config.resolve.alias,
-      "pdfjs-dist$": path.resolve("./node_modules/pdfjs-dist/legacy/build/pdf.mjs"),
+      "pdfjs-dist$": path.resolve(process.cwd(), "node_modules/pdfjs-dist/webpack.mjs"),
     };
     return config;
   },
-  turbopack: {},
+  turbopack: {
+    root: path.resolve(process.cwd()),
+  },
   typescript: {
     ignoreBuildErrors: false,
   },
   experimental: {
-    cpus: 1,
     serverActions: {
       allowedOrigins: process.env.ALLOWED_ORIGINS
         ? process.env.ALLOWED_ORIGINS.split(",")

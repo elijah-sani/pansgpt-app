@@ -1,12 +1,17 @@
 'use client';
 
 import { Suspense, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Loader2, AlertCircle, CheckCircle2, Lock, Eye, EyeOff } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
 function ResetPasswordContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const nextPath = (() => {
+    const raw = searchParams.get('next') || '/login';
+    return raw.startsWith('/') && !raw.startsWith('//') ? raw : '/login';
+  })();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -60,7 +65,7 @@ function ResetPasswordContent() {
       const { error } = await supabase.auth.updateUser({ password });
       if (error) throw error;
       setDone(true);
-      setTimeout(() => router.push('/login'), 2500);
+      setTimeout(() => router.push(nextPath), 2500);
     } catch (error: unknown) {
       setMessage({
         type: 'error',
