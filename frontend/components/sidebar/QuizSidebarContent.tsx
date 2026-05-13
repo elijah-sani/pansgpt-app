@@ -11,6 +11,7 @@ type QuizSidebarContentProps = {
   quizResults: QuizHistoryItem[];
   routerPush: (path: string) => void;
   showFilters: () => void;
+  onOpenQuickNote: () => void;
 };
 
 export function QuizSidebarContent({
@@ -22,6 +23,7 @@ export function QuizSidebarContent({
   quizResults,
   routerPush,
   showFilters,
+  onOpenQuickNote,
 }: QuizSidebarContentProps) {
   return (
     <>
@@ -58,7 +60,7 @@ export function QuizSidebarContent({
           </div>
 
           <button
-            onClick={() => routerPush('/notes')}
+            onClick={onOpenQuickNote}
             className="mt-1 ml-4 flex w-[calc(100%-1rem)] items-center gap-2 rounded-xl px-2 py-2 text-left text-sm font-medium text-foreground/90 transition-colors hover:bg-muted/40"
           >
             <Plus className="h-4 w-4 shrink-0 text-foreground/70" />

@@ -16,6 +16,9 @@ type DocumentMeta = {
   course_code?: string;
   topic?: string;
 };
+const QUICK_NOTE_TAG_PREFIX = "quick:v1";
+const QUICK_NOTE_TITLE = "Quick notes";
+const QUICK_NOTE_STORAGE_KEY = "pansgpt_quick_note_persistent";
 
 function formatRelativeTime(dateString: string) {
   const date = new Date(dateString);
@@ -68,6 +71,56 @@ function getDisplayTitle(title?: string | null): string {
   return normalized || "Untitled note";
 }
 
+function isQuickNote(note: PDFNote): boolean {
+  return Array.isArray(note.tags) && note.tags.some((tag) => typeof tag === "string" && tag.startsWith(QUICK_NOTE_TAG_PREFIX));
+}
+
+function getDashboardQuickNoteId(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(QUICK_NOTE_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { noteId?: string | null };
+    return parsed?.noteId ? String(parsed.noteId) : null;
+  } catch {
+    return null;
+  }
+}
+
+function getDashboardQuickNoteState(): { noteId: string | null; content: BlockNoteContent } {
+  if (typeof window === "undefined") return { noteId: null, content: [] };
+  try {
+    const raw = localStorage.getItem(QUICK_NOTE_STORAGE_KEY);
+    if (!raw) return { noteId: null, content: [] };
+    const parsed = JSON.parse(raw) as { noteId?: string | null; content?: BlockNoteContent };
+    return {
+      noteId: parsed?.noteId ? String(parsed.noteId) : null,
+      content: Array.isArray(parsed?.content) ? parsed.content : [],
+    };
+  } catch {
+    return { noteId: null, content: [] };
+  }
+}
+
+function hasMeaningfulContent(content?: BlockNoteContent): boolean {
+  if (!Array.isArray(content)) return false;
+  return content.some((block) => {
+    if (!block || typeof block !== "object") return false;
+    if ((block as Record<string, unknown>).type === "image") return true;
+    const inline = (block as Record<string, unknown>).content;
+    if (!Array.isArray(inline)) return false;
+    return inline.some((item) => {
+      if (!item || typeof item !== "object") return false;
+      const text = (item as Record<string, unknown>).text;
+      return typeof text === "string" && text.trim().length > 0;
+    });
+  });
+}
+
+function contentSignature(content?: BlockNoteContent): string {
+  return JSON.stringify(Array.isArray(content) ? content : []);
+}
+
 function formatEditedDate(dateString?: string | null): string {
   if (!dateString) return "Edited recently";
   const date = new Date(dateString);
@@ -83,6 +136,7 @@ function NotesPageContent() {
   const searchParams = useSearchParams();
   const { toggle: toggleSidebar } = useSidebarControls();
   const [notes, setNotes] = useState<PDFNote[]>([]);
+  const [quickNote, setQuickNote] = useState<PDFNote | null>(null);
   const [selectedNote, setSelectedNote] = useState<PDFNote | null>(null);
   const [documentMetaById, setDocumentMetaById] = useState<Record<string, DocumentMeta>>({});
   const [isLoading, setIsLoading] = useState(true);
@@ -133,13 +187,70 @@ function NotesPageContent() {
       const res = await api.get(`/notes?${params.toString()}`);
       if (res.ok) {
         const data = await res.json();
-        setNotes(data.notes || []);
-        return data.notes || [];
+        const allNotes: PDFNote[] = Array.isArray(data.notes) ? data.notes : [];
+        const quickCandidates = allNotes.filter(isQuickNote);
+        const dashboardState = getDashboardQuickNoteState();
+        let quick =
+          (dashboardState.noteId ? quickCandidates.find((note) => String(note.id) === dashboardState.noteId) : null) ||
+          quickCandidates.sort((a, b) => {
+            const aTime = new Date(a.last_edited_at || a.created_at).getTime();
+            const bTime = new Date(b.last_edited_at || b.created_at).getTime();
+            return bTime - aTime;
+          })[0] ||
+          null;
+
+        const localCacheMatchesQuickNote = Boolean(quick && dashboardState.noteId && String(quick.id) === dashboardState.noteId);
+        const localCacheHasContent = hasMeaningfulContent(dashboardState.content);
+        const quickNeedsSync =
+          Boolean(quick) && localCacheMatchesQuickNote && localCacheHasContent && (
+            contentSignature(quick.content) !== contentSignature(dashboardState.content) ||
+            quick?.document_id !== null && quick?.document_id !== undefined
+          );
+
+        if (quick && quickNeedsSync) {
+          const syncRes = await api.patch(`/notes/${quick.id}`, {
+            title: QUICK_NOTE_TITLE,
+            content: dashboardState.content,
+            tags: [QUICK_NOTE_TAG_PREFIX],
+            document_id: null,
+          });
+          if (syncRes.ok) {
+            quick = await syncRes.json();
+          }
+        }
+
+        if (!quick && hasMeaningfulContent(dashboardState.content)) {
+          const createRes = await api.post("/notes", {
+            title: QUICK_NOTE_TITLE,
+            content: dashboardState.content,
+            tags: [QUICK_NOTE_TAG_PREFIX],
+            document_id: null,
+          });
+          if (createRes.ok) {
+            quick = await createRes.json();
+          }
+        }
+
+        const staleQuickNotes = quickCandidates.filter((note) => !quick || String(note.id) !== String(quick.id));
+        if (staleQuickNotes.length > 0) {
+          await Promise.all(staleQuickNotes.map((note) => api.delete(`/notes/${note.id}`)));
+        }
+
+        if (quick && typeof window !== "undefined") {
+          localStorage.setItem(QUICK_NOTE_STORAGE_KEY, JSON.stringify({
+            noteId: String(quick.id),
+            content: Array.isArray(quick.content) ? quick.content : dashboardState.content,
+          }));
+        }
+        const regular = allNotes.filter((note) => !isQuickNote(note));
+        setQuickNote(quick);
+        setNotes(regular);
+        return { regular, quick };
       }
     } catch (e) {
       console.error("Failed to fetch notes", e);
     }
-    return [];
+    return { regular: [] as PDFNote[], quick: null as PDFNote | null };
   }, []);
 
   const broadcastNotesUpdate = () => {
@@ -147,17 +258,33 @@ function NotesPageContent() {
     window.dispatchEvent(new Event("pansgpt-notes-updated"));
   };
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleNotesUpdated = () => {
+      void fetchNotes(searchQuery).then((fetched) => {
+        if (selectedNote && isQuickNote(selectedNote) && fetched.quick) {
+          setSelectedNote(fetched.quick);
+          setTitleInput(getEditableTitle(fetched.quick.title));
+        }
+      });
+    };
+
+    window.addEventListener("pansgpt-notes-updated", handleNotesUpdated);
+    return () => window.removeEventListener("pansgpt-notes-updated", handleNotesUpdated);
+  }, [fetchNotes, searchQuery, selectedNote]);
+
   // Initial load
   useEffect(() => {
     setIsLoading(true);
     fetchNotes().then(fetched => {
       const preferredNoteId = searchParams.get("note");
       const preferred = preferredNoteId
-        ? fetched.find((note: PDFNote) => String(note.id) === preferredNoteId)
+        ? fetched.regular.find((note: PDFNote) => String(note.id) === preferredNoteId) || (fetched.quick && String(fetched.quick.id) === preferredNoteId ? fetched.quick : null)
         : null;
 
-      if (!isMobileView && fetched.length > 0) {
-        const initial = preferred || fetched[0];
+      if (!isMobileView && (fetched.regular.length > 0 || fetched.quick)) {
+        const initial = preferred || fetched.regular[0] || fetched.quick;
         setSelectedNote(initial);
         setTitleInput(getEditableTitle(initial.title));
       } else {
@@ -209,14 +336,17 @@ function NotesPageContent() {
       setIsLoading(true);
       const fetched = await fetchNotes(searchQuery);
 
-      if (fetched.length > 0) {
+      if (fetched.regular.length > 0 || fetched.quick) {
         const selectedStillExists = selectedNote
-          ? fetched.some((n: PDFNote) => n.id === selectedNote.id)
+          ? fetched.regular.some((n: PDFNote) => n.id === selectedNote.id) || (fetched.quick?.id === selectedNote.id)
           : false;
 
         if (!selectedStillExists && !isMobileView) {
-          setSelectedNote(fetched[0]);
-          setTitleInput(getEditableTitle(fetched[0].title));
+          const initial = fetched.regular[0] || fetched.quick;
+          if (initial) {
+            setSelectedNote(initial);
+            setTitleInput(getEditableTitle(initial.title));
+          }
         } else if (!selectedStillExists && isMobileView) {
           setSelectedNote(null);
           setTitleInput("");
@@ -236,6 +366,9 @@ function NotesPageContent() {
 
   const updateLocalNote = (id: string, updates: Partial<PDFNote>) => {
     setNotes(prev => prev.map(n => n.id === id ? { ...n, ...updates } : n));
+    if (quickNote?.id === id) {
+      setQuickNote(prev => prev ? { ...prev, ...updates } : prev);
+    }
     if (selectedNote?.id === id) {
       setSelectedNote(prev => prev ? { ...prev, ...updates } : prev);
     }
@@ -314,6 +447,7 @@ function NotesPageContent() {
   };
 
   const handleTitleChange = (val: string) => {
+    if (selectedNote && isQuickNote(selectedNote)) return;
     setTitleInput(val);
     if (titleSaveTimeout.current) clearTimeout(titleSaveTimeout.current);
     
@@ -341,10 +475,20 @@ function NotesPageContent() {
     if (!selectedNote) return;
     setIsSaving(true);
     try {
-      const res = await api.patch(`/notes/${selectedNote.id}`, { content });
+      const payload = isQuickNote(selectedNote)
+        ? { content, tags: [QUICK_NOTE_TAG_PREFIX], title: QUICK_NOTE_TITLE }
+        : { content };
+      const res = await api.patch(`/notes/${selectedNote.id}`, payload);
       if (res.ok) {
         const updated = await res.json();
         updateLocalNote(selectedNote.id, { content: updated.content, last_edited_at: updated.last_edited_at });
+        if (isQuickNote(selectedNote) && typeof window !== "undefined") {
+          localStorage.setItem(QUICK_NOTE_STORAGE_KEY, JSON.stringify({
+            noteId: String(selectedNote.id),
+            content: updated.content,
+          }));
+          broadcastNotesUpdate();
+        }
         showSaved();
       }
     } finally {
@@ -355,6 +499,49 @@ function NotesPageContent() {
   const handleSelectNote = (note: PDFNote) => {
     setSelectedNote(note);
     setTitleInput(getEditableTitle(note.title));
+  };
+
+  const handleOpenQuickNote = async () => {
+    if (quickNote) {
+      setSelectedNote(quickNote);
+      setTitleInput(getEditableTitle(quickNote.title));
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const fetched = await fetchNotes();
+      if (fetched.quick) {
+        setQuickNote(fetched.quick);
+        setSelectedNote(fetched.quick);
+        setTitleInput(getEditableTitle(fetched.quick.title));
+        return;
+      }
+
+      const dashboardState = getDashboardQuickNoteState();
+      const createRes = await api.post("/notes", {
+        title: QUICK_NOTE_TITLE,
+        content: hasMeaningfulContent(dashboardState.content) ? dashboardState.content : [],
+        tags: [QUICK_NOTE_TAG_PREFIX],
+        document_id: null,
+      });
+      if (!createRes.ok) return;
+      const created = await createRes.json();
+      if (typeof window !== "undefined") {
+        localStorage.setItem(QUICK_NOTE_STORAGE_KEY, JSON.stringify({
+          noteId: String(created.id),
+          content: Array.isArray(created.content) ? created.content : dashboardState.content,
+        }));
+      }
+      setQuickNote(created);
+      setSelectedNote(created);
+      setTitleInput(getEditableTitle(created.title));
+      broadcastNotesUpdate();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleExportAllNotes = () => {
@@ -382,6 +569,7 @@ function NotesPageContent() {
   const selectedDocumentMeta = selectedNote?.document_id
     ? documentMetaById[String(selectedNote.document_id)]
     : undefined;
+  const isSelectedQuickNote = Boolean(selectedNote && isQuickNote(selectedNote));
 
   // Derive sorted notes
   const sortedNotes = [...notes].sort((a, b) => {
@@ -595,6 +783,18 @@ function NotesPageContent() {
             )}
           </div>
 
+          <div className="border-t border-border px-2 py-2">
+            <button
+              onClick={() => void handleOpenQuickNote()}
+              className={`w-full h-[42px] flex items-center gap-2 px-1.5 rounded-lg text-sm font-medium transition-colors active:scale-[0.98] active:bg-muted/60 ${
+                isSelectedQuickNote ? "bg-primary/10 text-primary" : "text-foreground/80 hover:text-foreground hover:bg-muted/30"
+              }`}
+            >
+              <NotepadText className="h-[18px] w-[18px] shrink-0" />
+              <span>Quick notes</span>
+            </button>
+          </div>
+
           <button
             onClick={() => void handleNewNote()}
             className="md:hidden absolute bottom-5 right-5 z-10 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-transform hover:scale-105 active:scale-95 disabled:opacity-70"
@@ -645,12 +845,14 @@ function NotesPageContent() {
                         >
                           {showTags ? "Hide tags" : "Show tags"}
                         </button>
-                        <button 
-                          onClick={() => { handleDeleteRequest(selectedNote.id); setShowMobileMenu(false); }}
-                          className="w-full text-left px-4 py-2.5 text-sm font-medium text-destructive hover:bg-red-500/10 transition-colors"
-                        >
-                          Delete
-                        </button>
+                        {!isSelectedQuickNote && (
+                          <button 
+                            onClick={() => { handleDeleteRequest(selectedNote.id); setShowMobileMenu(false); }}
+                            className="w-full text-left px-4 py-2.5 text-sm font-medium text-destructive hover:bg-red-500/10 transition-colors"
+                          >
+                            Delete
+                          </button>
+                        )}
                       </div>
                     </>
                   )}
@@ -663,28 +865,31 @@ function NotesPageContent() {
                   type="text"
                   value={titleInput}
                   onChange={(e) => handleTitleChange(e.target.value)}
-                  placeholder="New note"
+                  placeholder={isSelectedQuickNote ? QUICK_NOTE_TITLE : "New note"}
+                  readOnly={isSelectedQuickNote}
                   className="flex-1 text-2xl md:text-3xl font-bold bg-transparent outline-none border-none text-foreground placeholder:text-muted-foreground"
                 />
 
-                <button
-                  onClick={() => handleDeleteRequest(selectedNote.id)}
-                  className="hidden md:flex shrink-0 p-1.5 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors"
-                  title="Delete Note"
-                >
-                  <Trash2 size={18} />
-                </button>
+                {!isSelectedQuickNote && (
+                  <button
+                    onClick={() => handleDeleteRequest(selectedNote.id)}
+                    className="hidden md:flex shrink-0 p-1.5 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors"
+                    title="Delete Note"
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                )}
               </div>
 
               {/* Tags Area */}
               <div className={`flex flex-wrap items-center text-[12px] font-medium text-muted-foreground/80 ${!showTags && isMobileView ? 'hidden' : ''}`}>
-                {selectedDocumentMeta?.course_code ? (
+                {!isSelectedQuickNote && selectedDocumentMeta?.course_code ? (
                   <>
                     <span>{selectedDocumentMeta.course_code}</span>
                     <span className="mx-2 text-border">|</span>
                   </>
                 ) : null}
-                {selectedDocumentMeta?.topic ? (
+                {!isSelectedQuickNote && selectedDocumentMeta?.topic ? (
                   <>
                     <span>{selectedDocumentMeta.topic}</span>
                     <span className="mx-2 text-border">|</span>
