@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "node ..\\node_modules\\next\\dist\\bin\\next dev --webpack",
-    "build": "node ..\\node_modules\\next\\dist\\bin\\next build --webpack",
-    "start": "node ..\\node_modules\\next\\dist\\bin\\next start",
-    "lint": "node ..\\node_modules\\eslint\\bin\\eslint.js"
+    "dev": "next dev --webpack",
+    "build": "next build --webpack",
+    "start": "next start",
+    "lint": "next lint"
   },
   "dependencies": {
     "@blocknote/core": "^0.49.0",
