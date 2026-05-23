@@ -182,34 +182,37 @@ export default function LecturerProtectedLayout({ children }: { children: React.
     };
   }, [guardState]);
 
-  if (guardState.status === 'blocked' && blockedCopy) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4 py-8">
-        <div className="w-full max-w-xl rounded-3xl border border-border bg-card p-8 shadow-sm">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="mt-0.5 h-6 w-6 text-amber-500" />
-            <div>
-              <h1 className="text-2xl font-bold text-foreground">{blockedCopy.title}</h1>
-              <p className="mt-3 text-sm leading-6 text-muted-foreground">{blockedCopy.message}</p>
+  if (guardState.status === 'blocked') {
+    if (blockedCopy) {
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-background px-4 py-8">
+          <div className="w-full max-w-xl rounded-3xl border border-border bg-card p-8 shadow-sm">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-6 w-6 text-amber-500" />
+              <div>
+                <h1 className="text-2xl font-bold text-foreground">{blockedCopy.title}</h1>
+                <p className="mt-3 text-sm leading-6 text-muted-foreground">{blockedCopy.message}</p>
+              </div>
+            </div>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Link
+                href="/main"
+                className="inline-flex items-center rounded-xl border border-border px-5 py-3 text-sm font-semibold text-muted-foreground transition-colors hover:bg-muted"
+              >
+                Go to main app
+              </Link>
+              <Link
+                href="/login"
+                className="inline-flex items-center rounded-xl bg-primary/10 px-5 py-3 text-sm font-semibold text-primary transition-colors hover:bg-primary/15"
+              >
+                Back to login
+              </Link>
             </div>
           </div>
-          <div className="mt-6 flex flex-wrap gap-3">
-            <Link
-              href="/main"
-              className="inline-flex items-center rounded-xl border border-border px-5 py-3 text-sm font-semibold text-muted-foreground transition-colors hover:bg-muted"
-            >
-              Go to main app
-            </Link>
-            <Link
-              href="/login"
-              className="inline-flex items-center rounded-xl bg-primary/10 px-5 py-3 text-sm font-semibold text-primary transition-colors hover:bg-primary/15"
-            >
-              Back to login
-            </Link>
-          </div>
         </div>
-      </div>
-    );
+      );
+    }
+    return null;
   }
 
   const lecturerProfile = guardState.bootstrap.lecturer_profile;
