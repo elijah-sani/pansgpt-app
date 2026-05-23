@@ -36,7 +36,6 @@ type LecturerBootstrap = {
 };
 
 type GuardState =
-  | { status: 'checking' }
   | { status: 'allowed'; bootstrap: LecturerBootstrap; userEmail: string | null }
   | { status: 'blocked'; bootstrap: LecturerBootstrap };
 
