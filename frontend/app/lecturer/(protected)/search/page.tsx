@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Clock3, Loader2, Search } from 'lucide-react';
 
 import { api } from '@/lib/api';
@@ -19,7 +19,7 @@ type MaterialSubmission = LecturerSearchMaterial;
 
 const RECENT_SEARCHES_KEY = 'lecturer-dashboard-recent-searches';
 
-export default function LecturerSearchPage() {
+function LecturerSearchContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const initialQuery = searchParams.get('q') || '';
@@ -261,5 +261,19 @@ export default function LecturerSearchPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LecturerSearchPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[100dvh] items-center justify-center">
+          <Loader2 className="h-7 w-7 animate-spin text-primary" />
+        </div>
+      }
+    >
+      <LecturerSearchContent />
+    </Suspense>
   );
 }
