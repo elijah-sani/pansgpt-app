@@ -1,12 +1,14 @@
+import asyncio
 import logging
 import os
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from urllib.error import URLError
+import httpx
 
 import jwt
 from jwt import PyJWKClient
-from fastapi import Header, HTTPException
+from fastapi import Depends, Header, HTTPException
 from pydantic import BaseModel
 
 logger = logging.getLogger("PansGPT")
@@ -46,6 +48,8 @@ jwks_status: Dict[str, Any] = {
     "endpoint": None,
     "error": None,
 }
+role_supabase_client = None
+role_supabase_service_client = None
 
 
 def _initialize_jwks_clients() -> None:
@@ -68,6 +72,53 @@ def _initialize_jwks_clients() -> None:
 class User(BaseModel):
     id: str
     email: Optional[str] = None
+
+
+class LecturerProfile(BaseModel):
+    id: str
+    user_id: str
+    university_id: str
+    university_name: Optional[str] = None
+    university_status: Optional[str] = None
+    status: str
+    title: Optional[str] = None
+    full_name: str
+    email: str
+    phone_number: Optional[str] = None
+
+
+def _normalize_lecturer_profile(row: Optional[Dict[str, Any]]) -> Optional[LecturerProfile]:
+    if not row:
+        return None
+
+    university = row.get("university")
+    if isinstance(university, list):
+        university = university[0] if university else None
+    if not isinstance(university, dict):
+        university = {}
+
+    lecturer_id = row.get("id")
+    user_id = row.get("user_id")
+    university_id = row.get("university_id")
+    status = (row.get("status") or "").strip().lower()
+    full_name = (row.get("full_name") or "").strip()
+    email = (row.get("email") or "").strip()
+
+    if not lecturer_id or not user_id or not university_id or not status or not full_name or not email:
+        return None
+
+    return LecturerProfile(
+        id=str(lecturer_id),
+        user_id=str(user_id),
+        university_id=str(university_id),
+        university_name=(university.get("name") or None) if university else None,
+        university_status=((university.get("status") or "").strip().lower() or None) if university else None,
+        status=status,
+        title=(row.get("title") or None),
+        full_name=full_name,
+        email=email,
+        phone_number=(row.get("phone_number") or None),
+    )
 
 
 def _extract_bearer_token(authorization: Optional[str]) -> str:
@@ -150,6 +201,132 @@ def get_jwks_status() -> Dict[str, Any]:
     return dict(jwks_status)
 
 
+def set_role_dependencies(supabase=None, supabase_service=None) -> None:
+    global role_supabase_client, role_supabase_service_client
+    role_supabase_client = supabase
+    role_supabase_service_client = supabase_service
+
+
+def _role_db():
+    return role_supabase_service_client or role_supabase_client
+
+
+def _is_retryable_role_db_error(exc: Exception) -> bool:
+    if isinstance(exc, (httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectTimeout, httpx.ConnectError)):
+        return True
+
+    message = str(exc).lower()
+    retry_markers = (
+        "server disconnected",
+        "connection reset",
+        "timeout",
+        "timed out",
+        "remoteprotocolerror",
+        "temporarily unavailable",
+    )
+    return any(marker in message for marker in retry_markers)
+
+
+async def _run_role_query(execute_fn, *, operation_name: str, user_id: Optional[str] = None):
+    last_error = None
+    for attempt in range(1, 4):
+        try:
+            return await asyncio.to_thread(execute_fn)
+        except Exception as exc:
+            last_error = exc
+            if attempt < 3 and _is_retryable_role_db_error(exc):
+                logger.warning(
+                    "Role/Supabase request failed for %s (user_id=%s, attempt %s/3), retrying: %s",
+                    operation_name,
+                    user_id,
+                    attempt,
+                    exc,
+                )
+                await asyncio.sleep(0.75 * attempt)
+                continue
+            raise
+    raise last_error
+
+
+async def get_current_user_role(current_user: User) -> Optional[str]:
+    sb = _role_db()
+    if not sb:
+        raise HTTPException(status_code=503, detail="Database not active")
+
+    rows = []
+    try:
+        if current_user.email:
+            normalized_email = current_user.email.strip().lower()
+            res = await _run_role_query(
+                lambda: sb.table("user_roles").select("role,email").ilike("email", normalized_email).execute(),
+                operation_name="role lookup by email",
+                user_id=current_user.id,
+            )
+            rows = res.data or []
+
+        if not rows:
+            res = await _run_role_query(
+                lambda: sb.table("user_roles").select("role,user_id").eq("user_id", current_user.id).execute(),
+                operation_name="role lookup by user_id",
+                user_id=current_user.id,
+            )
+            rows = res.data or []
+    except Exception as exc:
+        logger.error("Role lookup failed for user %s: %s", current_user.id, exc)
+        if _is_retryable_role_db_error(exc):
+            raise HTTPException(status_code=503, detail="Authorization service temporarily unavailable")
+        raise HTTPException(status_code=500, detail="Authorization check failed")
+
+    for row in rows:
+        role = (row.get("role") or "").strip().lower()
+        if role in {"admin", "super_admin"}:
+            return role
+    return None
+
+
+async def get_lecturer_profile_for_user(current_user: User) -> Optional[LecturerProfile]:
+    sb = _role_db()
+    if not sb:
+        raise HTTPException(status_code=503, detail="Database not active")
+
+    try:
+        res = await _run_role_query(
+            lambda: sb.table("lecturer_profiles")
+            .select(
+                "id,user_id,university_id,status,title,full_name,email,phone_number,"
+                "university:universities(id,name,status)"
+            )
+            .eq("user_id", current_user.id)
+            .limit(1)
+            .execute(),
+            operation_name="lecturer profile lookup",
+            user_id=current_user.id,
+        )
+    except Exception as exc:
+        logger.error("Lecturer profile lookup failed for user %s: %s", current_user.id, exc)
+        if _is_retryable_role_db_error(exc):
+            raise HTTPException(status_code=503, detail="Authorization service temporarily unavailable")
+        raise HTTPException(status_code=500, detail="Authorization check failed")
+
+    rows = res.data or []
+    row = rows[0] if rows else None
+    return _normalize_lecturer_profile(row)
+
+
+async def require_admin_role(current_user: User) -> str:
+    role = await get_current_user_role(current_user)
+    if role not in {"admin", "super_admin"}:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return role
+
+
+async def require_super_admin_role(current_user: User) -> str:
+    role = await get_current_user_role(current_user)
+    if role != "super_admin":
+        raise HTTPException(status_code=403, detail="Only super admins can access this resource")
+    return role
+
+
 async def get_current_user(authorization: Optional[str] = Header(None)) -> User:
     """
     Verify Supabase JWT locally using Supabase JWKS public keys.
@@ -204,3 +381,34 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> User:
         raise HTTPException(status_code=401, detail="Invalid Token")
 
     return User(id=user_id, email=payload.get("email"))
+
+
+async def get_current_admin(current_user: User = Depends(get_current_user)) -> User:
+    await require_admin_role(current_user)
+    return current_user
+
+
+async def get_current_super_admin(current_user: User = Depends(get_current_user)) -> User:
+    await require_super_admin_role(current_user)
+    return current_user
+
+
+async def get_current_lecturer_profile(current_user: User = Depends(get_current_user)) -> Optional[LecturerProfile]:
+    return await get_lecturer_profile_for_user(current_user)
+
+
+async def get_current_active_lecturer(current_user: User = Depends(get_current_user)) -> LecturerProfile:
+    lecturer_profile = await get_lecturer_profile_for_user(current_user)
+    if not lecturer_profile:
+        raise HTTPException(status_code=403, detail="Lecturer access required")
+
+    if lecturer_profile.status != "active":
+        raise HTTPException(status_code=403, detail="Active lecturer access required")
+
+    # Only block if the university status is explicitly known to be inactive.
+    # If university_status is None (join returned no data), allow through — the
+    # lecturer's own status is the authoritative gate.
+    if lecturer_profile.university_status is not None and lecturer_profile.university_status != "active":
+        raise HTTPException(status_code=403, detail="Active university access required")
+
+    return lecturer_profile

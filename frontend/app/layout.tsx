@@ -9,6 +9,7 @@ import { QuizCacheProvider } from "@/lib/QuizCacheContext";
 import { ReaderCacheProvider } from "@/lib/ReaderCacheContext";
 import { SessionRefresher } from "@/components/SessionRefresher";
 import SplashScreenRemover from "@/components/SplashScreenRemover";
+import { Toaster } from "sonner";
 
 const BRAND_COLOR = "#101010";
 
@@ -109,6 +110,15 @@ export default function RootLayout({
           </ErrorBoundary>
         </ThemeProvider>
 
+        <Toaster
+          position="top-right"
+          toastOptions={{
+            duration: 3500,
+            classNames: {
+              toast: "border border-border bg-background text-foreground shadow-lg",
+            },
+          }}
+        />
         <SplashScreenRemover />
       </body>
     </html>

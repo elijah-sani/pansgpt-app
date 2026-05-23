@@ -10,9 +10,23 @@ import time
 import httpx
 from dotenv import load_dotenv
 from google_drive import GoogleDriveService, get_drive_service
+from restrictions import (
+    build_university_candidates,
+    get_active_student_restriction,
+    normalize_university_name,
+)
 from services import llm_engine
 import sentry_sdk
-from dependencies import prime_jwks_cache, get_current_user, User
+from dependencies import (
+    prime_jwks_cache,
+    get_current_user,
+    get_current_user_role,
+    get_lecturer_profile_for_user,
+    require_admin_role,
+    require_super_admin_role,
+    set_role_dependencies,
+    User,
+)
 
 import logging
 from slowapi import Limiter
@@ -34,13 +48,97 @@ load_dotenv()
 
 is_production = os.getenv("ENVIRONMENT", "development").lower() == "production"
 
+
+async def _resolve_profile_university_id(sb, profile_row: dict) -> Optional[str]:
+    university_candidates = build_university_candidates(profile_row.get("university"))
+    if not university_candidates:
+        return None
+
+    university_res = await _run_db(
+        lambda: sb.table("universities").select("id,name,short_name").execute(),
+        operation_name="resolve profile university",
+    )
+    university_rows = university_res.data or []
+    candidate_set = set(university_candidates)
+    match = next(
+        (
+            row for row in university_rows
+            if normalize_university_name(row.get("name")) in candidate_set
+            or normalize_university_name(row.get("short_name")) in candidate_set
+        ),
+        None,
+    )
+    return match.get("id") if match else None
+
+
+def _level_tokens(value: str) -> set[str]:
+    raw = (value or "").strip().lower().replace(" ", "")
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    tokens: set[str] = set()
+    if raw:
+        tokens.add(raw)
+    if digits:
+        tokens.add(digits)
+        tokens.add(f"{digits}lvl")
+        tokens.add(f"{digits}l")
+    return tokens
+
+
+def _document_matches_level(doc: dict, user_tokens: set[str]) -> bool:
+    target_levels = doc.get("target_levels")
+    if not target_levels or not user_tokens:
+        return False
+
+    if isinstance(target_levels, str):
+        doc_levels = [target_levels]
+    elif isinstance(target_levels, list):
+        doc_levels = [str(item) for item in target_levels]
+    else:
+        doc_levels = []
+
+    doc_tokens: set[str] = set()
+    for lvl in doc_levels:
+        doc_tokens |= _level_tokens(lvl)
+
+    if "all" in doc_tokens or "general" in doc_tokens:
+        return True
+
+    return bool(user_tokens.intersection(doc_tokens))
+
+
+async def _can_user_access_library_document(sb, current_user: User, db_record: dict) -> bool:
+    role = await get_current_user_role(current_user)
+    if role in {"admin", "super_admin"}:
+        return True
+
+    profile_resp = await _run_db(
+        lambda: sb.table("profiles").select("level,university").eq("id", current_user.id).limit(1).execute(),
+        operation_name="document access profile lookup",
+        user_id=current_user.id,
+    )
+    profile_rows = profile_resp.data or []
+    if not profile_rows:
+        return False
+
+    profile_row = profile_rows[0]
+    user_level_tokens = _level_tokens(profile_row.get("level") or "")
+    if not _document_matches_level(db_record, user_level_tokens):
+        return False
+
+    document_university_id = db_record.get("university_id")
+    if not document_university_id:
+        return True
+
+    user_university_id = await _resolve_profile_university_id(sb, profile_row)
+    return bool(user_university_id and user_university_id == document_university_id)
+
 sentry_sdk.init(
     dsn=os.getenv("SENTRY_DSN"),
     traces_sample_rate=0.1 if is_production else 1.0,
     profiles_sample_rate=0.1 if is_production else 1.0,
 )
 
-from routers import settings, system, library, chat, quiz
+from routers import settings, system, library, chat, quiz, lecturer
 from routers.chat_core import router as chat_core_router
 from routers.chat_core import chat_limiter
 from routers.chat_sessions import router as chat_sessions_router
@@ -48,6 +146,7 @@ from routers.timetable import router as timetable_router
 from routers.admin import router as admin_router
 from routers.feedback import router as feedback_router
 from routers.notes import router as notes_router
+from routers.lecturer import router as lecturer_router
 
 # Initialize Rate Limiter
 def _get_rate_limit_key(request: Request) -> str:
@@ -150,6 +249,8 @@ except Exception as e:
     logger.error(f"[ERROR] Failed to initialize Supabase: {e}")
 logger.info("---------------------------------------")
 
+set_role_dependencies(supabase_client, supabase_service_client)
+
 # --- Auth JWKS Preflight (startup-only, no request-path overhead) ---
 try:
     jwks_health = prime_jwks_cache()
@@ -166,6 +267,7 @@ chat.set_dependencies(supabase_client, verify_api_key, supabase_service_client)
 system.set_dependencies(supabase_client)
 settings.set_dependencies(supabase_client, verify_api_key, supabase_service_client)
 quiz.set_dependencies(supabase_client, verify_api_key, supabase_service_client)
+lecturer.set_dependencies(supabase_client, verify_api_key, supabase_service_client, drive_service, GOOGLE_DRIVE_FOLDER_ID)
 
 # Include routers
 app.include_router(library.router)
@@ -176,6 +278,7 @@ app.include_router(admin_router)
 app.include_router(feedback_router)
 app.include_router(quiz.router)
 app.include_router(notes_router)
+app.include_router(lecturer_router)
 
 # --- Routes ---
 @app.get("/health")
@@ -188,7 +291,7 @@ def _db():
     return supabase_service_client or supabase_client
 
 
-async def _run_db(execute_fn):
+async def _run_db(execute_fn, operation_name: str = "Supabase query", user_id: Optional[str] = None):
     last_error = None
     for attempt in range(1, 4):
         try:
@@ -197,7 +300,9 @@ async def _run_db(execute_fn):
             last_error = exc
             if attempt < 3 and _is_retryable_db_error(exc):
                 logger.warning(
-                    "Supabase request failed (attempt %s/3), retrying: %s",
+                    "Supabase request failed for %s (user_id=%s, attempt %s/3), retrying: %s",
+                    operation_name,
+                    user_id,
                     attempt,
                     exc,
                 )
@@ -245,27 +350,11 @@ def _profile_with_display_name(profile):
 
 
 async def _get_user_role(current_user: User) -> Optional[str]:
-    sb = _db()
-    if not sb or not current_user.email:
-        return None
-
-    normalized_email = current_user.email.strip().lower()
-    res = await _run_db(
-        lambda: sb.table("user_roles").select("role,email").ilike("email", normalized_email).execute()
-    )
-    rows = res.data or []
-    for row in rows:
-        role = (row.get("role") or "").strip().lower()
-        if role in {"admin", "super_admin"}:
-            return role
-    return None
+    return await get_current_user_role(current_user)
 
 
 async def _require_admin(current_user: User) -> str:
-    role = await _get_user_role(current_user)
-    if role not in {"admin", "super_admin"}:
-        raise HTTPException(status_code=403, detail="Admin access required")
-    return role
+    return await require_admin_role(current_user)
 
 
 @app.get("/me/bootstrap")
@@ -279,36 +368,97 @@ async def get_me_bootstrap(current_user: User = Depends(get_current_user)):
         .select("id,first_name,other_names,avatar_url,level,university,subscription_tier,has_seen_welcome")
         .eq("id", current_user.id)
         .limit(1)
-        .execute()
+        .execute(),
+        operation_name="/me/bootstrap profile lookup",
+        user_id=current_user.id,
     )
     profile = _profile_with_display_name(_first_row(profile_res))
 
-    role = await _get_user_role(current_user)
+    try:
+        role = await _get_user_role(current_user)
+    except HTTPException as exc:
+        if exc.status_code == 503:
+            logger.warning("Bootstrap role lookup fell back to non-admin for user_id=%s", current_user.id)
+            role = None
+        else:
+            raise
+
+    try:
+        lecturer_profile = await get_lecturer_profile_for_user(current_user)
+    except HTTPException as exc:
+        if exc.status_code == 503:
+            logger.warning("Bootstrap lecturer lookup fell back to non-lecturer for user_id=%s", current_user.id)
+            lecturer_profile = None
+        else:
+            raise
 
     system_res = await _run_db(
         lambda: sb.table("system_settings")
         .select("maintenance_mode,web_search_enabled,total_api_calls")
         .eq("id", 1)
         .limit(1)
-        .execute()
+        .execute(),
+        operation_name="/me/bootstrap system settings lookup",
+        user_id=current_user.id,
     )
     system_settings = _first_row(system_res) or {}
 
     file_count = 0
     if current_user.email:
-        docs_res = await _run_db(
-            lambda: sb.table("pans_library")
-            .select("id", count="exact")
-            .eq("uploaded_by_email", current_user.email)
-            .execute()
-        )
-        file_count = docs_res.count or 0
+        try:
+            docs_res = await _run_db(
+                lambda: sb.table("pans_library")
+                .select("id", count="exact")
+                .eq("uploaded_by_email", current_user.email)
+                .execute(),
+                operation_name="/me/bootstrap uploaded file count",
+                user_id=current_user.id,
+            )
+            file_count = docs_res.count or 0
+        except Exception as exc:
+            if _is_retryable_db_error(exc):
+                logger.warning("Bootstrap file count lookup failed for user_id=%s, defaulting to 0: %s", current_user.id, exc)
+                file_count = 0
+            else:
+                raise
+
+    lecturer_payload = None
+    lecturer_status = None
+    is_lecturer = False
+    academic_role = None
+    university_id = None
+    university_name = None
+
+    if lecturer_profile:
+        is_lecturer = True
+        lecturer_status = lecturer_profile.status
+        academic_role = "lecturer"
+        university_id = lecturer_profile.university_id
+        university_name = lecturer_profile.university_name
+        lecturer_payload = {
+            "id": lecturer_profile.id,
+            "user_id": lecturer_profile.user_id,
+            "university_id": lecturer_profile.university_id,
+            "university_name": lecturer_profile.university_name,
+            "university_status": lecturer_profile.university_status,
+            "status": lecturer_profile.status,
+            "title": lecturer_profile.title,
+            "full_name": lecturer_profile.full_name,
+            "email": lecturer_profile.email,
+            "phone_number": lecturer_profile.phone_number,
+        }
 
     return {
         "profile": profile,
         "role": role,
         "is_admin": role in {"admin", "super_admin"},
         "is_super_admin": role == "super_admin",
+        "is_lecturer": is_lecturer,
+        "lecturer_status": lecturer_status,
+        "lecturer_profile": lecturer_payload,
+        "academic_role": academic_role,
+        "university_id": university_id,
+        "university_name": university_name,
         "system_settings": system_settings,
         "file_count": file_count,
     }
@@ -328,6 +478,24 @@ async def get_my_profile(current_user: User = Depends(get_current_user)):
         .execute()
     )
     return _profile_with_display_name(_first_row(res))
+
+
+@app.get("/me/restriction-status", dependencies=[Depends(verify_api_key)])
+async def get_my_restriction_status(current_user: User = Depends(get_current_user)):
+    sb = _db()
+    if not sb:
+        raise HTTPException(status_code=503, detail="Database not active")
+
+    restriction = await get_active_student_restriction(
+        sb,
+        user_id=current_user.id,
+        execute_fn=lambda query_fn, _operation_name: _run_db(query_fn),
+    )
+
+    return {
+        "restricted": bool(restriction),
+        "restriction": restriction,
+    }
 
 
 @app.patch("/me/profile")
@@ -399,9 +567,7 @@ async def list_admin_users(current_user: User = Depends(get_current_user)):
 
 @app.post("/admin/users")
 async def create_admin_user(payload: dict, current_user: User = Depends(get_current_user)):
-    role = await _require_admin(current_user)
-    if role != "super_admin":
-        raise HTTPException(status_code=403, detail="Only super admins can add users")
+    await require_super_admin_role(current_user)
 
     sb = _db()
     if not sb:
@@ -432,9 +598,7 @@ async def create_admin_user(payload: dict, current_user: User = Depends(get_curr
 
 @app.delete("/admin/users")
 async def delete_admin_user(target_email: str, current_user: User = Depends(get_current_user)):
-    role = await _require_admin(current_user)
-    if role != "super_admin":
-        raise HTTPException(status_code=403, detail="Only super admins can remove users")
+    await require_super_admin_role(current_user)
 
     sb = _db()
     if not sb:
@@ -603,79 +767,79 @@ async def list_documents(level: Optional[str] = None, current_user: User = Depen
     sb = supabase_service_client or supabase_client
 
     try:
+        try:
+            role = await get_current_user_role(current_user)
+        except HTTPException as exc:
+            if exc.status_code == 503:
+                logger.warning("Documents role lookup fell back to non-admin for user_id=%s", current_user.id)
+                role = None
+            else:
+                raise
+
         # 1. Fetch the user's academic level from the profiles table
-        profile_resp = await asyncio.to_thread(
-            lambda: sb.table("profiles").select("level").eq("id", current_user.id).limit(1).execute()
+        profile_resp = await _run_db(
+            lambda: sb.table("profiles").select("level,university").eq("id", current_user.id).limit(1).execute(),
+            operation_name="/documents profile lookup",
+            user_id=current_user.id,
         )
         profile_level = None
+        profile_row = None
         if profile_resp.data and len(profile_resp.data) > 0:
-            profile_level = profile_resp.data[0].get("level")
+            profile_row = profile_resp.data[0]
+            profile_level = profile_row.get("level")
         user_level = (level or profile_level or "").strip()
+        user_university_id = None
+        if profile_row:
+            user_university_id = await _resolve_profile_university_id(sb, profile_row)
 
         # 2. Fetch all records from 'pans_library'
-        response = await asyncio.to_thread(
-            lambda: sb.table("pans_library").select("*").execute()
+        response = await _run_db(
+            lambda: sb.table("pans_library").select("*").execute(),
+            operation_name="/documents pans_library list",
+            user_id=current_user.id,
         )
         all_docs = response.data or []
 
-        # 3. Filter: return docs explicitly assigned to the user's level.
-        def level_tokens(value: str) -> set[str]:
-            raw = (value or "").strip().lower().replace(" ", "")
-            digits = "".join(ch for ch in raw if ch.isdigit())
-            tokens: set[str] = set()
-            if raw:
-                tokens.add(raw)
-            if digits:
-                tokens.add(digits)
-                tokens.add(f"{digits}lvl")
-                tokens.add(f"{digits}l")
-            return tokens
+        if role in {"admin", "super_admin"}:
+            return all_docs
 
-        user_tokens = level_tokens(user_level)
+        # 3. Filter: return docs explicitly assigned to the user's level.
+        user_tokens = _level_tokens(user_level)
         filtered_docs = []
         for doc in all_docs:
-            target_levels = doc.get("target_levels")
-            if not target_levels or not user_tokens:
+            document_university_id = doc.get("university_id")
+            if document_university_id and document_university_id != user_university_id:
                 continue
-
-            if isinstance(target_levels, str):
-                doc_levels = [target_levels]
-            elif isinstance(target_levels, list):
-                doc_levels = [str(item) for item in target_levels]
-            else:
-                doc_levels = []
-
-            doc_tokens: set[str] = set()
-            for lvl in doc_levels:
-                doc_tokens |= level_tokens(lvl)
-
-            if "all" in doc_tokens or "general" in doc_tokens:
-                filtered_docs.append(doc)
-                continue
-
-            if user_tokens.intersection(doc_tokens):
+            if _document_matches_level(doc, user_tokens):
                 filtered_docs.append(doc)
 
         return filtered_docs
     except Exception as e:
-        logger.error(f"Database Fetch Error: {e}")
+        if isinstance(e, HTTPException):
+            raise
+        logger.error("Documents fetch failed for user_id=%s: %s", current_user.id, e)
+        if _is_retryable_db_error(e):
+            raise HTTPException(status_code=503, detail="Document service is temporarily unavailable. Please try again.")
         raise HTTPException(status_code=500, detail="Unable to load documents. Please try again.")
 
 @app.get("/documents/{file_id}", dependencies=[Depends(verify_api_key)])
-async def get_document_metadata(file_id: str):
+async def get_document_metadata(file_id: str, current_user: User = Depends(get_current_user)):
     """Returns metadata for a single file, preferring DB record over Drive."""
-    
+    sb = supabase_service_client or supabase_client
+
     # 1. Try Fetching from Supabase (DB) First
-    if supabase_client:
+    if sb:
         try:
             # Query by drive_file_id
             response = await asyncio.to_thread(
-                lambda: supabase_client.table("pans_library").select("*").eq("drive_file_id", file_id).execute()
+                lambda: sb.table("pans_library").select("*").eq("drive_file_id", file_id).execute()
             )
             
             if response.data and len(response.data) > 0:
                 # Return the rich metadata from DB
                 db_record = response.data[0]
+                if not await _can_user_access_library_document(sb, current_user, db_record):
+                    raise HTTPException(status_code=403, detail="You do not have access to this document")
                 return {
                     "id": db_record['id'],
                     "name": db_record.get('file_name'), 
@@ -686,7 +850,12 @@ async def get_document_metadata(file_id: str):
                     "size": db_record.get('file_size'),
                     "drive_file_id": db_record.get('drive_file_id')
                 }
+            role = await get_current_user_role(current_user)
+            if role not in {"admin", "super_admin"}:
+                raise HTTPException(status_code=404, detail="Document not found")
         except Exception as e:
+            if isinstance(e, HTTPException):
+                raise
             logger.warning(f"DB Metadata fetch failed, falling back to Drive: {e}")
 
     # 2. Fallback to Google Drive
@@ -704,12 +873,26 @@ async def get_document_metadata(file_id: str):
 
 
 @app.get("/documents/{file_id}/stream", dependencies=[Depends(verify_api_key)])
-async def stream_document(file_id: str, size: Optional[str] = None):
+async def stream_document(file_id: str, size: Optional[str] = None, current_user: User = Depends(get_current_user)):
     """
     Streams a PDF file.
     """
     if not drive_service:
         raise HTTPException(status_code=500, detail="Drive service not configured")
+
+    sb = supabase_service_client or supabase_client
+    if sb:
+        response = await asyncio.to_thread(
+            lambda: sb.table("pans_library").select("*").eq("drive_file_id", file_id).limit(1).execute()
+        )
+        rows = response.data or []
+        if rows:
+            if not await _can_user_access_library_document(sb, current_user, rows[0]):
+                raise HTTPException(status_code=403, detail="You do not have access to this document")
+        else:
+            role = await get_current_user_role(current_user)
+            if role not in {"admin", "super_admin"}:
+                raise HTTPException(status_code=404, detail="Document not found")
 
     file_size = size
     file_name = f"{file_id}.pdf"
@@ -746,5 +929,3 @@ async def stream_document(file_id: str, size: Optional[str] = None):
 
 # Library endpoints (upload, delete, update) moved to routers/library.py
 # Admin user management is handled via database user_roles table
-
-

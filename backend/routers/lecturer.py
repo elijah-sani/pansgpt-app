@@ -1,12 +1,15 @@
 import asyncio
+import os
 from datetime import timedelta
 from email.utils import parseaddr
-from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
+from uuid import uuid4
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel
 from typing import Optional
 import logging
 
 from dependencies import User, get_current_active_lecturer, get_current_user
+from google_drive import DriveUploadTemporaryError
 from restrictions import (
     build_restriction_select,
     compute_restriction_status,
@@ -23,6 +26,8 @@ router = APIRouter(tags=["lecturer"])
 supabase_client = None
 supabase_service_client = None
 verify_api_key_handler = None
+drive_service = None
+GOOGLE_DRIVE_FOLDER_ID = None
 LECTURER_TITLES = {"Mr", "Mrs", "Miss", "Ms", "Dr", "Prof", "Pharm", "Pharm Dr"}
 
 
@@ -50,6 +55,34 @@ class RestrictionCreateRequest(BaseModel):
 
     class Config:
         extra = "forbid"
+
+
+MATERIAL_SUBMISSION_SELECT = (
+    "id,university_id,lecturer_id,course_code,course_title,level,material_type,title,"
+    "description,file_name,file_url,storage_provider,file_type,mime_type,is_supported_file,"
+    "status,reviewed_by,reviewed_at,review_note,pans_library_id,created_at,updated_at,"
+    "lecturer:lecturer_profiles(title,full_name,email),"
+    "university:universities(name)"
+)
+
+SUPPORTED_MATERIAL_FILE_TYPES = {"pdf"}
+
+
+def _detect_material_file_type(file_name: Optional[str], mime_type: Optional[str]) -> tuple[Optional[str], Optional[str], bool]:
+    normalized_file_name = _normalize_optional(file_name) or ""
+    normalized_mime_type = _normalize_optional(mime_type)
+    normalized_mime_type = normalized_mime_type.lower() if normalized_mime_type else None
+
+    file_type = None
+    _, ext = os.path.splitext(normalized_file_name)
+    if ext:
+        file_type = ext.lstrip(".").strip().lower() or None
+
+    if not file_type and normalized_mime_type == "application/pdf":
+        file_type = "pdf"
+
+    is_supported_file = file_type in SUPPORTED_MATERIAL_FILE_TYPES
+    return file_type, normalized_mime_type, is_supported_file
 
 
 async def verify_api_key(x_api_key: str = Header(...)):
@@ -136,6 +169,108 @@ async def _insert_restriction_audit_log(
         )
     except Exception as exc:
         logger.warning("Restriction audit log failed for %s: %s", restriction_id, exc)
+
+
+async def _insert_material_audit_log(
+    *,
+    actor_user_id: str,
+    actor_role: str,
+    university_id: str,
+    submission_id: str,
+    action: str,
+    metadata: dict,
+) -> None:
+    sb = _db()
+    if not sb:
+        return
+
+    try:
+        await _run_db(
+            lambda: sb.table("access_control_audit_logs")
+            .insert({
+                "actor_user_id": actor_user_id,
+                "actor_role": actor_role,
+                "university_id": university_id,
+                "action": action,
+                "target_type": "lecturer_material_submission",
+                "target_id": submission_id,
+                "metadata": metadata,
+            })
+            .execute()
+        )
+    except Exception as exc:
+        logger.warning("Material submission audit log failed for %s: %s", submission_id, exc)
+
+
+def _material_submission_to_response(row: dict) -> dict:
+    lecturer = row.get("lecturer")
+    if isinstance(lecturer, list):
+        lecturer = lecturer[0] if lecturer else None
+    if not isinstance(lecturer, dict):
+        lecturer = {}
+
+    university = row.get("university")
+    if isinstance(university, list):
+        university = university[0] if university else None
+    if not isinstance(university, dict):
+        university = {}
+
+    lecturer_name = " ".join(
+        part for part in [
+            (lecturer.get("title") or "").strip(),
+            (lecturer.get("full_name") or "").strip(),
+        ]
+        if part
+    ).strip() or None
+
+    return {
+        "id": row.get("id"),
+        "university_id": row.get("university_id"),
+        "university_name": university.get("name"),
+        "lecturer_id": row.get("lecturer_id"),
+        "lecturer_name": lecturer_name,
+        "lecturer_email": lecturer.get("email"),
+        "course_code": row.get("course_code"),
+        "course_title": row.get("course_title"),
+        "level": row.get("level"),
+        "material_type": row.get("material_type"),
+        "title": row.get("title"),
+        "description": row.get("description"),
+        "file_name": row.get("file_name"),
+        "file_url": row.get("file_url"),
+        "storage_provider": row.get("storage_provider"),
+        "file_type": row.get("file_type"),
+        "mime_type": row.get("mime_type"),
+        "is_supported_file": bool(row.get("is_supported_file")),
+        "status": row.get("status"),
+        "reviewed_by": row.get("reviewed_by"),
+        "reviewed_at": row.get("reviewed_at"),
+        "review_note": row.get("review_note"),
+        "pans_library_id": row.get("pans_library_id"),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+    }
+
+
+async def _get_material_submission_by_id(submission_id: str) -> Optional[dict]:
+    sb = _db()
+    if not sb:
+        raise HTTPException(status_code=503, detail="Database not active")
+
+    try:
+        res = await _run_db(
+            lambda: sb.table("lecturer_material_submissions")
+            .select(MATERIAL_SUBMISSION_SELECT)
+            .eq("id", submission_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("Material submission lookup failed for %s: %s", submission_id, exc)
+        raise HTTPException(status_code=500, detail="Unable to load material submission")
+
+    rows = res.data or []
+    return rows[0] if rows else None
 
 
 async def _get_restriction_by_id(restriction_id: str) -> Optional[dict]:
@@ -421,6 +556,196 @@ async def register_lecturer(
     }
 
 
+@router.post("/lecturer/materials", dependencies=[Depends(verify_api_key)], status_code=status.HTTP_201_CREATED)
+async def submit_lecturer_material(
+    file: UploadFile = File(...),
+    level: str = Form(...),
+    course_code: str = Form(...),
+    topic: str = Form(...),
+    course_title: Optional[str] = Form(None),
+    current_user: User = Depends(get_current_user),
+    lecturer_profile=Depends(get_current_active_lecturer),
+):
+    sb = _db()
+    if not sb:
+        raise HTTPException(status_code=503, detail="Database not active")
+    if not drive_service:
+        raise HTTPException(status_code=503, detail="The file service is temporarily unavailable. Please try again in a moment.")
+
+    normalized_topic = normalize_optional_text(topic)
+    normalized_level = normalize_optional_text(level)
+    normalized_course_code = normalize_optional_text(course_code)
+
+    if not normalized_level:
+        raise HTTPException(status_code=400, detail="level is required")
+    if not normalized_course_code:
+        raise HTTPException(status_code=400, detail="course_code is required")
+    if not normalized_topic:
+        raise HTTPException(status_code=400, detail="topic is required")
+
+    original_file_name = normalize_optional_text(file.filename)
+    if not original_file_name:
+        raise HTTPException(status_code=400, detail="file is required")
+    file_type, mime_type, is_supported_file = _detect_material_file_type(original_file_name, file.content_type)
+
+    try:
+        file.file.seek(0, 2)
+        file_size = file.file.tell()
+        file.file.seek(0)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Unable to process the file. Please try again.")
+
+    try:
+        file_ext = os.path.splitext(original_file_name)[1] or ".pdf"
+        unique_filename = f"lecturer-material-{uuid4()}{file_ext}"
+        logger.info(
+            "Lecturer material upload starting: lecturer_id=%s file_name=%s unique_name=%s mime_type=%s file_size=%s folder_id=%s",
+            lecturer_profile.id,
+            original_file_name,
+            unique_filename,
+            file.content_type or "application/octet-stream",
+            file_size,
+            GOOGLE_DRIVE_FOLDER_ID,
+        )
+        drive_file_id = drive_service.upload_file(
+            file_name=unique_filename,
+            file_obj=file.file,
+            mime_type=file.content_type or "application/octet-stream",
+            folder_id=GOOGLE_DRIVE_FOLDER_ID,
+            file_size=file_size,
+        )
+    except Exception as exc:
+        logger.exception(
+            "Lecturer material file upload failed: lecturer_id=%s file_name=%s mime_type=%s file_size=%s folder_id=%s error_type=%s",
+            lecturer_profile.id,
+            original_file_name,
+            file.content_type or "application/octet-stream",
+            file_size,
+            GOOGLE_DRIVE_FOLDER_ID,
+            type(exc).__name__,
+        )
+        if "scope" in str(exc).lower():
+            raise HTTPException(status_code=500, detail="Unable to upload file. Please contact support.")
+        if isinstance(exc, DriveUploadTemporaryError):
+            raise HTTPException(status_code=503, detail="File upload service is temporarily unavailable. Please try again.")
+        raise HTTPException(status_code=500, detail="File upload failed. Please try again.")
+
+    file_url = f"https://drive.google.com/file/d/{drive_file_id}/view"
+
+    submission_payload = {
+        "university_id": lecturer_profile.university_id,
+        "lecturer_id": lecturer_profile.id,
+        "title": normalized_topic,
+        "course_code": normalized_course_code,
+        "course_title": normalize_optional_text(course_title),
+        "level": normalized_level,
+        "material_type": None,
+        "description": None,
+        "file_name": original_file_name,
+        "file_url": file_url,
+        "storage_provider": "google_drive",
+        "file_type": file_type,
+        "mime_type": mime_type,
+        "is_supported_file": is_supported_file,
+        "status": "pending_review",
+        "reviewed_by": None,
+        "reviewed_at": None,
+        "review_note": None,
+        "pans_library_id": None,
+    }
+
+    try:
+        insert_res = await _run_db(
+            lambda: sb.table("lecturer_material_submissions")
+            .insert(submission_payload)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("Material submission failed for lecturer %s: %s", lecturer_profile.id, exc)
+        raise HTTPException(status_code=500, detail="Unable to submit material")
+
+    rows = insert_res.data or []
+    submission_id = rows[0].get("id") if rows and rows[0].get("id") else None
+    if not submission_id:
+        raise HTTPException(status_code=500, detail="Material was submitted but could not be loaded")
+
+    created_row = await _get_material_submission_by_id(submission_id)
+    if not created_row:
+        raise HTTPException(status_code=500, detail="Material was submitted but could not be loaded")
+
+    await _insert_material_audit_log(
+        actor_user_id=current_user.id,
+        actor_role="lecturer",
+        university_id=lecturer_profile.university_id,
+        submission_id=submission_id,
+        action="material_submitted",
+        metadata={
+            "lecturer_id": lecturer_profile.id,
+            "title": normalized_topic,
+            "course_code": submission_payload["course_code"],
+            "course_title": submission_payload["course_title"],
+            "level": submission_payload["level"],
+            "file_name": original_file_name,
+            "storage_provider": submission_payload["storage_provider"],
+            "file_type": submission_payload["file_type"],
+            "mime_type": submission_payload["mime_type"],
+            "is_supported_file": submission_payload["is_supported_file"],
+            "drive_file_id": drive_file_id,
+        },
+    )
+
+    return {"data": _material_submission_to_response(created_row)}
+
+
+@router.get("/lecturer/materials", dependencies=[Depends(verify_api_key)])
+async def list_lecturer_materials(lecturer_profile=Depends(get_current_active_lecturer)):
+    sb = _db()
+    if not sb:
+        raise HTTPException(status_code=503, detail="Database not active")
+
+    # Try the full query with lecturer + university joins first
+    res = None
+    try:
+        res = await _run_db(
+            lambda: sb.table("lecturer_material_submissions")
+            .select(MATERIAL_SUBMISSION_SELECT)
+            .eq("lecturer_id", lecturer_profile.id)
+            .eq("university_id", lecturer_profile.university_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error(
+            "Material submission list (with joins) failed for lecturer %s: %s",
+            lecturer_profile.id, exc, exc_info=True,
+        )
+
+    # Fall back to a simple query without joins if the joined query failed
+    if res is None:
+        MATERIAL_SUBMISSION_SELECT_SIMPLE = (
+            "id,university_id,lecturer_id,course_code,course_title,level,material_type,title,"
+            "description,file_name,file_url,storage_provider,file_type,mime_type,is_supported_file,"
+            "status,reviewed_by,reviewed_at,review_note,pans_library_id,created_at,updated_at"
+        )
+        try:
+            res = await _run_db(
+                lambda: sb.table("lecturer_material_submissions")
+                .select(MATERIAL_SUBMISSION_SELECT_SIMPLE)
+                .eq("lecturer_id", lecturer_profile.id)
+                .eq("university_id", lecturer_profile.university_id)
+                .order("created_at", desc=True)
+                .execute()
+            )
+        except Exception as exc2:
+            logger.error(
+                "Material submission list (simple fallback) failed for lecturer %s: %s",
+                lecturer_profile.id, exc2, exc_info=True,
+            )
+            raise HTTPException(status_code=500, detail="Unable to load material submissions")
+
+    return {"data": [_material_submission_to_response(row) for row in (res.data or [])]}
+
+
 @router.post("/lecturer/restrictions", dependencies=[Depends(verify_api_key)], status_code=status.HTTP_201_CREATED)
 async def create_lecturer_restriction(
     payload: RestrictionCreateRequest,
@@ -609,8 +934,10 @@ async def cancel_lecturer_restriction(
     return {"data": restriction_row_to_response(updated_row)}
 
 
-def set_dependencies(supabase, api_key_verifier, supabase_service=None):
-    global supabase_client, supabase_service_client, verify_api_key_handler
+def set_dependencies(supabase, api_key_verifier, supabase_service=None, drive_svc=None, folder_id=None):
+    global supabase_client, supabase_service_client, verify_api_key_handler, drive_service, GOOGLE_DRIVE_FOLDER_ID
     supabase_client = supabase
     supabase_service_client = supabase_service
     verify_api_key_handler = api_key_verifier
+    drive_service = drive_svc
+    GOOGLE_DRIVE_FOLDER_ID = folder_id

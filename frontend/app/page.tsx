@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { resolvePostLoginDestination } from "@/lib/bootstrap-routing";
 import { supabase } from "@/lib/supabase";
 
 export default function RootPage() {
@@ -10,9 +11,15 @@ export default function RootPage() {
   useEffect(() => {
     let isActive = true;
 
-    const syncRouteWithSession = (hasSession: boolean) => {
+    const syncRouteWithSession = async (hasSession: boolean) => {
       window.localStorage.setItem("pansgpt-auth-hint", hasSession ? "true" : "false");
-      router.replace(hasSession ? "/main" : "/login");
+
+      if (!hasSession) {
+        router.replace("/login");
+        return;
+      }
+
+      router.replace(await resolvePostLoginDestination());
     };
 
     const resolveInitialSession = async () => {
@@ -24,7 +31,7 @@ export default function RootPage() {
         return;
       }
 
-      syncRouteWithSession(Boolean(session));
+      void syncRouteWithSession(Boolean(session));
       setMounted(true);
     };
 
@@ -37,7 +44,7 @@ export default function RootPage() {
         return;
       }
 
-      syncRouteWithSession(Boolean(session));
+      void syncRouteWithSession(Boolean(session));
     });
 
     return () => {

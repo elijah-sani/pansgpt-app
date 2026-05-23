@@ -10,6 +10,53 @@ def normalize_optional_text(value: Optional[str]) -> Optional[str]:
     return normalized or None
 
 
+def normalize_university_name(value: Optional[str]) -> Optional[str]:
+    normalized = normalize_optional_text(value)
+    if not normalized:
+        return None
+
+    # Keep this deliberately simple and stable: case-insensitive, punctuation-insensitive,
+    # and parenthetical aliases like "University of Jos (UNIJOS)" collapse to the base name.
+    base = normalized.split("(", 1)[0].strip()
+    compact = " ".join("".join(ch if ch.isalnum() else " " for ch in base.lower()).split())
+    return compact or None
+
+
+def build_university_candidates(value: Optional[str]) -> list[str]:
+    normalized = normalize_optional_text(value)
+    if not normalized:
+        return []
+
+    raw_candidates = [normalized]
+    if "(" in normalized:
+        base = normalized.split("(", 1)[0].strip()
+        alias = normalized.split("(", 1)[1].split(")", 1)[0].strip()
+        raw_candidates.extend([base, alias])
+
+    seen = set()
+    candidates = []
+    for candidate in raw_candidates:
+        key = normalize_university_name(candidate)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        candidates.append(key)
+    return candidates
+
+
+def normalize_level(value: Optional[str]) -> Optional[str]:
+    normalized = normalize_optional_text(value)
+    if not normalized:
+        return None
+
+    digits = "".join(ch for ch in normalized if ch.isdigit())
+    if digits:
+        return digits
+
+    compact = "".join(ch for ch in normalized.lower() if ch.isalnum())
+    return compact or None
+
+
 def parse_timestamp(value: Any, field_name: str) -> datetime:
     if isinstance(value, datetime):
         parsed = value
@@ -34,19 +81,23 @@ def utc_now() -> datetime:
 
 
 def build_level_candidates(level: Optional[str]) -> list[str]:
-    normalized = normalize_optional_text(level)
-    if not normalized:
+    normalized_level = normalize_level(level)
+    if not normalized_level:
         return []
 
-    digits = "".join(ch for ch in normalized if ch.isdigit())
-    candidates = [normalized, normalized.lower()]
-    if digits:
-        candidates.extend([digits, f"{digits}lvl", f"{digits}l", f"{digits} Level"])
+    candidates = [
+        normalized_level,
+        f"{normalized_level}L",
+        f"{normalized_level}l",
+        f"{normalized_level}lvl",
+        f"{normalized_level} Level",
+        f"{normalized_level} level",
+    ]
 
     seen = set()
     ordered = []
     for candidate in candidates:
-        key = candidate.lower()
+        key = candidate
         if key in seen:
             continue
         seen.add(key)
@@ -177,23 +228,29 @@ async def get_active_student_restriction(
     if not student_profile:
         return None
 
-    university_name = normalize_optional_text(student_profile.get("university"))
-    level = normalize_optional_text(student_profile.get("level"))
-    level_candidates = build_level_candidates(level)
-    if not university_name or not level_candidates:
+    university_candidates = build_university_candidates(student_profile.get("university"))
+    student_level = normalize_level(student_profile.get("level"))
+    if not university_candidates or not student_level:
         return None
 
     university_res = await _execute(
         lambda: sb.table("universities")
-        .select("id,name,status")
-        .ilike("name", university_name)
+        .select("id,name,short_name,status")
         .eq("status", "active")
-        .limit(1)
         .execute(),
         "Resolve student university for restriction check",
     )
     university_rows = university_res.data or []
-    university_row = university_rows[0] if university_rows else None
+    candidate_set = set(university_candidates)
+    university_row = next(
+        (
+            row
+            for row in university_rows
+            if normalize_university_name(row.get("name")) in candidate_set
+            or normalize_university_name(row.get("short_name")) in candidate_set
+        ),
+        None,
+    )
     if not university_row:
         return None
 
@@ -202,7 +259,6 @@ async def get_active_student_restriction(
         lambda: sb.table("exam_restrictions")
         .select(build_restriction_select())
         .eq("university_id", university_row.get("id"))
-        .in_("level", level_candidates)
         .neq("status", "cancelled")
         .lte("start_time", now_iso)
         .gte("end_time", now_iso)
@@ -212,8 +268,60 @@ async def get_active_student_restriction(
         "Fetch active student restriction",
     )
     restriction_rows = restriction_res.data or []
-    restriction_row = restriction_rows[0] if restriction_rows else None
+    restriction_row = next(
+        (
+            row
+            for row in restriction_rows
+            if normalize_level(row.get("level")) == student_level
+        ),
+        None,
+    )
     if not restriction_row:
         return None
 
     return student_active_restriction_response(restriction_row)
+
+
+def build_restriction_block_payload(restriction: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "restricted": True,
+        "message": "PansGPT is temporarily paused for your level.",
+        "restriction": restriction,
+    }
+
+
+async def get_applicable_user_restriction(
+    sb,
+    current_user,
+    *,
+    execute_fn=None,
+    role_resolver=None,
+    lecturer_resolver=None,
+) -> Optional[Dict[str, Any]]:
+    async def _resolve_role():
+        if role_resolver:
+            return await role_resolver(current_user)
+        from dependencies import get_current_user_role
+
+        return await get_current_user_role(current_user)
+
+    async def _resolve_lecturer():
+        if lecturer_resolver:
+            return await lecturer_resolver(current_user)
+        from dependencies import get_lecturer_profile_for_user
+
+        return await get_lecturer_profile_for_user(current_user)
+
+    role = await _resolve_role()
+    if role in {"admin", "super_admin"}:
+        return None
+
+    lecturer_profile = await _resolve_lecturer()
+    if lecturer_profile:
+        return None
+
+    return await get_active_student_restriction(
+        sb,
+        user_id=current_user.id,
+        execute_fn=execute_fn,
+    )

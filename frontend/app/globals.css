@@ -29,3 +29,8 @@
   padding: 0 0 5rem 0 !important;
 }
 
+@keyframes material-toast-progress {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+

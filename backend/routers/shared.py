@@ -22,7 +22,11 @@ from datetime import datetime, timezone, timedelta
 from services import llm_engine, chat_history
 from services import web_search
 from groq import AsyncGroq
-from dependencies import get_current_user, User
+from dependencies import (
+    get_current_user,
+    require_super_admin_role,
+    User,
+)
 
 logger = logging.getLogger("PansGPT")
 RAG_NETWORK_TIMEOUT_MESSAGE = (
@@ -203,34 +207,7 @@ async def _assert_session_owner(session_id: str, current_user: User):
 
 
 async def _assert_super_admin(current_user: User):
-    if not current_user.email:
-        raise HTTPException(status_code=403, detail="Access Denied: user email missing.")
-    normalized_email = current_user.email.strip().lower()
-
-    # Prefer service-role client (bypasses RLS) for admin authorization checks.
-    sb = supabase_service_client or supabase_client
-    if not sb:
-        raise HTTPException(status_code=500, detail="Database not active")
-
-    rows = []
-    try:
-        # Query case-insensitively and allow duplicate rows; any super_admin row should pass.
-        res = await _execute_with_retry(
-            lambda: sb.table("user_roles").select("role,email").ilike("email", normalized_email).execute(),
-            "Fetch user role",
-        )
-        rows = res.data or []
-    except Exception as e:
-        logger.error(f"Super-admin lookup failed for {normalized_email}: {e}")
-        raise HTTPException(status_code=500, detail="Authorization check failed")
-
-    has_super_admin = any((row.get("role") or "").strip().lower() == "super_admin" for row in rows)
-    if not has_super_admin:
-        logger.warning(
-            f"Super-admin check failed for {normalized_email}. Roles found: "
-            f"{[row.get('role') for row in rows]}"
-        )
-        raise HTTPException(status_code=403, detail="Only Super Admins can access feedback dashboard")
+    await require_super_admin_role(current_user)
 
 # Settings Cache (TTL = 5 minutes)
 _settings_cache = TTLCache(maxsize=1, ttl=300)

@@ -3,7 +3,7 @@ Library Router: Document Management Endpoints
 Handles upload, list, delete, and update operations for documents.
 """
 from fastapi import APIRouter, HTTPException, Depends, File, UploadFile, Form, BackgroundTasks, Header
-from dependencies import get_current_user, User
+from dependencies import get_current_admin, get_current_user, User
 from fastapi.responses import JSONResponse
 from uuid import uuid4
 from pydantic import BaseModel
@@ -16,6 +16,7 @@ import base64
 import asyncio
 import time
 from functools import partial
+import re
 
 # RAG & Extraction Imports
 from google import genai  # v1 SDK
@@ -70,6 +71,29 @@ def _is_retryable_network_error(exc: Exception) -> bool:
     return any(marker in msg for marker in retry_markers)
 
 
+def _is_retryable_provider_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    provider_retry_markers = (
+        "429",
+        "quota",
+        "resource_exhausted",
+        "temporarily unavailable",
+        "server disconnected",
+        "connection reset",
+        "connection aborted",
+        "unexpected_eof_while_reading",
+        "eof occurred in violation of protocol",
+        "ssl",
+        "timeout",
+        "timed out",
+        "503",
+        "502",
+        "500",
+        "transport",
+    )
+    return _is_retryable_network_error(exc) or any(marker in msg for marker in provider_retry_markers)
+
+
 async def _execute_with_retry_async(execute_fn, operation_name: str, max_attempts: int = 3):
     """
     Retry transient Supabase calls from async code paths.
@@ -107,6 +131,133 @@ def _execute_with_retry_sync(execute_fn, operation_name: str, max_attempts: int 
                 continue
             raise
     raise last_error
+
+
+def extract_drive_file_id(value: Optional[str]) -> Optional[str]:
+    """
+    Extract a Google Drive file id from the URL format created by lecturer uploads.
+    Also accepts a raw Drive id so callers can pass already-normalized values.
+    """
+    raw = (value or "").strip()
+    if not raw:
+        return None
+
+    patterns = (
+        r"/file/d/([^/?#]+)",
+        r"[?&]id=([^&#]+)",
+        r"^([A-Za-z0-9_-]{10,})$",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, raw)
+        if match:
+            return match.group(1)
+    return None
+
+
+def build_library_target_levels(level: Optional[str]) -> list[str]:
+    normalized = (level or "").strip()
+    if not normalized:
+        return []
+    return [normalized]
+
+
+async def create_library_document_from_existing_drive_file(
+    *,
+    background_tasks: BackgroundTasks,
+    drive_file_id: str,
+    title: str,
+    course_code: str,
+    lecturer_name: str,
+    topic: str,
+    file_name: str,
+    university_id: Optional[str] = None,
+    uploaded_by_email: Optional[str] = None,
+    target_levels: Optional[list[str]] = None,
+) -> dict:
+    """
+    Reuse the normal library ingestion path for a file that is already in Drive.
+    This avoids duplicating the file while still creating a pans_library record
+    and queueing the same background extraction/embedding worker used by admin uploads.
+    """
+    if not drive_service:
+        raise HTTPException(status_code=503, detail="The file service is temporarily unavailable. Please try again in a moment.")
+
+    db = _db_client()
+    if not db:
+        raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
+
+    existing_res = await _execute_with_retry_async(
+        lambda: db.table("pans_library")
+        .select("id,embedding_status")
+        .eq("drive_file_id", drive_file_id)
+        .limit(1)
+        .execute(),
+        f"Find existing library document for Drive file {drive_file_id}",
+    )
+    existing_rows = existing_res.data or []
+    if existing_rows:
+        row = existing_rows[0]
+        return {
+            "document_id": row.get("id"),
+            "status": row.get("embedding_status") or "pending",
+            "created": False,
+        }
+
+    try:
+        metadata = await asyncio.to_thread(drive_service.get_file_metadata, drive_file_id)
+        raw_size = metadata.get("size") if isinstance(metadata, dict) else None
+        file_size = int(raw_size) if raw_size else 0
+    except Exception as exc:
+        logger.warning("Could not read Drive metadata for lecturer material %s: %s", drive_file_id, exc)
+        file_size = 0
+
+    try:
+        content = await asyncio.to_thread(drive_service.download_file_bytes, drive_file_id)
+        if not content:
+            raise ValueError("Downloaded file is empty")
+    except Exception as exc:
+        logger.error("Failed to download lecturer material from Drive %s: %s", drive_file_id, exc)
+        raise HTTPException(status_code=500, detail="Unable to download material from storage. Please try again.")
+
+    data = {
+        "title": title,
+        "course_code": course_code,
+        "lecturer_name": lecturer_name,
+        "topic": topic,
+        "drive_file_id": drive_file_id,
+        "file_name": file_name,
+        "file_size": file_size,
+        "university_id": university_id,
+        "uploaded_by_email": uploaded_by_email,
+        "target_levels": target_levels or [],
+        "embedding_status": "processing",
+        "embedding_progress": 0,
+        "total_chunks": 100,
+        "embedding_error": None,
+    }
+
+    response = await _execute_with_retry_async(
+        lambda: db.table("pans_library").insert([data]).execute(),
+        "Insert lecturer material library metadata",
+    )
+    document_id = response.data[0].get("id") if response.data else None
+    if not document_id:
+        raise HTTPException(status_code=500, detail="Failed to create library document")
+
+    background_tasks.add_task(
+        process_document_background,
+        content,
+        document_id,
+        file_name,
+        uploaded_by_email,
+    )
+    logger.info("[INFO] Lecturer material ingestion queued for document %s", document_id)
+
+    return {
+        "document_id": document_id,
+        "status": "processing",
+        "created": True,
+    }
 
 # Configure Gemini
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
@@ -255,6 +406,7 @@ async def analyze_image_with_llama(image_bytes: bytes, document_id: str, page_nu
                 or "rate_limit" in error_str
                 or "timeout" in error_str
                 or "tempor" in error_str
+                or _is_retryable_provider_error(e)
             )
             if not retryable:
                 logger.error(f"Vision analysis error on page {page_num} (non-retryable): {e}")
@@ -510,10 +662,16 @@ async def process_and_embed(file_content: bytes, document_id: str, file_name: st
                     break
 
                 except Exception as e:
-                    is_rate_limit = "429" in str(e) or "quota" in str(e).lower() or "resource_exhausted" in str(e).lower()
-                    if is_rate_limit and embed_attempt < MAX_EMBED_RETRIES - 1:
-                        wait = 15 * (embed_attempt + 1)  # 15s, 30s, 45s...
-                        logger.warning(f"[WARNING] Chunk {idx+1} rate limited, retrying in {wait}s (attempt {embed_attempt+1}/{MAX_EMBED_RETRIES})")
+                    error_lower = str(e).lower()
+                    is_rate_limit = "429" in str(e) or "quota" in error_lower or "resource_exhausted" in error_lower
+                    is_retryable_network = _is_retryable_provider_error(e)
+                    if (is_rate_limit or is_retryable_network) and embed_attempt < MAX_EMBED_RETRIES - 1:
+                        wait = 15 * (embed_attempt + 1) if is_rate_limit else min(2 ** embed_attempt, 10)
+                        retry_reason = "rate limited" if is_rate_limit else "transient provider/network error"
+                        logger.warning(
+                            f"[WARNING] Chunk {idx+1} {retry_reason}, retrying in {wait}s "
+                            f"(attempt {embed_attempt+1}/{MAX_EMBED_RETRIES}): {e}"
+                        )
                         await asyncio.sleep(wait)
                         continue
                     # Non-retryable or exhausted retries
@@ -594,6 +752,7 @@ async def admin_upload_document(
     topic: str = Form(...),
     uploaded_by: Optional[str] = Form(None),
     target_levels: Optional[str] = Form(None),  # JSON-encoded list e.g. '["400lvl","500lvl"]'
+    _: User = Depends(get_current_admin),
 ):
     """
     Admin Endpoint: Upload PDF to Drive, save metadata to Supabase, and trigger RAG ingestion.
@@ -666,6 +825,7 @@ async def admin_upload_document(
             "drive_file_id": drive_file_id,
             "file_name": file.filename, # Store ORIGINAL name for display
             "file_size": file_size,
+            "university_id": None,
             "uploaded_by_email": uploaded_by,
             "target_levels": levels_list,
             # Initialize status immediately
@@ -711,7 +871,7 @@ async def admin_upload_document(
         raise HTTPException(status_code=500, detail="Unable to save the document. Please try again.")
 
 @router.get("/documents", dependencies=[Depends(verify_api_key)])
-async def admin_list_documents():
+async def admin_list_documents(_: User = Depends(get_current_admin)):
     """
     Admin Endpoint: List all documents from Supabase.
     """
@@ -730,7 +890,7 @@ async def admin_list_documents():
         raise HTTPException(status_code=500, detail="Unable to load documents. Please try again.")
 
 @router.post("/documents/repair-progress", dependencies=[Depends(verify_api_key)])
-async def admin_repair_document_progress():
+async def admin_repair_document_progress(_: User = Depends(get_current_admin)):
     """
     Admin utility: force embedding_progress=100 for rows already marked as completed.
     Useful for repairing stale progress values from earlier runs.
@@ -783,7 +943,7 @@ async def admin_repair_document_progress():
         raise HTTPException(status_code=500, detail="Unable to repair document progress. Please try again.")
 
 @router.delete("/documents/{doc_id}", dependencies=[Depends(verify_api_key)])
-async def admin_delete_document(doc_id: str):
+async def admin_delete_document(doc_id: str, _: User = Depends(get_current_admin)):
     """
     Admin Endpoint: Delete document from Google Drive and Supabase.
     """
@@ -863,7 +1023,7 @@ async def admin_delete_document(doc_id: str):
         raise HTTPException(status_code=500, detail="Unable to complete the delete operation. Please try again.")
 
 @router.patch("/documents/{doc_id}", dependencies=[Depends(verify_api_key)])
-async def admin_update_document(doc_id: str, updates: DocumentUpdate):
+async def admin_update_document(doc_id: str, updates: DocumentUpdate, _: User = Depends(get_current_admin)):
     """
     Admin Endpoint: Update document metadata in Supabase.
     """
@@ -896,7 +1056,7 @@ async def admin_update_document(doc_id: str, updates: DocumentUpdate):
 @router.post("/documents/{document_id}/cancel", dependencies=[Depends(verify_api_key)])
 async def cancel_document_ingestion(
     document_id: str,
-    current_user: User = Depends(get_current_user),
+    _: User = Depends(get_current_admin),
 ):
     """
     Cancel an in-progress document ingestion.
@@ -927,7 +1087,7 @@ async def cancel_document_ingestion(
 
 
 @router.get("/documents/{document_id}/status", dependencies=[Depends(verify_api_key)])
-async def get_document_status(document_id: str):
+async def get_document_status(document_id: str, _: User = Depends(get_current_admin)):
     """
     Get the real-time embedding status of a document.
     Frontend polls this to update progress bars.
@@ -1050,7 +1210,7 @@ async def upsert_reading_progress(
 
 
 @router.post("/documents/{doc_id}/reembed", dependencies=[Depends(verify_api_key)])
-async def admin_reembed_document(doc_id: str, background_tasks: BackgroundTasks):
+async def admin_reembed_document(doc_id: str, background_tasks: BackgroundTasks, _: User = Depends(get_current_admin)):
     """
     Admin Endpoint: Re-trigger embedding for a document that has failed or partial chunks.
     Downloads the PDF from Google Drive and re-runs the full ingestion pipeline.

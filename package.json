@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev:frontend": "npm run dev --prefix frontend",
+    "dev:frontend": "node .\\node_modules\\next\\dist\\bin\\next dev --webpack .\\frontend",
     "dev:backend": "cd backend && uvicorn api:app --host 0.0.0.0 --port 8000 --reload",
-    "build": "npm run build --prefix frontend",
-    "start": "npm run start --prefix frontend",
+    "build": "node .\\node_modules\\next\\dist\\bin\\next build --webpack .\\frontend",
+    "start": "node .\\node_modules\\next\\dist\\bin\\next start .\\frontend",
     "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\""
   },
   "workspaces": [

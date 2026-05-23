@@ -52,6 +52,8 @@ const DURATION_OPTIONS = [
   { value: 'custom', label: 'Custom' },
 ] as const;
 
+const RESTRICTIONS_FETCH_RETRY_DELAYS_MS = [400, 1000] as const;
+
 export default function LecturerRestrictionsPage() {
   const [restrictions, setRestrictions] = useState<RestrictionRecord[]>([]);
   const [form, setForm] = useState<RestrictionFormState>(initialFormState);
@@ -68,14 +70,25 @@ export default function LecturerRestrictionsPage() {
     setLoadError(null);
 
     try {
-      const response = await api.get('/lecturer/restrictions');
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.detail || 'Failed to load restrictions');
-      }
+      for (let attempt = 0; attempt <= RESTRICTIONS_FETCH_RETRY_DELAYS_MS.length; attempt += 1) {
+        try {
+          const response = await api.get('/lecturer/restrictions');
+          if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            throw new Error(payload.detail || 'Failed to load restrictions');
+          }
 
-      const payload: RestrictionsResponse = await response.json();
-      setRestrictions(payload.data || []);
+          const payload: RestrictionsResponse = await response.json();
+          setRestrictions(payload.data || []);
+          return;
+        } catch (error) {
+          if (attempt === RESTRICTIONS_FETCH_RETRY_DELAYS_MS.length) {
+            throw error;
+          }
+
+          await wait(RESTRICTIONS_FETCH_RETRY_DELAYS_MS[attempt]);
+        }
+      }
     } catch (error) {
       console.error('Failed to fetch restrictions:', error);
       setLoadError(error instanceof Error ? error.message : 'Failed to load restrictions');
@@ -168,7 +181,7 @@ export default function LecturerRestrictionsPage() {
     setFormError(null);
     setActiveCancelId(restriction.id);
     try {
-      const response = await api.patch(`/lecturer/restrictions/${restriction.id}/cancel`);
+      const response = await api.patch(`/lecturer/restrictions/${restriction.id}/cancel`, {});
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
         throw new Error(payload.detail || 'Failed to cancel restriction');
@@ -184,18 +197,18 @@ export default function LecturerRestrictionsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-7xl px-4 pb-12 sm:px-5 md:px-0">
-      <div className="md:grid md:grid-cols-12 md:gap-8">
-        <div className="space-y-8 md:col-span-10 md:col-start-2 lg:col-span-10 lg:col-start-2">
-          <header>
-            <h1 className="text-xl font-bold text-foreground md:text-3xl">Test Restrictions</h1>
-            <p className="mt-2 max-w-3xl text-sm text-muted-foreground md:text-base">
+    <div className="mx-auto w-full max-w-5xl pb-0 md:px-0 md:pb-12">
+      <div className="flex flex-col gap-6 px-4 sm:px-5 md:px-0">
+          <header className="space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Assessment controls</p>
+            <h1 className="text-3xl font-semibold tracking-tight text-foreground md:text-4xl">Test Restrictions</h1>
+            <p className="max-w-3xl text-sm text-muted-foreground md:text-base">
               Choose the level, add the course code, and set how long the restriction should last.
             </p>
           </header>
 
           <section>
-            <form onSubmit={submitRestriction} className="space-y-6">
+            <form onSubmit={submitRestriction} className="space-y-5">
               <div className="space-y-4">
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div className="space-y-1.5">
@@ -281,7 +294,7 @@ export default function LecturerRestrictionsPage() {
                     <button
                       type="submit"
                       disabled={isSubmitting}
-                      className={`${PRIMARY_BUTTON_CLASS_NAME.replace('w-full ', '')} w-full lg:mt-8 lg:w-auto`}
+                      className={`${PRIMARY_BUTTON_CLASS_NAME.replace("w-full ", "")} w-full lg:mt-8 lg:w-auto`}
                     >
                       {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Start Restriction'}
                     </button>
@@ -292,24 +305,31 @@ export default function LecturerRestrictionsPage() {
 
               {formError ? <AuthMessage message={{ type: 'error', text: formError }} /> : null}
 
-              <div className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-col gap-3 border-t border-border/70 pt-4 sm:flex-row sm:items-center sm:justify-between">
                 <button
                   type="button"
                   onClick={() => setHistoryOpen((current) => !current)}
                   className="inline-flex items-center gap-2 text-sm font-bold text-foreground transition-colors hover:text-primary"
                 >
-                  <ChevronRight className={`h-4 w-4 transition-transform ${historyOpen ? 'rotate-90' : ''}`} />
+                  <ChevronRight className={`h-4 w-4 transition-transform ${historyOpen ? "rotate-90" : ""}`} />
                   View live and past restrictions
                 </button>
               </div>
             </form>
 
             {historyOpen ? (
-              <div className="mt-6 border-t border-border pt-6">
+              <div className="mt-6">
                 {loadError ? (
                   <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 p-5">
                     <h3 className="text-sm font-semibold text-rose-700">Unable to load test restrictions. Please try again.</h3>
                     <p className="mt-2 text-sm text-rose-700/90">{loadError}</p>
+                    <button
+                      type="button"
+                      onClick={() => void fetchRestrictions()}
+                      className="mt-4 inline-flex min-h-10 items-center rounded-xl border border-rose-500/20 bg-white/80 px-4 py-2 text-sm font-semibold text-rose-700 transition-colors hover:bg-white"
+                    >
+                      Retry
+                    </button>
                   </div>
                 ) : isLoading ? (
                   <div className="flex min-h-[120px] items-center gap-3 text-sm text-muted-foreground">
@@ -317,14 +337,18 @@ export default function LecturerRestrictionsPage() {
                     <span>Loading restrictions...</span>
                   </div>
                 ) : (
-                  <HistoryList restrictions={orderedRestrictions} now={now} activeCancelId={activeCancelId} onCancel={cancelRestriction} />
+                  <HistoryList
+                    restrictions={orderedRestrictions}
+                    now={now}
+                    activeCancelId={activeCancelId}
+                    onCancel={cancelRestriction}
+                  />
                 )}
               </div>
             ) : null}
           </section>
         </div>
       </div>
-    </div>
   );
 }
 
@@ -342,7 +366,9 @@ function HistoryList({
   return (
     <div>
       {restrictions.length === 0 ? (
-        <div className="text-sm text-muted-foreground">No restrictions yet.</div>
+        <div className="rounded-2xl border border-border bg-background/70 p-6 text-sm text-muted-foreground">
+          No restrictions yet. Start one above when an assessment is about to begin.
+        </div>
       ) : (
         <>
           <div className="hidden overflow-x-auto md:block">
@@ -385,9 +411,16 @@ function HistoryList({
             </table>
           </div>
 
-          <div className="space-y-3 md:hidden">
+          <div className="space-y-2.5 md:hidden">
             {restrictions.map((restriction) => (
-              <article key={restriction.id} className="rounded-2xl border border-border px-4 py-4">
+              <article
+                key={restriction.id}
+                className={
+                  canCancelRestriction(restriction.status)
+                    ? 'rounded-3xl border border-emerald-500/15 bg-background/85 px-4 py-4 shadow-sm'
+                    : 'rounded-3xl border border-border/50 bg-background/75 px-4 py-4 shadow-sm'
+                }
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h4 className="font-semibold text-foreground">{restriction.course_code || restriction.title}</h4>
@@ -407,7 +440,7 @@ function HistoryList({
                   )}
                 </div>
 
-                <dl className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                <dl className="mt-4 grid grid-cols-1 gap-3 border-t border-border/50 pt-3 text-sm sm:grid-cols-2">
                   <MobileDetail label="Started" value={formatDateTime(restriction.start_time)} />
                   <MobileDetail label="Ends" value={formatEndValue(restriction, now)} />
                 </dl>
@@ -443,7 +476,7 @@ function formatEndValue(restriction: RestrictionRecord, now: number) {
 
 function formatCountdown(value: string | null | undefined, now: number) {
   if (!value) {
-    return '—';
+    return '\u2014';
   }
 
   const endTime = new Date(value).getTime();
@@ -461,16 +494,19 @@ function formatCountdown(value: string | null | undefined, now: number) {
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
 
+  const mm = String(minutes).padStart(2, "0");
+  const ss = String(seconds).padStart(2, "0");
+
   if (hours > 0) {
-    return `${hours}h ${String(minutes).padStart(2, '0')}m ${String(seconds).padStart(2, '0')}s`;
+    return hours + 'h ' + mm + 'm ' + ss + 's';
   }
 
-  return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
+  return minutes + 'm ' + ss + 's';
 }
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) {
-    return '—';
+    return '\u2014';
   }
 
   const parsed = new Date(value);
@@ -485,4 +521,8 @@ function formatDateTime(value: string | null | undefined) {
     hour: 'numeric',
     minute: '2-digit',
   }).format(parsed);
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }

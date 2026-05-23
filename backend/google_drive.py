@@ -1,17 +1,25 @@
 import os
 import io
 import time
+import random
 import socket
 import ssl
 import logging
+import requests
+import tempfile
 from typing import Iterator, Optional, Dict, Any
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
+from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload, MediaFileUpload
 from googleapiclient.errors import HttpError
 from google.auth.transport.requests import AuthorizedSession
 
 logger = logging.getLogger("PansGPT")
+
+
+class DriveUploadTemporaryError(ValueError):
+    """Raised when Google Drive upload fails after retryable transport errors."""
+    pass
 
 class GoogleDriveService:
     """
@@ -175,6 +183,119 @@ class GoogleDriveService:
             
         except Exception as e:
             raise ValueError(f"Failed to download file: {str(e)}")
+
+    def _is_retryable_upload_error(self, exc: Exception) -> bool:
+        message = str(exc).lower()
+        retry_markers = (
+            "unexpected_eof_while_reading",
+            "eof occurred in violation of protocol",
+            "ssleoferror",
+            "ssl",
+            "connection reset",
+            "server disconnected",
+            "timed out",
+            "timeout",
+            "remote end closed connection",
+            "connection aborted",
+            "transport",
+            "temporarily unavailable",
+        )
+
+        if isinstance(
+            exc,
+            (
+                ssl.SSLError,
+                socket.timeout,
+                ConnectionError,
+                TimeoutError,
+                requests.exceptions.SSLError,
+                requests.exceptions.ConnectionError,
+                requests.exceptions.ReadTimeout,
+                requests.exceptions.ConnectTimeout,
+                requests.exceptions.ChunkedEncodingError,
+            ),
+        ):
+            return True
+
+        if isinstance(exc, HttpError):
+            status_code = getattr(getattr(exc, "resp", None), "status", None)
+            if status_code in {408, 429, 500, 502, 503, 504}:
+                return True
+
+        return any(marker in message for marker in retry_markers)
+
+    def _sleep_with_backoff(self, attempt: int, *, base_delay: float = 1.0, max_delay: float = 8.0) -> None:
+        delay = min(base_delay * (2 ** max(attempt - 1, 0)), max_delay)
+        jitter = random.uniform(0, delay * 0.35)
+        time.sleep(delay + jitter)
+
+    def _copy_to_temp_file(self, file_obj, suffix: str) -> str:
+        if hasattr(file_obj, 'seek'):
+            file_obj.seek(0)
+
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        temp_path = temp_file.name
+        try:
+            while True:
+                chunk = file_obj.read(1024 * 1024)
+                if not chunk:
+                    break
+                temp_file.write(chunk)
+            temp_file.flush()
+            temp_file.close()
+            return temp_path
+        except Exception:
+            temp_file.close()
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            raise
+
+    def _upload_file_via_official_client(
+        self,
+        *,
+        file_name: str,
+        file_obj,
+        mime_type: str,
+        target_folder: Optional[str],
+    ) -> str:
+        metadata = {'name': file_name}
+        if target_folder:
+            metadata['parents'] = [target_folder]
+
+        suffix = os.path.splitext(file_name)[1] or ".bin"
+        temp_path = self._copy_to_temp_file(file_obj, suffix)
+
+        try:
+            media = MediaFileUpload(
+                temp_path,
+                mimetype=mime_type,
+                resumable=True,
+            )
+            request = self.service.files().create(
+                body=metadata,
+                media_body=media,
+                fields='id',
+            )
+
+            response = None
+            while response is None:
+                status, response = request.next_chunk()
+                if status is not None:
+                    logger.info(
+                        "Drive official-client upload progress: file_name=%s progress=%s%%",
+                        file_name,
+                        int(status.progress() * 100),
+                    )
+
+            file_id = response.get('id')
+            if not file_id:
+                raise ValueError("Official client upload did not return a file id.")
+            return file_id
+        finally:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
     
     def upload_file(
         self, 
@@ -196,69 +317,155 @@ class GoogleDriveService:
         metadata = {'name': file_name}
         if target_folder:
             metadata['parents'] = [target_folder]
-        
-        # Retry Loop for Network/SSL Stability
-        max_retries = 3
+
+        upload_url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable"
+        init_headers = {
+            'X-Upload-Content-Type': mime_type,
+            'X-Upload-Content-Length': str(file_size) if file_size is not None else None
+        }
+        init_headers = {k: v for k, v in init_headers.items() if v is not None}
+
+        max_session_retries = 5
+        max_upload_retries = 5
         last_error = None
-        
-        for attempt in range(max_retries):
+
+        for session_attempt in range(1, max_session_retries + 1):
             try:
-                # 1. Create a FRESH session for each attempt to avoid corrupted SSL states
-                # This is the key fix for [SSL: UNEXPECTED_EOF_WHILE_READING]
                 authed_session = AuthorizedSession(self.credentials)
-                
-                # 2. Initiate Resumable Upload
-                upload_url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable"
-                
-                headers = {
-                    'X-Upload-Content-Type': mime_type,
-                    'X-Upload-Content-Length': str(file_size) if file_size else None
-                }
-                
-                # Send metadata to get the session URI
+                logger.info(
+                    "Drive upload session init: file_name=%s file_size=%s mime_type=%s attempt=%s/%s",
+                    file_name,
+                    file_size,
+                    mime_type,
+                    session_attempt,
+                    max_session_retries,
+                )
                 init_response = authed_session.post(
                     upload_url,
                     json=metadata,
-                    headers=headers,
-                    timeout=(10, 30) # 10s connect, 30s read
+                    headers=init_headers,
+                    timeout=(10, 30)
                 )
                 init_response.raise_for_status()
-                
-                # The resilient upload URL
                 session_uri = init_response.headers.get('Location')
                 if not session_uri:
                     raise ValueError("Failed to retrieve resumable upload URI from Drive.")
 
-                # 3. Stream Content
-                # Reset file pointer for retry
-                if hasattr(file_obj, 'seek'):
-                    file_obj.seek(0)
-                
-                # Upload the actual data using PUT to the session URI
-                # requests supports streaming upload if we pass a generator or file object
-                upload_response = authed_session.put(
-                    session_uri,
-                    data=file_obj, # Takes file-like object directly
-                    headers={'Content-Type': mime_type},
-                    timeout=(30, 300) # Generous timeout for large files (5 mins)
-                )
-                
-                upload_response.raise_for_status()
-                
-                # 4. Success
-                file_id = upload_response.json().get('id')
-                logger.info(f"Upload successful: {file_name} ({file_id})")
-                return file_id
+                for upload_attempt in range(1, max_upload_retries + 1):
+                    try:
+                        if hasattr(file_obj, 'seek'):
+                            file_obj.seek(0)
 
-            except Exception as e:
-                last_error = e
-                logger.warning(f"Upload attempt {attempt + 1}/{max_retries} failed: {e}")
-                
-                # Wait before retry (exponential backoff)
-                time.sleep(2 * (attempt + 1))
-        
-        # If we exit loop, all retries failed
-        raise ValueError(f"CRITICAL: Upload failed after {max_retries} attempts. Last error: {last_error}")
+                        logger.info(
+                            "Drive upload body start: file_name=%s file_size=%s mime_type=%s attempt=%s/%s session_attempt=%s/%s",
+                            file_name,
+                            file_size,
+                            mime_type,
+                            upload_attempt,
+                            max_upload_retries,
+                            session_attempt,
+                            max_session_retries,
+                        )
+                        upload_response = authed_session.put(
+                            session_uri,
+                            data=file_obj,
+                            headers={'Content-Type': mime_type},
+                            timeout=(20, 120)
+                        )
+                        upload_response.raise_for_status()
+
+                        file_id = upload_response.json().get('id')
+                        logger.info("Upload successful: %s (%s)", file_name, file_id)
+                        return file_id
+                    except Exception as exc:
+                        last_error = exc
+                        error_type = type(exc).__name__
+                        retryable = self._is_retryable_upload_error(exc)
+                        logger.warning(
+                            "Drive upload body failed: file_name=%s file_size=%s mime_type=%s attempt=%s/%s session_attempt=%s/%s error_type=%s retryable=%s error=%s",
+                            file_name,
+                            file_size,
+                            mime_type,
+                            upload_attempt,
+                            max_upload_retries,
+                            session_attempt,
+                            max_session_retries,
+                            error_type,
+                            retryable,
+                            exc,
+                        )
+                        if retryable and upload_attempt < max_upload_retries:
+                            self._sleep_with_backoff(upload_attempt, base_delay=0.75, max_delay=6.0)
+                            continue
+                        raise
+
+            except Exception as exc:
+                last_error = exc
+                error_type = type(exc).__name__
+                retryable = self._is_retryable_upload_error(exc)
+                logger.warning(
+                    "Drive upload session init failed: file_name=%s file_size=%s mime_type=%s attempt=%s/%s error_type=%s retryable=%s error=%s",
+                    file_name,
+                    file_size,
+                    mime_type,
+                    session_attempt,
+                    max_session_retries,
+                    error_type,
+                    retryable,
+                    exc,
+                )
+                if retryable and session_attempt < max_session_retries:
+                    self._sleep_with_backoff(session_attempt, base_delay=1.0, max_delay=8.0)
+                    continue
+                break
+
+        logger.warning(
+            "Drive resumable upload path exhausted retries, falling back to official client upload: file_name=%s file_size=%s mime_type=%s",
+            file_name,
+            file_size,
+            mime_type,
+        )
+
+        official_client_last_error = None
+        for fallback_attempt in range(1, 4):
+            try:
+                logger.info(
+                    "Drive official-client fallback start: file_name=%s file_size=%s mime_type=%s attempt=%s/3",
+                    file_name,
+                    file_size,
+                    mime_type,
+                    fallback_attempt,
+                )
+                file_id = self._upload_file_via_official_client(
+                    file_name=file_name,
+                    file_obj=file_obj,
+                    mime_type=mime_type,
+                    target_folder=target_folder,
+                )
+                logger.info("Drive official-client fallback upload successful: %s (%s)", file_name, file_id)
+                return file_id
+            except Exception as exc:
+                official_client_last_error = exc
+                retryable = self._is_retryable_upload_error(exc)
+                logger.warning(
+                    "Drive official-client fallback failed: file_name=%s file_size=%s mime_type=%s attempt=%s/3 error_type=%s retryable=%s error=%s",
+                    file_name,
+                    file_size,
+                    mime_type,
+                    fallback_attempt,
+                    type(exc).__name__,
+                    retryable,
+                    exc,
+                )
+                if retryable and fallback_attempt < 3:
+                    self._sleep_with_backoff(fallback_attempt, base_delay=1.0, max_delay=6.0)
+                    continue
+                break
+
+        final_error = official_client_last_error or last_error
+        raise DriveUploadTemporaryError(
+            f"Upload failed after retries for {file_name}. Last error: {final_error}"
+        )
     
     def list_files(
         self, 

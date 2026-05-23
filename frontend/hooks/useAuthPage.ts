@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { TAGLINES } from '@/components/auth/authConstants';
 import type { AuthMessage, AuthView, SignupFormData } from '@/components/auth/types';
+import { resolvePostLoginDestination } from '@/lib/bootstrap-routing';
 import { supabase } from '@/lib/supabase';
 
 const INITIAL_FORM_DATA: SignupFormData = {
@@ -33,12 +34,51 @@ function getFriendlyAuthError(error: unknown, fallback: string) {
   return error.message || fallback;
 }
 
+function getInitialAuthMessage(): AuthMessage {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const searchParams = new URLSearchParams(window.location.search);
+  if (searchParams.get('confirmed') === 'true') {
+    return { type: 'success', text: '✅ Email confirmed! You can now sign in.' };
+  }
+
+  if (searchParams.get('error') === 'callback_failed') {
+    return { type: 'error', text: 'Confirmation failed. Please try signing up again.' };
+  }
+
+  const hash = window.location.hash;
+  if (!hash) {
+    return null;
+  }
+
+  const params = new URLSearchParams(hash.replace('#', ''));
+  const error = params.get('error');
+  const errorCode = params.get('error_code');
+  const errorDescription = params.get('error_description');
+
+  if (!error) {
+    return null;
+  }
+
+  let friendlyMessage = errorDescription?.replace(/\+/g, ' ') || 'Something went wrong. Please try again.';
+
+  if (errorCode === 'otp_expired') {
+    friendlyMessage = 'Your confirmation link has expired. Please sign up again or request a new confirmation email.';
+  } else if (errorCode === 'access_denied') {
+    friendlyMessage = 'This link is no longer valid. Please try signing in or request a new link.';
+  }
+
+  return { type: 'error', text: friendlyMessage };
+}
+
 export function useAuthPage() {
   const router = useRouter();
 
   const [view, setView] = useState<AuthView>('login');
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<AuthMessage>(null);
+  const [message, setMessage] = useState<AuthMessage>(() => getInitialAuthMessage());
   const [taglineIndex, setTaglineIndex] = useState(0);
   const [taglineFading, setTaglineFading] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
@@ -65,7 +105,7 @@ export function useAuthPage() {
       }
 
       window.localStorage.setItem('pansgpt-auth-hint', 'true');
-      router.replace('/main');
+      router.replace(await resolvePostLoginDestination());
     };
 
     void redirectIfAuthenticated();
@@ -79,7 +119,9 @@ export function useAuthPage() {
 
       if (session) {
         window.localStorage.setItem('pansgpt-auth-hint', 'true');
-        router.replace('/main');
+        void resolvePostLoginDestination().then((destination) => {
+          router.replace(destination);
+        });
         return;
       }
 
@@ -92,45 +134,18 @@ export function useAuthPage() {
     };
   }, [router]);
 
-  // Read URL params and hash on mount to show friendly messages
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined') {
+      return;
+    }
+
     const searchParams = new URLSearchParams(window.location.search);
-
-    // ?confirmed=true — email just verified, prompt user to sign in
-    if (searchParams.get('confirmed') === 'true') {
-      setMessage({ type: 'success', text: '✅ Email confirmed! You can now sign in.' });
+    if (searchParams.get('confirmed') === 'true' || searchParams.get('error') === 'callback_failed') {
       window.history.replaceState(null, '', window.location.pathname);
       return;
     }
 
-    // ?error=callback_failed — something went wrong in the callback
-    if (searchParams.get('error') === 'callback_failed') {
-      setMessage({ type: 'error', text: 'Confirmation failed. Please try signing up again.' });
-      window.history.replaceState(null, '', window.location.pathname);
-      return;
-    }
-
-    // #error= hash — Supabase error in hash fragment (e.g. expired OTP)
-    const hash = window.location.hash;
-    if (!hash) return;
-
-    const params = new URLSearchParams(hash.replace('#', ''));
-    const error = params.get('error');
-    const errorCode = params.get('error_code');
-    const errorDescription = params.get('error_description');
-
-    if (error) {
-      let friendlyMessage = errorDescription?.replace(/\+/g, ' ') ||
-        'Something went wrong. Please try again.';
-
-      if (errorCode === 'otp_expired') {
-        friendlyMessage = 'Your confirmation link has expired. Please sign up again or request a new confirmation email.';
-      } else if (errorCode === 'access_denied') {
-        friendlyMessage = 'This link is no longer valid. Please try signing in or request a new link.';
-      }
-
-      setMessage({ type: 'error', text: friendlyMessage });
+    if (window.location.hash) {
       window.history.replaceState(null, '', window.location.pathname + window.location.search);
     }
   }, []);
@@ -196,8 +211,7 @@ export function useAuthPage() {
       }
 
       window.localStorage.setItem('pansgpt-auth-hint', 'true');
-      router.replace('/main');
-
+      router.replace(await resolvePostLoginDestination());
     } catch (error: unknown) {
       setMessage({
         type: 'error',

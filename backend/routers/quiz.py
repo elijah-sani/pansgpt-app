@@ -2,6 +2,7 @@
 Quiz router – Generate, submit, and retrieve quizzes.
 """
 from fastapi import APIRouter, HTTPException, Request, Depends, Header
+from fastapi.responses import JSONResponse
 from dependencies import get_current_user, User
 from pydantic import BaseModel
 from typing import Optional, List, Union
@@ -11,6 +12,7 @@ import re
 import uuid
 import os
 import asyncio
+from restrictions import build_restriction_block_payload, get_applicable_user_restriction
 
 from services import llm_engine
 
@@ -48,6 +50,19 @@ async def _verify_api_key(x_api_key: str = Header(...)):
     if _verify_api_key_fn is None:
         raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
     return await _verify_api_key_fn(x_api_key)
+
+
+async def _execute_quiz_query(query_fn, _operation_name: str):
+    return await asyncio.to_thread(query_fn)
+
+
+async def _get_quiz_restriction_if_any(current_user: User):
+    sb = _get_supabase()
+    return await get_applicable_user_restriction(
+        sb,
+        current_user,
+        execute_fn=_execute_quiz_query,
+    )
 
 
 # ---------- Models ----------
@@ -578,6 +593,10 @@ async def _build_quiz_context_from_embeddings(sb, body: QuizGenerateRequest) -> 
 @router.post("/generate", dependencies=[Depends(_verify_api_key)])
 async def generate_quiz(body: QuizGenerateRequest, current_user: User = Depends(get_current_user)):
     """Generate quiz questions using LLM and save to database."""
+    restriction = await _get_quiz_restriction_if_any(current_user)
+    if restriction:
+        return JSONResponse(status_code=423, content=build_restriction_block_payload(restriction))
+
     sb = _get_supabase()
 
     q_type = getattr(body, "questionType", "OBJECTIVE") or "OBJECTIVE"

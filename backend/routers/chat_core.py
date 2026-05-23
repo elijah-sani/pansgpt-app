@@ -62,6 +62,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from services.web_search import search_web
 import random
+from restrictions import build_restriction_block_payload, get_applicable_user_restriction
 
 
 def _trim_messages_to_fit(
@@ -439,6 +440,20 @@ async def _call_background_llm_with_retry(call_fn, operation_name: str, max_atte
 
 
 router = APIRouter(tags=["chat"])
+
+
+async def _get_chat_restriction_if_any(current_user: User):
+    if not shared.supabase_client:
+        return None
+
+    sb = shared.supabase_service_client or shared.supabase_client
+    return await get_applicable_user_restriction(
+        sb,
+        current_user,
+        execute_fn=lambda query_fn, operation_name: _execute_with_retry(query_fn, operation_name),
+    )
+
+
 async def _create_completion_with_failover(
     messages: list[dict],
     temperature: float,
@@ -823,6 +838,10 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
     AI Chat Endpoint (formerly /ask-ai).
     Modes: explain, example, memory, chat
     """
+    restriction = await _get_chat_restriction_if_any(current_user)
+    if restriction:
+        return JSONResponse(status_code=423, content=build_restriction_block_payload(restriction))
+
     http_request = request
     request = chat_request
 

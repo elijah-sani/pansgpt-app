@@ -1,9 +1,10 @@
 "use client";
-import React, { useState, useEffect } from "react";
+
+import React, { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Loader2, Pencil, Trash2, X } from "lucide-react";
+import { Clock3, Loader2, Pencil, ShieldAlert, Trash2, X } from "lucide-react";
 import AppSidebar from "@/components/AppSidebar";
-import OfflineBanner from "@/components/OfflineBanner";  // changed: offline PWA banner
+import OfflineBanner from "@/components/OfflineBanner";
 import PersonalInformationModal from "@/components/PersonalInformationModal";
 import PWAInstallBanner from "@/components/PWAInstallBanner";
 import ReportProblemModal from "@/components/ReportProblemModal";
@@ -13,25 +14,43 @@ import type { MainUser } from "@/components/main/types";
 import { ChatSessionProvider, useChatSession } from "@/lib/ChatSessionContext";
 import { PROFILE_UPDATED_EVENT, type ProfileUpdateDetail } from "@/lib/profile-events";
 import { SidebarControlsContext } from "@/lib/sidebar-controls";
+import { resolveDestinationFromBootstrap } from "@/lib/bootstrap-routing";
+import { fetchBootstrap } from "@/lib/bootstrap-cache";
 import { supabase } from "@/lib/supabase";
 import { api } from "@/lib/api";
 
-// ── Sidebar trigger context ──────────────────────────────────────────────────
-// Allows any child page to call openSidebar() without prop drilling.
+type ActiveRestriction = {
+    course_code?: string | null;
+    course_title?: string | null;
+    title?: string | null;
+    reason?: string | null;
+    start_time?: string | null;
+    end_time?: string | null;
+    lecturer_title?: string | null;
+    lecturer_full_name?: string | null;
+    university_name?: string | null;
+    level?: string | null;
+};
 
-// ── Inner layout — runs inside ChatSessionProvider so it can call useChatSession
+type RestrictionStatusResponse = {
+    restricted: boolean;
+    restriction: ActiveRestriction | null;
+};
+
 function AppLayoutContent({ children }: { children: React.ReactNode }) {
     const router = useRouter();
     const pathname = usePathname();
     const { clearHistory, deleteSession, sessions, setSessions, setActiveSessionId, activeSessionId } = useChatSession();
 
-    // Hide sidebar entirely on the quiz-taking page (/quiz/[id]) for focus mode.
-    // Still show it on /quiz, /quiz/history, /quiz/[id]/results.
-    const isQuizTaking = /^\/quiz\/[^/]+$/.test(pathname ?? '');
+    const isQuizTaking = /^\/quiz\/[^/]+$/.test(pathname ?? "");
 
-    // On desktop: true = expanded (w-64), false = icon-only (w-14)
-    // On mobile: true = slide-in overlay, false = slide off
-    const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+    const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
+        if (typeof window === "undefined") {
+            return true;
+        }
+
+        return window.innerWidth >= 768;
+    });
     const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [isPersonalInfoOpen, setIsPersonalInfoOpen] = useState(false);
@@ -43,6 +62,10 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
     const [isRenameSaving, setIsRenameSaving] = useState(false);
     const [isAdmin, setIsAdmin] = useState(false);
     const [shellUser, setShellUser] = useState<Exclude<MainUser, null> | null>(null);
+    const [restriction, setRestriction] = useState<ActiveRestriction | null>(null);
+    const [, setIsRestrictionLoading] = useState(true);
+    const [restrictionNow, setRestrictionNow] = useState(() => Date.now());
+    const hasResolvedInitialShellRef = useRef(false);
 
     const handleConfirmDelete = async () => {
         if (!deleteTargetId) return;
@@ -59,7 +82,7 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
             const nextTitle = renameDraft.trim();
             const res = await api.patch(`/history/${renamingChatId}/rename`, { title: nextTitle });
             if (res.ok) {
-                setSessions(prev => prev.map(s =>
+                setSessions((prev) => prev.map((s) =>
                     s.id === renamingChatId ? { ...s, title: nextTitle } : s
                 ));
             }
@@ -72,66 +95,99 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
         }
     };
 
-    useEffect(() => {
-        if (typeof window !== "undefined" && window.innerWidth < 768) {
-            setIsSidebarOpen(false);
+    const loadRestrictionStatus = async ({ foreground = false }: { foreground?: boolean } = {}) => {
+        if (foreground) {
+            setIsRestrictionLoading(true);
         }
-    }, []);
 
-    // Auto-close sidebar on mobile whenever the route changes
-    useEffect(() => {
-        if (typeof window !== "undefined" && window.innerWidth < 768) {
-            setIsSidebarOpen(false);
-        }
-    }, [pathname]);
+        try {
+            const response = await api.get("/me/restriction-status");
+            if (!response.ok) {
+                setRestriction(null);
+                return;
+            }
 
-    // Force collapsed sidebar whenever Notes is opened.
-    useEffect(() => {
-        if (pathname?.startsWith("/notes")) {
-            setIsSidebarOpen(false);
+            const data = await response.json() as RestrictionStatusResponse;
+            setRestriction(data.restricted ? data.restriction : null);
+        } catch (error) {
+            console.error("Failed to load restriction status:", error);
+            setRestriction(null);
+        } finally {
+            setIsRestrictionLoading(false);
         }
+    };
+
+    useEffect(() => {
+        if (typeof window === "undefined") {
+            return;
+        }
+
+        const shouldCloseSidebar = window.innerWidth < 768 || pathname?.startsWith("/notes");
+        if (!shouldCloseSidebar) {
+            return;
+        }
+
+        const timeoutId = window.setTimeout(() => {
+            setIsSidebarOpen(false);
+        }, 0);
+
+        return () => window.clearTimeout(timeoutId);
     }, [pathname]);
 
     useEffect(() => {
         const loadShellUser = async () => {
+            const isInitialShellLoad = !hasResolvedInitialShellRef.current;
             const { data: { session } } = await supabase.auth.getSession();
             if (!session?.user) {
                 setShellUser(null);
                 setIsAdmin(false);
+                setRestriction(null);
+                setIsRestrictionLoading(false);
+                hasResolvedInitialShellRef.current = false;
                 return;
             }
 
-            const response = await api.get('/me/bootstrap');
-            if (!response.ok) {
+            const data = await fetchBootstrap();
+            if (!data) {
                 setIsAdmin(false);
                 setShellUser({
                     id: session.user.id,
-                    email: session.user.email || '',
-                    name: session.user.user_metadata?.full_name || '',
-                    avatarUrl: session.user.user_metadata?.avatar_url || '',
-                    level: session.user.user_metadata?.level || '',
-                    university: session.user.user_metadata?.university || '',
-                    subscriptionTier: 'free',
+                    email: session.user.email || "",
+                    name: session.user.user_metadata?.full_name || "",
+                    avatarUrl: session.user.user_metadata?.avatar_url || "",
+                    level: session.user.user_metadata?.level || "",
+                    university: session.user.user_metadata?.university || "",
+                    subscriptionTier: "free",
                 });
+                setRestriction(null);
+                setIsRestrictionLoading(false);
+                hasResolvedInitialShellRef.current = true;
                 return;
             }
 
-            const data = await response.json();
+            const destination = resolveDestinationFromBootstrap(data);
+            if (destination !== "/main") {
+                router.replace(destination);
+                return;
+            }
+
             const profile = data?.profile;
             setShellUser({
                 id: session.user.id,
-                email: session.user.email || '',
+                email: session.user.email || "",
                 name:
                     profile?.full_name ||
-                    [profile?.first_name, profile?.other_names].filter(Boolean).join(' ').trim() ||
+                    [profile?.first_name, profile?.other_names].filter(Boolean).join(" ").trim() ||
                     session.user.user_metadata?.full_name ||
-                    '',
-                avatarUrl: profile?.avatar_url || session.user.user_metadata?.avatar_url || '',
-                level: profile?.level || session.user.user_metadata?.level || '',
-                university: profile?.university || session.user.user_metadata?.university || '',
-                subscriptionTier: profile?.subscription_tier || 'free',
+                    "",
+                avatarUrl: profile?.avatar_url || session.user.user_metadata?.avatar_url || "",
+                level: profile?.level || session.user.user_metadata?.level || "",
+                university: profile?.university || session.user.user_metadata?.university || "",
+                subscriptionTier: profile?.subscription_tier || "free",
             });
             setIsAdmin(Boolean(data?.is_admin));
+            await loadRestrictionStatus({ foreground: isInitialShellLoad });
+            hasResolvedInitialShellRef.current = true;
         };
 
         void loadShellUser();
@@ -142,20 +198,53 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                 setIsSettingsOpen(false);
                 setIsPersonalInfoOpen(false);
                 setIsReportProblemOpen(false);
+                setRestriction(null);
+                setIsRestrictionLoading(false);
+                hasResolvedInitialShellRef.current = false;
             } else {
                 void loadShellUser();
             }
         });
 
         return () => subscription.unsubscribe();
-    }, []);
+    }, [router]);
+
+    useEffect(() => {
+        if (!restriction) {
+            return;
+        }
+
+        const intervalId = window.setInterval(() => {
+            setRestrictionNow(Date.now());
+        }, 1000);
+
+        return () => window.clearInterval(intervalId);
+    }, [restriction]);
+
+    useEffect(() => {
+        if (!restriction?.end_time) {
+            return;
+        }
+
+        const endAt = new Date(restriction.end_time).getTime();
+        if (Number.isNaN(endAt)) {
+            return;
+        }
+
+        const delay = Math.max(endAt - Date.now(), 0) + 1000;
+        const timeoutId = window.setTimeout(() => {
+            void loadRestrictionStatus();
+        }, delay);
+
+        return () => window.clearTimeout(timeoutId);
+    }, [restriction?.end_time]);
 
     useEffect(() => {
         const handleProfileUpdated = (event: Event) => {
             const detail = (event as CustomEvent<ProfileUpdateDetail>).detail;
             if (!detail) return;
 
-            setShellUser(prev => prev ? {
+            setShellUser((prev) => prev ? {
                 ...prev,
                 name: detail.name ?? prev.name,
                 avatarUrl: detail.avatarUrl ?? prev.avatarUrl,
@@ -202,172 +291,287 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                 toggle: () => setIsSidebarOpen((prev) => !prev),
             }}
         >
-            <div className="flex h-[100dvh] w-full overflow-hidden bg-background">
-                {/* Mobile overlay */}
-                {isSidebarOpen && !isQuizTaking && (
-                    <div className="fixed inset-0 bg-black/40 z-40 md:hidden" onClick={() => setIsSidebarOpen(false)} />
-                )}
+            {restriction ? (
+                <StudentRestrictionBlocker restriction={restriction} now={restrictionNow} />
+            ) : (
+                <>
+                    <div className="flex h-[100dvh] w-full overflow-hidden bg-background">
+                        {isSidebarOpen && !isQuizTaking && (
+                            <div className="fixed inset-0 z-40 bg-black/40 md:hidden" onClick={() => setIsSidebarOpen(false)} />
+                        )}
 
-                {/* Sidebar — hidden on quiz taking pages */}
-                {!isQuizTaking && (
-                    <AppSidebar
-                        isOpen={isSidebarOpen}
-                        onClose={() => setIsSidebarOpen(prev => !prev)}
-                        onSearchOpen={() => setIsSearchModalOpen(true)}
-                        onOpenReportProblem={() => setIsReportProblemOpen(true)}
-                        onOpenSettings={() => setIsSettingsOpen(true)}
-                        onDeleteRequest={(id) => { setDeleteTargetId(id); setIsDeleteModalOpen(true); }}
-                        onRenameRequest={(id, title) => { setRenamingChatId(id); setRenameDraft(title); }}
-                        isAdmin={isAdmin}
+                        {!isQuizTaking && (
+                            <AppSidebar
+                                isOpen={isSidebarOpen}
+                                onClose={() => setIsSidebarOpen((prev) => !prev)}
+                                onSearchOpen={() => setIsSearchModalOpen(true)}
+                                onOpenReportProblem={() => setIsReportProblemOpen(true)}
+                                onOpenSettings={() => setIsSettingsOpen(true)}
+                                onDeleteRequest={(id) => { setDeleteTargetId(id); setIsDeleteModalOpen(true); }}
+                                onRenameRequest={(id, title) => { setRenamingChatId(id); setRenameDraft(title); }}
+                                isAdmin={isAdmin}
+                            />
+                        )}
+
+                        <div className={`flex-1 min-w-0 overflow-x-hidden overflow-y-auto ${!pathname?.startsWith("/reader/") ? "overscroll-none" : ""}`}>
+                            {children}
+                        </div>
+                    </div>
+
+                    <SearchChatsModal
+                        isOpen={isSearchModalOpen}
+                        onClose={() => setIsSearchModalOpen(false)}
+                        sessions={sessions}
+                        onSelectSession={(id) => {
+                            setActiveSessionId(id);
+                            setIsSearchModalOpen(false);
+                            if (typeof window !== "undefined" && window.location.pathname !== "/main") {
+                                router.push("/main");
+                            }
+                        }}
                     />
-                )}
 
-                {/* Main content area */}
-                <div className={`flex-1 min-w-0 overflow-x-hidden overflow-y-auto ${!pathname?.startsWith('/reader/') ? 'overscroll-none' : ''}`}>
-                    {children}
-                </div>
-            </div>
-
-            {/* Search Chats Modal — triggered by the 🔍 button in the sidebar History header */}
-            <SearchChatsModal
-                isOpen={isSearchModalOpen}
-                onClose={() => setIsSearchModalOpen(false)}
-                sessions={sessions}
-                onSelectSession={(id) => {
-                    setActiveSessionId(id);
-                    setIsSearchModalOpen(false);
-                    // If user is not on the chat page, navigate there so the session loads
-                    if (typeof window !== "undefined" && window.location.pathname !== "/main") {
-                        router.push("/main");
-                    }
-                }}
-            />
-
-            {/* Delete Confirmation Modal */}
-            {isDeleteModalOpen && (
-                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-                    <div className="bg-card rounded-2xl shadow-sm w-full max-w-sm p-6">
-                        <div className="flex items-center gap-3 mb-4">
-                            <div className="w-10 h-10 rounded-full bg-destructive/10 flex items-center justify-center shrink-0">
-                                <Trash2 className="w-5 h-5 text-destructive" />
-                            </div>
-                            <div>
-                                <h3 className="font-bold text-foreground">Delete Chat</h3>
-                                <p className="text-sm text-muted-foreground">This cannot be undone.</p>
-                            </div>
-                        </div>
-                        <div className="flex gap-3 mt-6">
-                            <button
-                                onClick={() => { setIsDeleteModalOpen(false); setDeleteTargetId(null); }}
-                                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-foreground hover:bg-muted transition-colors"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={() => void handleConfirmDelete()}
-                                className="flex-1 px-4 py-2.5 rounded-xl bg-destructive text-destructive-foreground text-sm font-bold hover:bg-destructive/90 transition-colors"
-                            >
-                                Delete
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Rename Modal */}
-            {renamingChatId && (
-                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-                    <div className="bg-card rounded-2xl shadow-sm w-full max-w-sm p-6">
-                        <div className="flex items-center justify-between mb-4">
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                                    <Pencil className="w-5 h-5 text-primary" />
+                    {isDeleteModalOpen && (
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+                            <div className="w-full max-w-sm rounded-2xl bg-card p-6 shadow-sm">
+                                <div className="mb-4 flex items-center gap-3">
+                                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-destructive/10">
+                                        <Trash2 className="h-5 w-5 text-destructive" />
+                                    </div>
+                                    <div>
+                                        <h3 className="font-bold text-foreground">Delete Chat</h3>
+                                        <p className="text-sm text-muted-foreground">This cannot be undone.</p>
+                                    </div>
                                 </div>
-                                <h3 className="font-bold text-foreground">Rename Chat</h3>
+                                <div className="mt-6 flex gap-3">
+                                    <button
+                                        onClick={() => { setIsDeleteModalOpen(false); setDeleteTargetId(null); }}
+                                        className="flex-1 rounded-xl px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        onClick={() => void handleConfirmDelete()}
+                                        className="flex-1 rounded-xl bg-destructive px-4 py-2.5 text-sm font-bold text-destructive-foreground transition-colors hover:bg-destructive/90"
+                                    >
+                                        Delete
+                                    </button>
+                                </div>
                             </div>
-                            <button
-                                onClick={() => { setRenamingChatId(null); setRenameDraft(""); }}
-                                className="p-1.5 hover:bg-muted rounded-lg transition-colors"
-                            >
-                                <X className="w-4 h-4 text-muted-foreground" />
-                            </button>
                         </div>
-                        <input
-                            type="text"
-                            value={renameDraft}
-                            onChange={(e) => setRenameDraft(e.target.value)}
-                            onKeyDown={(e) => {
-                                if (e.key === "Enter") void handleConfirmRename();
-                                if (e.key === "Escape") { setRenamingChatId(null); setRenameDraft(""); }
+                    )}
+
+                    {renamingChatId && (
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+                            <div className="w-full max-w-sm rounded-2xl bg-card p-6 shadow-sm">
+                                <div className="mb-4 flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10">
+                                            <Pencil className="h-5 w-5 text-primary" />
+                                        </div>
+                                        <h3 className="font-bold text-foreground">Rename Chat</h3>
+                                    </div>
+                                    <button
+                                        onClick={() => { setRenamingChatId(null); setRenameDraft(""); }}
+                                        className="rounded-lg p-1.5 transition-colors hover:bg-muted"
+                                    >
+                                        <X className="h-4 w-4 text-muted-foreground" />
+                                    </button>
+                                </div>
+                                <input
+                                    type="text"
+                                    value={renameDraft}
+                                    onChange={(e) => setRenameDraft(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter") void handleConfirmRename();
+                                        if (e.key === "Escape") { setRenamingChatId(null); setRenameDraft(""); }
+                                    }}
+                                    autoFocus
+                                    className="mb-4 w-full rounded-xl bg-background px-3 py-2.5 text-base text-foreground outline-none transition-all focus:border-primary/30 focus:ring-2 focus:ring-primary/20 md:text-sm"
+                                    placeholder="Chat name..."
+                                />
+                                <div className="flex gap-3">
+                                    <button
+                                        onClick={() => { setRenamingChatId(null); setRenameDraft(""); }}
+                                        className="flex-1 rounded-xl px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        onClick={() => void handleConfirmRename()}
+                                        disabled={!renameDraft.trim() || isRenameSaving}
+                                        className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                                    >
+                                        {isRenameSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+                                        {isRenameSaving ? "Saving..." : "Save"}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <SettingsModal
+                        isOpen={isSettingsOpen}
+                        onClose={() => setIsSettingsOpen(false)}
+                        onOpenPersonalInfo={() => setIsPersonalInfoOpen(true)}
+                        onLogout={handleLogout}
+                        onDeleteAccount={handleDeleteAccount}
+                        onClearHistory={handleClearHistory}
+                        user={shellUser}
+                    />
+
+                    {shellUser && (
+                        <PersonalInformationModal
+                            isOpen={isPersonalInfoOpen}
+                            onClose={() => setIsPersonalInfoOpen(false)}
+                            user={shellUser}
+                            onSave={(data) => {
+                                setShellUser((prev) => prev ? {
+                                    ...prev,
+                                    name: data.name,
+                                    level: data.level,
+                                    university: data.university,
+                                } : prev);
                             }}
-                            autoFocus
-                            className="w-full px-3 py-2.5 rounded-xl bg-background text-base md:text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/30 transition-all mb-4"
-                            placeholder="Chat name..."
+                            onAvatarChange={(url) => {
+                                setShellUser((prev) => prev ? { ...prev, avatarUrl: url } : prev);
+                            }}
                         />
-                        <div className="flex gap-3">
-                            <button
-                                onClick={() => { setRenamingChatId(null); setRenameDraft(""); }}
-                                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-foreground hover:bg-muted transition-colors"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={() => void handleConfirmRename()}
-                                disabled={!renameDraft.trim() || isRenameSaving}
-                                className="flex-1 px-4 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                            >
-                                {isRenameSaving && <Loader2 className="w-4 h-4 animate-spin" />}
-                                {isRenameSaving ? "Saving..." : "Save"}
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                    )}
+
+                    <ReportProblemModal
+                        isOpen={isReportProblemOpen}
+                        onClose={() => setIsReportProblemOpen(false)}
+                    />
+                    <OfflineBanner />
+                    <PWAInstallBanner />
+                </>
             )}
-
-            <SettingsModal
-                isOpen={isSettingsOpen}
-                onClose={() => setIsSettingsOpen(false)}
-                onOpenPersonalInfo={() => setIsPersonalInfoOpen(true)}
-                onLogout={handleLogout}
-                onDeleteAccount={handleDeleteAccount}
-                onClearHistory={handleClearHistory}
-                user={shellUser}
-            />
-
-            {shellUser && (
-                <PersonalInformationModal
-                    isOpen={isPersonalInfoOpen}
-                    onClose={() => setIsPersonalInfoOpen(false)}
-                    user={shellUser}
-                    onSave={(data) => {
-                        setShellUser((prev) => prev ? {
-                            ...prev,
-                            name: data.name,
-                            level: data.level,
-                            university: data.university,
-                        } : prev);
-                    }}
-                    onAvatarChange={(url) => {
-                        setShellUser((prev) => prev ? { ...prev, avatarUrl: url } : prev);
-                    }}
-                />
-            )}
-
-            <ReportProblemModal
-                isOpen={isReportProblemOpen}
-                onClose={() => setIsReportProblemOpen(false)}
-            />
-            <OfflineBanner />  {/* changed: offline indicator banner */}
-            <PWAInstallBanner />
         </SidebarControlsContext.Provider>
     );
 }
 
-// ── Outer layout — provides ChatSessionProvider then renders the inner layout
 export default function AppLayout({ children }: { children: React.ReactNode }) {
     return (
         <ChatSessionProvider>
             <AppLayoutContent>{children}</AppLayoutContent>
         </ChatSessionProvider>
     );
+}
+
+function StudentRestrictionBlocker({
+    restriction,
+    now,
+}: {
+    restriction: ActiveRestriction;
+    now: number;
+}) {
+    const courseLabel = restriction.course_code || restriction.course_title || restriction.title || "Current assessment";
+    const lecturerName = [restriction.lecturer_title, restriction.lecturer_full_name].filter(Boolean).join(" ").trim() || "Your lecturer";
+    const whatsappMessage = [
+        "Hello PansGPT Admin, I think this restriction may be wrong or my test has ended.",
+        "",
+        `Course: ${courseLabel}`,
+        `Level: ${restriction.level || "Not specified"}`,
+        `Lecturer: ${lecturerName}`,
+        `Restriction ends: ${formatRestrictionDateTime(restriction.end_time)}`,
+    ].join("\n");
+    const whatsappSupportUrl = `https://wa.me/2349042581125?text=${encodeURIComponent(whatsappMessage)}`;
+
+    return (
+        <div className="flex min-h-[100dvh] w-full items-center justify-center bg-background px-6 py-12">
+            <main className="w-full max-w-2xl text-center">
+                <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full border border-border text-primary">
+                    <ShieldAlert className="h-5 w-5" />
+                </div>
+
+                <h1 className="mt-5 text-2xl font-semibold leading-tight text-foreground sm:text-3xl">
+                    PansGPT is temporarily paused for your level.
+                </h1>
+                <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-muted-foreground">
+                    Access will return automatically when this restriction ends.
+                </p>
+
+                <section className="mx-auto mt-8 max-w-sm border-y border-border py-6">
+                    <div className="flex items-center justify-center gap-2 text-xs font-medium uppercase text-muted-foreground">
+                        <Clock3 className="h-4 w-4" />
+                        Time remaining
+                    </div>
+                    <p className="mt-3 text-4xl font-semibold text-foreground sm:text-5xl">
+                        {formatRestrictionCountdown(restriction.end_time, now)}
+                    </p>
+                </section>
+
+                <dl className="mx-auto mt-8 max-w-xl divide-y divide-border text-left">
+                    <RestrictionDetail label="Course" value={courseLabel} />
+                    <RestrictionDetail label="Lecturer" value={lecturerName} />
+                    <RestrictionDetail label="Message" value={restriction.reason || "Your lecturer has temporarily paused access during this assessment."} />
+                    <RestrictionDetail label="Ends at" value={formatRestrictionDateTime(restriction.end_time)} />
+                </dl>
+
+                <div className="mx-auto mt-8 max-w-md text-sm leading-6 text-muted-foreground">
+                    <p>If your test has ended or this restriction seems wrong, contact admin.</p>
+                    <a
+                        href={whatsappSupportUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-3 inline-flex items-center justify-center rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+                    >
+                        Contact admin
+                    </a>
+                </div>
+            </main>
+        </div>
+    );
+}
+
+function RestrictionDetail({ label, value }: { label: string; value: string }) {
+    return (
+        <div className="grid gap-1 py-4 sm:grid-cols-[8rem_1fr] sm:gap-6">
+            <dt className="text-xs font-semibold uppercase text-muted-foreground">{label}</dt>
+            <dd className="text-sm leading-6 text-foreground">{value}</dd>
+        </div>
+    );
+}
+
+function formatRestrictionCountdown(value: string | null | undefined, now: number) {
+    if (!value) {
+        return "—";
+    }
+
+    const endTime = new Date(value).getTime();
+    if (Number.isNaN(endTime)) {
+        return value;
+    }
+
+    const remaining = Math.max(endTime - now, 0);
+    const totalSeconds = Math.floor(remaining / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    if (hours > 0) {
+        return `${hours}h ${String(minutes).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`;
+    }
+
+    return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+}
+
+function formatRestrictionDateTime(value: string | null | undefined) {
+    if (!value) {
+        return "—";
+    }
+
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+        return value;
+    }
+
+    return new Intl.DateTimeFormat(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+    }).format(parsed);
 }

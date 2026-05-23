@@ -29,6 +29,7 @@ const withPWAConfig = withPWA({
 });
 
 const nextConfig: NextConfig = {
+  distDir: process.env.NODE_ENV === "development" ? ".next-dev" : ".next",
   transpilePackages: [
     "@blocknote/core",
     "@blocknote/react",

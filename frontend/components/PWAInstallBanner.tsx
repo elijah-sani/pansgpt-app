@@ -27,6 +27,10 @@ function isSafariBrowser(userAgent: string) {
   return /safari/i.test(userAgent) && !/crios|fxios|edgios|opr\//i.test(userAgent);
 }
 
+function isMobileOrTabletDevice(userAgent: string) {
+  return /android|iphone|ipad|ipod|mobile|tablet/i.test(userAgent);
+}
+
 export default function PWAInstallBanner() {
   const deferredPromptRef = useRef<BeforeInstallPromptEvent | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -44,9 +48,18 @@ export default function PWAInstallBanner() {
       (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
     const wasDismissed = window.localStorage.getItem(DISMISS_KEY) === "true";
     const userAgent = window.navigator.userAgent;
+    const hasLargeScreen = window.matchMedia("(min-width: 1024px)").matches;
+    const hasFinePointer = window.matchMedia("(any-pointer: fine)").matches && window.matchMedia("(any-hover: hover)").matches;
+    const shouldSuppressDesktopPrompt =
+      !isMobileOrTabletDevice(userAgent) && (hasLargeScreen || hasFinePointer);
     const shouldShowIOSInstructions = isIOSDevice(userAgent) && isSafariBrowser(userAgent);
 
     if (isStandalone || wasDismissed) {
+      return;
+    }
+
+    // Desktop install prompt disabled until desktop/offline experience is ready.
+    if (shouldSuppressDesktopPrompt) {
       return;
     }
 

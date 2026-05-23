@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Header, Depends
 from pydantic import BaseModel
 from typing import Optional
 import logging
-from dependencies import get_current_user, User
+from dependencies import get_current_admin, get_current_super_admin, get_current_user, require_super_admin_role, User
 
 logger = logging.getLogger("PansGPT")
 
@@ -35,35 +35,13 @@ async def verify_api_key(x_api_key: str = Header(...)):
     return await verify_api_key_handler(x_api_key)
 
 async def verify_super_admin(current_user: User = Depends(get_current_user)):
-    if not current_user.email:
-        raise HTTPException(status_code=403, detail="Access Denied: user email missing.")
-
-    sb = supabase_service_client or supabase_client
-    if not sb:
-        raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
-
-    try:
-        normalized_email = current_user.email.strip().lower()
-        res = sb.table('user_roles').select('role,email').ilike('email', normalized_email).execute()
-        rows = res.data or []
-        if not rows:
-            raise HTTPException(status_code=403, detail="Access Denied: User not found or no role.")
-
-        has_super_admin = any((row.get('role') or '').strip().lower() == 'super_admin' for row in rows)
-        if not has_super_admin:
-            raise HTTPException(status_code=403, detail="Only Super Admins can modify AI behavior")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Auth Check Error: {e}")
-        raise HTTPException(status_code=500, detail="Authorization Check Failed")
-    
+    await require_super_admin_role(current_user)
     return True
 
 # --- Endpoints ---
 
 @router.get("", dependencies=[Depends(verify_api_key)])
-async def get_system_config(current_user: User = Depends(get_current_user)):
+async def get_system_config(current_user: User = Depends(get_current_admin)):
     """
     Fetch the current system configuration.
     Assumes a single row in 'system_settings' table (id=1).
@@ -92,14 +70,12 @@ async def get_system_config(current_user: User = Depends(get_current_user)):
 async def update_system_config(
     config: SystemConfigUpdate,
     _: str = Depends(verify_api_key),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_super_admin)
 ):
     """
     Update system configuration.
     SECURE: Only allows Super Admins.
     """
-    await verify_super_admin(current_user)
-    
     try:
         sb = supabase_service_client or supabase_client
         if not sb:
@@ -138,4 +114,3 @@ def set_dependencies(supabase, api_key_verifier, supabase_service=None):
     supabase_client = supabase
     supabase_service_client = supabase_service
     verify_api_key_handler = api_key_verifier
-

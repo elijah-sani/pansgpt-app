@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
     BookOpenCheck,
     CalendarDays,
+    FileCheck2,
     LayoutDashboard,
     Library,
     Menu,
@@ -13,13 +14,15 @@ import {
     PanelLeftClose,
     PanelLeftOpen,
     Settings,
+    ShieldAlert,
     ShieldCheck,
+    UserCheck,
     UserCog,
     Users,
     X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { api } from '@/lib/api';
+import { fetchBootstrap } from '@/lib/bootstrap-cache';
 import { supabase } from '@/lib/supabase';
 
 type AdminNavItem = {
@@ -45,6 +48,9 @@ const navSections: AdminNavSection[] = [
     {
         label: 'Academic',
         items: [
+            { icon: UserCheck, label: 'Lecturers', href: '/admin/lecturers' },
+            { icon: FileCheck2, label: 'Material Submissions', href: '/admin/material-submissions' },
+            { icon: ShieldAlert, label: 'Restrictions', href: '/admin/restrictions' },
             { icon: CalendarDays, label: 'Timetable', href: '/admin/timetable' },
             { icon: BookOpenCheck, label: 'Faculty Knowledge', href: '/admin/faculty-knowledge' },
         ],
@@ -81,14 +87,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 return;
             }
 
-            const response = await api.get('/me/bootstrap');
-            if (!response.ok) {
+            const data = await fetchBootstrap();
+            if (!data) {
                 console.warn(`Unauthorized access attempt by: ${email}`);
                 router.push('/');
                 return;
             }
-
-            const data = await response.json();
             if (!data?.is_admin) {
                 console.warn(`Unauthorized access attempt by: ${email}`);
                 router.push('/');
@@ -101,10 +105,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
         checkAuth();
     }, [router]);
-
-    useEffect(() => {
-        setMobileOpen(false);
-    }, [pathname]);
 
     if (!userEmail) {
         return (
@@ -166,7 +166,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                                 <X className="h-4 w-4" />
                             </button>
                         </div>
-                        <AdminSidebarContent pathname={pathname} userEmail={userEmail} userRole={userRole} />
+                        <AdminSidebarContent
+                            pathname={pathname}
+                            userEmail={userEmail}
+                            userRole={userRole}
+                            onNavigate={() => setMobileOpen(false)}
+                        />
                     </aside>
                 </div>
             )}
@@ -184,12 +189,14 @@ function AdminSidebarContent({
     userRole,
     collapsed = false,
     onToggleCollapsed,
+    onNavigate,
 }: {
     pathname: string;
     userEmail: string | null;
     userRole: string | null;
     collapsed?: boolean;
     onToggleCollapsed?: () => void;
+    onNavigate?: () => void;
 }) {
     return (
         <div className="flex h-full flex-col">
@@ -233,6 +240,7 @@ function AdminSidebarContent({
                                     href={item.href}
                                     active={isActivePath(pathname, item.href)}
                                     collapsed={collapsed}
+                                    onNavigate={onNavigate}
                                 />
                             ))}
                         </div>
@@ -269,16 +277,19 @@ function SidebarItem({
     href,
     active,
     collapsed,
+    onNavigate,
 }: {
     icon: LucideIcon;
     label: string;
     href: string;
     active?: boolean;
     collapsed?: boolean;
+    onNavigate?: () => void;
 }) {
     return (
         <Link
             href={href}
+            onClick={onNavigate}
             title={collapsed ? label : undefined}
             className={`group relative flex h-10 w-full items-center rounded-md text-sm transition-colors ${collapsed ? 'justify-center px-0' : 'gap-3 px-3'} ${active ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
         >
