@@ -11,8 +11,8 @@ TEXT_TERTIARY = "qwen/qwen3-vl-235b-a22b-thinking"  # OpenRouter last resort
 # Compatibility alias for callers still referencing TEXT_FALLBACK.
 TEXT_FALLBACK = TEXT_PRIMARY
 
-VISION_PRIMARY = "qwen/qwen3-vl-235b-a22b-thinking"  # OpenRouter vision primary
-VISION_FALLBACK = "gemma-4-31b-it"         # Google AI Studio vision fallback
+VISION_PRIMARY = "gemma-4-31b-it"           # Google AI Studio vision primary
+VISION_FALLBACK = "qwen/qwen3-vl-235b-a22b-thinking"  # OpenRouter vision fallback
 
 openrouter_client = None
 google_client = None

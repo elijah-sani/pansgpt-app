@@ -61,6 +61,8 @@ from .shared import (
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from services.web_search import search_web
+from utils.thinking_token_utils import strip_thinking_tokens
+from .sanitize import sanitize_text, CHAT_MAX, TITLE_MAX
 import random
 from restrictions import build_restriction_block_payload, get_applicable_user_restriction
 
@@ -554,7 +556,7 @@ async def _build_streaming_response(
                 full_text = GRACEFUL_ASSISTANT_ERROR_PAYLOAD["content"]
                 yield f"data: {json.dumps({'delta': full_text})}\n\n"
 
-            text_to_save = full_text
+            text_to_save = strip_thinking_tokens(full_text)
             if disconnected or cancelled:
                 if text_to_save.strip():
                     if STOPPED_ASSISTANT_NOTE not in text_to_save:
@@ -839,6 +841,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
     Modes: explain, example, memory, chat
     """
     restriction = await _get_chat_restriction_if_any(current_user)
+    chat_request.text = sanitize_text(chat_request.text, CHAT_MAX)
     if restriction:
         return JSONResponse(status_code=423, content=build_restriction_block_payload(restriction))
 
@@ -1224,8 +1227,10 @@ class SavePartialRequest(BaseModel):
     content: str
 
 @router.post("/chat/save-partial", dependencies=[Depends(verify_api_key)])
+@chat_limiter.limit("30/minute")
 async def save_partial_response(
-    request: SavePartialRequest,
+    request: Request,
+    payload: SavePartialRequest,
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -1241,7 +1246,7 @@ async def save_partial_response(
 
     # Session owner check — wrapped so a flaky post-abort connection doesn't kill the save
     try:
-        await _assert_session_owner(request.session_id, current_user)
+        await _assert_session_owner(payload.session_id, current_user)
     except Exception as e:
         # If the owner check itself fails (e.g. "Server disconnected" after abort),
         # fall back to a direct user_id match rather than dropping the save entirely
@@ -1251,7 +1256,7 @@ async def save_partial_response(
                 sess_res = await _execute_with_retry(
                     lambda: shared.supabase_client.table("chat_sessions")
                         .select("id")
-                        .eq("id", request.session_id)
+                        .eq("id", payload.session_id)
                         .eq("user_id", current_user.id)
                         .limit(1)
                         .execute(),
@@ -1264,7 +1269,7 @@ async def save_partial_response(
             except Exception as e2:
                 logger.error(f"save-partial: fallback session check also failed ({e2}), proceeding with JWT trust")
 
-    content = request.content.strip()
+    content = payload.content.strip()
     # Build the saved text — append the stop note if not already present
     if content:
         text_to_save = f"{content}\n\n{STOPPED_ASSISTANT_NOTE}" if STOPPED_ASSISTANT_NOTE not in content else content
@@ -1276,7 +1281,7 @@ async def save_partial_response(
         recent_ai = await _execute_with_retry(
             lambda: shared.supabase_client.table("chat_messages")
                 .select("id, content")
-                .eq("session_id", request.session_id)
+                .eq("session_id", payload.session_id)
                 .in_("role", ["ai", "assistant"])
                 .order("created_at", desc=True)
                 .limit(1)
@@ -1342,7 +1347,7 @@ async def save_partial_response(
     # failed or message was deleted)
     try:
         saved_id = await chat_history.save_assistant_message(
-            session_id=request.session_id,
+            session_id=payload.session_id,
             content=text_to_save,
         )
         return {"status": "saved", "message_id": saved_id}
@@ -1357,8 +1362,10 @@ class TruncateLastStoppedRequest(BaseModel):
     session_id: str
 
 @router.post("/chat/truncate-last-stopped", dependencies=[Depends(verify_api_key)])
+@chat_limiter.limit("30/minute")
 async def truncate_last_stopped(
-    request: TruncateLastStoppedRequest,
+    request: Request,
+    payload: TruncateLastStoppedRequest,
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -1374,13 +1381,13 @@ async def truncate_last_stopped(
     if not shared.supabase_client:
         raise HTTPException(status_code=503, detail="Database not active")
 
-    await _assert_session_owner(request.session_id, current_user)
+    await _assert_session_owner(payload.session_id, current_user)
 
     try:
         msgs_res = await _execute_with_retry(
             lambda: shared.supabase_client.table("chat_messages")
                 .select("id, role, content, created_at")
-                .eq("session_id", request.session_id)
+                .eq("session_id", payload.session_id)
                 .order("created_at", desc=True)
                 .limit(3)
                 .execute(),
@@ -1430,7 +1437,7 @@ async def truncate_last_stopped(
                     .execute(),
                 f"Delete early-stop message {msg_id}",
             )
-        logger.info(f"Deleted {len(ids_to_delete)} message(s) for early-stop in session {request.session_id}")
+        logger.info(f"Deleted {len(ids_to_delete)} message(s) for early-stop in session {payload.session_id}")
         return {"status": "deleted", "deleted_ids": ids_to_delete}
 
     except HTTPException:
@@ -1445,20 +1452,20 @@ class RenameSessionRequest(BaseModel):
     title: str
 
 @router.patch("/session/{session_id}/rename", dependencies=[Depends(verify_api_key)])
+@chat_limiter.limit("20/minute")
 async def rename_session(
     session_id: str,
-    request: RenameSessionRequest,
+    request: Request,
+    payload: RenameSessionRequest,
     current_user: User = Depends(get_current_user),
 ):
     """
     Rename a chat session. Only the session owner can rename.
     """
     await _assert_session_owner(session_id, current_user)
-    new_title = request.title.strip()
+    new_title = sanitize_text(payload.title, TITLE_MAX)
     if not new_title:
         raise HTTPException(status_code=400, detail="Title cannot be empty")
-    if len(new_title) > 100:
-        new_title = new_title[:100]
     try:
         await chat_history.update_session_title(session_id, new_title)
         return {"status": "ok", "title": new_title}
@@ -1474,42 +1481,44 @@ class EditMessageRequest(BaseModel):
     images: Optional[list[str]] = None
 
 @router.post("/chat/edit", dependencies=[Depends(verify_api_key)])
+@chat_limiter.limit("20/minute")
 async def edit_message(
-    request: EditMessageRequest,
-    http_request: Request,
+    request: Request,
+    payload: EditMessageRequest,
     current_user: User = Depends(get_current_user),
 ):
     """
     Edit a user message, delete everything after it, and regenerate the AI response.
     """
+    payload.new_text = sanitize_text(payload.new_text, CHAT_MAX)
     if not shared.supabase_client or not llm_engine.has_available_client():
         raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
 
     try:
-        await _assert_session_owner(request.session_id, current_user)
+        await _assert_session_owner(payload.session_id, current_user)
 
         msg_res = await _execute_with_retry(
-            lambda: shared.supabase_client.table("chat_messages").select("*").eq("session_id", request.session_id).order("created_at", desc=False).execute(),
+            lambda: shared.supabase_client.table("chat_messages").select("*").eq("session_id", payload.session_id).order("created_at", desc=False).execute(),
             "Fetch messages for edit",
         )
         messages = msg_res.data or []
 
-        target_msg = next((m for m in messages if str(m.get('id')) == str(request.message_id)), None)
+        target_msg = next((m for m in messages if str(m.get('id')) == str(payload.message_id)), None)
         if not target_msg:
             raise HTTPException(status_code=400, detail="Message not found")
         target_timestamp = target_msg['created_at']
 
         await _execute_with_retry(
-            lambda: shared.supabase_client.table("chat_messages").delete().eq("session_id", request.session_id).gte("created_at", target_timestamp).execute(),
+            lambda: shared.supabase_client.table("chat_messages").delete().eq("session_id", payload.session_id).gte("created_at", target_timestamp).execute(),
             "Delete messages from edit point",
         )
 
-        image_payload = json.dumps(request.images) if request.images else None
+        image_payload = json.dumps(payload.images) if payload.images else None
         insert_res = await _execute_with_retry(
             lambda: shared.supabase_client.table("chat_messages").insert({
-                "session_id": request.session_id,
+                "session_id": payload.session_id,
                 "role": "user",
-                "content": request.new_text,
+                "content": payload.new_text,
                 "image_data": image_payload,
             }).execute(),
             "Save edited user message",
@@ -1517,7 +1526,7 @@ async def edit_message(
         new_msg_id = insert_res.data[0]['id'] if insert_res.data and len(insert_res.data) > 0 else None
 
         remaining_res = await _execute_with_retry(
-            lambda: shared.supabase_client.table("chat_messages").select("*").eq("session_id", request.session_id).order("created_at", desc=False).execute(),
+            lambda: shared.supabase_client.table("chat_messages").select("*").eq("session_id", payload.session_id).order("created_at", desc=False).execute(),
             "Fetch remaining messages after edit",
         )
         remaining_msgs = remaining_res.data or []
@@ -1533,15 +1542,15 @@ async def edit_message(
                 temperature = float(cached_config["temperature"])
 
         student_profile_text, student_level = await _build_student_profile_text(current_user)
-        recent_summaries = await _get_recent_session_summaries(current_user.id, request.session_id)
+        recent_summaries = await _get_recent_session_summaries(current_user.id, payload.session_id)
         citations: list[dict] = []
-        should_skip_rag = is_conversational_message(request.new_text)
+        should_skip_rag = is_conversational_message(payload.new_text)
 
         async def event_stream():
             context_text = ""
             retrieved_citations: list[dict] = []
             extracted_image_text = ""
-            rag_query = request.new_text
+            rag_query = payload.new_text
             if should_skip_rag:
                 logger.info("Skipping RAG retrieval for conversational edited message.")
             else:
@@ -1604,7 +1613,7 @@ async def edit_message(
                         except Exception as exc:
                             logger.warning(f"Edit vision RAG enrichment failed, falling back to text-only query: {exc}")
 
-                rag_query = f"{request.new_text}\n\n{extracted_image_text}" if extracted_image_text else request.new_text
+                rag_query = f"{payload.new_text}\n\n{extracted_image_text}" if extracted_image_text else payload.new_text
                 yield {"status": "searching_curriculum"}
                 yield {"status": "retrieving_context"}
                 context_text, retrieved_citations = await get_relevant_context(
@@ -1672,7 +1681,7 @@ Answer the student's question prioritizing your general knowledge, but tailor yo
             logger.info(f"Edit llm_messages roles+types: {[(m['role'], type(m['content']).__name__) for m in llm_messages]}")
 
             logger.info(f"Sending {len(llm_messages)} messages to Groq (roles: {[m['role'] for m in llm_messages]})")
-            logger.info(f"Re-generating after edit for session {request.session_id}")
+            logger.info(f"Re-generating after edit for session {payload.session_id}")
 
             if contains_image(llm_messages):
                 selected_model = llm_engine.VISION_PRIMARY
@@ -1697,8 +1706,8 @@ Answer the student's question prioritizing your general knowledge, but tailor yo
 
         return await _build_streaming_response(
             event_stream(),
-            http_request,
-            request.session_id,
+            request,
+            payload.session_id,
             str(new_msg_id) if new_msg_id else None,
             citations=citations,
             user_id=current_user.id,
@@ -1711,9 +1720,10 @@ Answer the student's question prioritizing your general knowledge, but tailor yo
         raise HTTPException(status_code=500, detail="Unable to edit this message. Please try again.")
 
 @router.post("/chat/{session_id}/regenerate", dependencies=[Depends(verify_api_key)])
+@chat_limiter.limit("20/minute")
 async def regenerate_response(
     session_id: str,
-    http_request: Request,
+    request: Request,
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -1890,7 +1900,7 @@ TIMETABLE PROTOCOL: You possess the student's exact weekly class schedule under 
 
         return await _build_streaming_response(
             event_stream(),
-            http_request,
+            request,
             session_id,
             citations=citations,
             user_id=current_user.id,

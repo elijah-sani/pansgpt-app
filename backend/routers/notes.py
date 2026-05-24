@@ -17,6 +17,7 @@ from .shared import (
     logger,
 )
 from .sanitize import sanitize_text, NOTE_MAX
+from utils.thinking_token_utils import strip_thinking_tokens
 
 router = APIRouter(prefix="/notes", tags=["notes"])
 
@@ -118,7 +119,7 @@ async def _fix_typos(text: str) -> str:
 
         response = await asyncio.wait_for(
             llm_engine.google_client.chat.completions.create(
-                model="gemma-3-4b-it",
+                model="gemma-4-26b-it",
                 messages=[
                     {
                         "role": "user",
@@ -138,7 +139,7 @@ async def _fix_typos(text: str) -> str:
             timeout=5.0,
         )
 
-        corrected = (response.choices[0].message.content or "").strip()
+        corrected = strip_thinking_tokens((response.choices[0].message.content or "").strip())
         if not corrected or len(corrected) > len(text) * 3:
             return text
         return corrected
@@ -352,100 +353,6 @@ async def update_note(
     except Exception as e:
         logger.error(f"Update note error: {e}")
         raise HTTPException(status_code=500, detail="Unable to update note. Please try again.")
-
-
-@router.post("/{note_id}/ai-title", dependencies=[Depends(verify_api_key)])
-async def generate_ai_title(
-    note_id: str,
-    current_user: User = Depends(get_current_user)
-):
-    """Generate an AI title for a note based on its content."""
-    sb = shared.supabase_service_client or shared.supabase_client
-    if not sb:
-        raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
-
-    try:
-        # 1. Fetch the note from DB
-        res = await _execute_with_retry(
-            lambda: sb.table("document_notes")
-                .select("*")
-                .eq("id", note_id)
-                .eq("user_id", current_user.id)
-                .execute(),
-            "Fetch note for AI title",
-        )
-        if not res.data:
-            raise HTTPException(status_code=404, detail="Note not found.")
-        note = res.data[0]
-
-        # 2. Extract plain text from the content jsonb array
-        extracted_text = ""
-        if note.get("content"):
-            for block in note["content"]:
-                if isinstance(block, dict) and "content" in block:
-                    for item in block["content"]:
-                        if isinstance(item, dict) and item.get("type") == "text":
-                            extracted_text += item.get("text", "") + " "
-        elif note.get("user_annotation"):
-            extracted_text = note["user_annotation"]
-
-        extracted_text = extracted_text.strip()
-
-        # 3. If no text found return error
-        if not extracted_text:
-            return {"error": "Not enough content to generate a title"}
-
-        # 4. Call existing LLM via asyncio.wait_for (same pattern as _categorize_note)
-        prompt = (
-            "Generate a short, specific title (max 8 words) for this pharmacy study note. "
-            "Return ONLY the title text, nothing else, no quotes, no punctuation at the end.\n"
-            f"Note content: {extracted_text}"
-        )
-
-        if llm_engine.google_client is None:
-            raise HTTPException(status_code=503, detail="AI service unavailable.")
-
-        response = await asyncio.wait_for(
-            llm_engine.google_client.chat.completions.create(
-                model="gemma-3-4b-it",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                temperature=0.2,
-                max_tokens=20,
-                stream=False,
-            ),
-            timeout=8.0,
-        )
-
-        generated_title = (response.choices[0].message.content or "").strip().strip('"').strip("'").rstrip(".")
-
-        # 5. Save generated title back to note
-        await _execute_with_retry(
-            lambda: sb.table("document_notes")
-                .update({
-                    "title": generated_title,
-                    "last_edited_at": datetime.now(timezone.utc).isoformat()
-                })
-                .eq("id", note_id)
-                .execute(),
-            "Update note AI title",
-        )
-
-        # 6. Return generated title
-        return {"title": generated_title}
-
-    except HTTPException:
-        raise
-    except asyncio.TimeoutError:
-        logger.warning("AI title generation timed out")
-        raise HTTPException(status_code=504, detail="AI service timed out.")
-    except Exception as e:
-        logger.error(f"AI title generation error: {e}")
-        raise HTTPException(status_code=500, detail="Unable to generate title. Please try again.")
 
 
 @router.delete("/{note_id}", dependencies=[Depends(verify_api_key)])

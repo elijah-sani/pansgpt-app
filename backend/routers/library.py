@@ -3,7 +3,7 @@ Library Router: Document Management Endpoints
 Handles upload, list, delete, and update operations for documents.
 """
 from fastapi import APIRouter, HTTPException, Depends, File, UploadFile, Form, BackgroundTasks, Header
-from dependencies import get_current_admin, get_current_user, User
+from dependencies import get_current_admin, get_current_user, get_admin_university_scope, User
 from fastapi.responses import JSONResponse
 from uuid import uuid4
 from pydantic import BaseModel
@@ -25,6 +25,7 @@ import fitz  # PyMuPDF
 from PIL import Image
 # from groq import Groq  <-- Removed
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from utils.thinking_token_utils import strip_thinking_tokens
 
 logger = logging.getLogger("PansGPT")
 
@@ -54,6 +55,34 @@ def _db_client():
     Falls back to regular client if service-role is unavailable.
     """
     return supabase_service_client or supabase_client
+
+
+async def _get_admin_scope(current_user: User) -> Optional[str]:
+    return await get_admin_university_scope(current_user)
+
+
+def _apply_admin_scope_to_query(query, scope: Optional[str]):
+    if scope:
+        return query.eq("university_id", scope)
+    return query
+
+
+def _assert_document_matches_scope(document_row: Optional[dict], scope: Optional[str]) -> None:
+    if not document_row:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if scope and (document_row.get("university_id") or None) != scope:
+        raise HTTPException(status_code=403, detail="You do not have access to this document")
+
+
+async def _get_document_row_for_admin(db, document_id: str, scope: Optional[str], fields: str = "*") -> dict:
+    response = await _execute_with_retry_async(
+        lambda: db.table("pans_library").select(fields).eq("id", document_id).limit(1).execute(),
+        f"Fetch scoped document {document_id}",
+    )
+    rows = response.data or []
+    row = rows[0] if rows else None
+    _assert_document_matches_scope(row, scope)
+    return row
 
 def _is_retryable_network_error(exc: Exception) -> bool:
     """
@@ -173,6 +202,10 @@ async def create_library_document_from_existing_drive_file(
     university_id: Optional[str] = None,
     uploaded_by_email: Optional[str] = None,
     target_levels: Optional[list[str]] = None,
+    material_status: Optional[str] = None,
+    visibility: Optional[str] = None,
+    source_type: Optional[str] = None,
+    approval_status: Optional[str] = None,
 ) -> dict:
     """
     Reuse the normal library ingestion path for a file that is already in Drive.
@@ -230,6 +263,10 @@ async def create_library_document_from_existing_drive_file(
         "university_id": university_id,
         "uploaded_by_email": uploaded_by_email,
         "target_levels": target_levels or [],
+        "material_status": material_status or "active",
+        "visibility": visibility or "visible",
+        "source_type": source_type or "admin",
+        "approval_status": approval_status or "approved",
         "embedding_status": "processing",
         "embedding_progress": 0,
         "total_chunks": 100,
@@ -305,8 +342,8 @@ else:
     logger.warning("[WARNING] GOOGLE_API_KEY not set, Vision features will fail")
 
 # --- Global Model Constants ---
-HEAVY_VISION_MODEL = "gemma-3-27b-it"  # For images/multimodal
-FAST_TEXT_MODEL = "gemma-3-12b-it"     # For pure text
+HEAVY_VISION_MODEL = "gemma-4-31b-it"  # For images/multimodal
+FAST_TEXT_MODEL = "gemma-4-31b-it"     # For pure text
 MAX_VISION_RETRIES = 5
 VISION_RETRY_BASE_DELAY_SECONDS = 1.0
 VISION_REQUEST_THROTTLE_SECONDS = 2.1
@@ -396,7 +433,7 @@ async def analyze_image_with_llama(image_bytes: bytes, document_id: str, page_nu
                     max_tokens=500
                 )
             )
-            description = response.choices[0].message.content
+            description = strip_thinking_tokens(response.choices[0].message.content or "")
             return f"\n\n[Visual Description: {description}]\n\n"
         except Exception as e:
             error_str = str(e).lower()
@@ -751,8 +788,9 @@ async def admin_upload_document(
     lecturer: str = Form(...),
     topic: str = Form(...),
     uploaded_by: Optional[str] = Form(None),
+    university_id: Optional[str] = Form(None),
     target_levels: Optional[str] = Form(None),  # JSON-encoded list e.g. '["400lvl","500lvl"]'
-    _: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_admin),
 ):
     """
     Admin Endpoint: Upload PDF to Drive, save metadata to Supabase, and trigger RAG ingestion.
@@ -766,6 +804,9 @@ async def admin_upload_document(
     db = _db_client()
     if not db:
         raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
+
+    admin_scope = await _get_admin_scope(current_user)
+    scoped_university_id = (admin_scope or (university_id or "").strip() or None)
 
     # 1. Prepare File for Streaming (Don't read into memory yet)
     try:
@@ -825,7 +866,7 @@ async def admin_upload_document(
             "drive_file_id": drive_file_id,
             "file_name": file.filename, # Store ORIGINAL name for display
             "file_size": file_size,
-            "university_id": None,
+            "university_id": scoped_university_id,
             "uploaded_by_email": uploaded_by,
             "target_levels": levels_list,
             # Initialize status immediately
@@ -871,17 +912,20 @@ async def admin_upload_document(
         raise HTTPException(status_code=500, detail="Unable to save the document. Please try again.")
 
 @router.get("/documents", dependencies=[Depends(verify_api_key)])
-async def admin_list_documents(_: User = Depends(get_current_admin)):
+async def admin_list_documents(current_user: User = Depends(get_current_admin)):
     """
     Admin Endpoint: List all documents from Supabase.
     """
     db = _db_client()
     if not db:
         raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
+    admin_scope = await _get_admin_scope(current_user)
     
     try:
+        query = db.table("pans_library").select("*")
+        query = _apply_admin_scope_to_query(query, admin_scope)
         response = await _execute_with_retry_async(
-            lambda: db.table("pans_library").select("*").order("created_at", desc=True).execute(),
+            lambda: query.order("created_at", desc=True).execute(),
             "List documents",
         )
         return {"documents": response.data}
@@ -890,7 +934,7 @@ async def admin_list_documents(_: User = Depends(get_current_admin)):
         raise HTTPException(status_code=500, detail="Unable to load documents. Please try again.")
 
 @router.post("/documents/repair-progress", dependencies=[Depends(verify_api_key)])
-async def admin_repair_document_progress(_: User = Depends(get_current_admin)):
+async def admin_repair_document_progress(current_user: User = Depends(get_current_admin)):
     """
     Admin utility: force embedding_progress=100 for rows already marked as completed.
     Useful for repairing stale progress values from earlier runs.
@@ -898,13 +942,13 @@ async def admin_repair_document_progress(_: User = Depends(get_current_admin)):
     db = _db_client()
     if not db:
         raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
+    admin_scope = await _get_admin_scope(current_user)
 
     try:
+        query = db.table("pans_library").select("id, embedding_status, embedding_progress").eq("embedding_status", "completed")
+        query = _apply_admin_scope_to_query(query, admin_scope)
         response = await _execute_with_retry_async(
-            lambda: db.table("pans_library")
-                .select("id, embedding_status, embedding_progress")
-                .eq("embedding_status", "completed")
-                .execute(),
+            lambda: query.execute(),
             "Fetch completed documents for progress repair",
         )
         rows = response.data or []
@@ -943,7 +987,7 @@ async def admin_repair_document_progress(_: User = Depends(get_current_admin)):
         raise HTTPException(status_code=500, detail="Unable to repair document progress. Please try again.")
 
 @router.delete("/documents/{doc_id}", dependencies=[Depends(verify_api_key)])
-async def admin_delete_document(doc_id: str, _: User = Depends(get_current_admin)):
+async def admin_delete_document(doc_id: str, current_user: User = Depends(get_current_admin)):
     """
     Admin Endpoint: Delete document from Google Drive and Supabase.
     """
@@ -953,18 +997,12 @@ async def admin_delete_document(doc_id: str, _: User = Depends(get_current_admin
     db = _db_client()
     if not db:
         raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
+    admin_scope = await _get_admin_scope(current_user)
         
     try:
         # 1. Fetch drive_file_id from Supabase
-        response = await _execute_with_retry_async(
-            lambda: db.table("pans_library").select("drive_file_id").eq("id", doc_id).execute(),
-            f"Fetch drive file id for document {doc_id}",
-        )
-        
-        if not response.data:
-            raise HTTPException(status_code=404, detail="Document not found in database")
-            
-        drive_file_id = response.data[0]['drive_file_id']
+        document_row = await _get_document_row_for_admin(db, doc_id, admin_scope, "id,drive_file_id,university_id")
+        drive_file_id = document_row['drive_file_id']
 
         # 2. Delete from Drive (with Retry & Graceful Degradation)
         drive_deletion_success = False
@@ -1023,19 +1061,22 @@ async def admin_delete_document(doc_id: str, _: User = Depends(get_current_admin
         raise HTTPException(status_code=500, detail="Unable to complete the delete operation. Please try again.")
 
 @router.patch("/documents/{doc_id}", dependencies=[Depends(verify_api_key)])
-async def admin_update_document(doc_id: str, updates: DocumentUpdate, _: User = Depends(get_current_admin)):
+async def admin_update_document(doc_id: str, updates: DocumentUpdate, current_user: User = Depends(get_current_admin)):
     """
     Admin Endpoint: Update document metadata in Supabase.
     """
     db = _db_client()
     if not db:
         raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
+    admin_scope = await _get_admin_scope(current_user)
 
     try:
         update_data = {k: v for k, v in updates.dict().items() if v is not None}
         
         if not update_data:
             raise HTTPException(status_code=400, detail="No updates provided")
+
+        await _get_document_row_for_admin(db, doc_id, admin_scope, "id,university_id")
 
         logger.info(f"[INFO] Updating document {doc_id}: {update_data}")
         
@@ -1056,7 +1097,7 @@ async def admin_update_document(doc_id: str, updates: DocumentUpdate, _: User = 
 @router.post("/documents/{document_id}/cancel", dependencies=[Depends(verify_api_key)])
 async def cancel_document_ingestion(
     document_id: str,
-    _: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_admin),
 ):
     """
     Cancel an in-progress document ingestion.
@@ -1066,13 +1107,12 @@ async def cancel_document_ingestion(
     db = _db_client()
     if not db:
         raise HTTPException(status_code=503, detail="The service is temporarily unavailable.")
+    admin_scope = await _get_admin_scope(current_user)
 
     # Verify document exists and is currently processing
     try:
-        res = db.table('pans_library').select('id, embedding_status').eq('id', document_id).limit(1).execute()
-        if not res.data:
-            raise HTTPException(status_code=404, detail="Document not found.")
-        status = res.data[0].get('embedding_status')
+        document_row = await _get_document_row_for_admin(db, document_id, admin_scope, "id,university_id,embedding_status")
+        status = document_row.get('embedding_status')
         if status != 'processing':
             return {"status": "skipped", "reason": f"Document is not processing (current status: {status})"}
     except HTTPException:
@@ -1087,7 +1127,7 @@ async def cancel_document_ingestion(
 
 
 @router.get("/documents/{document_id}/status", dependencies=[Depends(verify_api_key)])
-async def get_document_status(document_id: str, _: User = Depends(get_current_admin)):
+async def get_document_status(document_id: str, current_user: User = Depends(get_current_admin)):
     """
     Get the real-time embedding status of a document.
     Frontend polls this to update progress bars.
@@ -1095,8 +1135,10 @@ async def get_document_status(document_id: str, _: User = Depends(get_current_ad
     db = _db_client()
     if not db:
         raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
+    admin_scope = await _get_admin_scope(current_user)
     
     try:
+        await _get_document_row_for_admin(db, document_id, admin_scope, "id,university_id")
         # Lightweight query for status fields only
         response = await _execute_with_retry_async(
             lambda: db.table("pans_library")
@@ -1210,7 +1252,7 @@ async def upsert_reading_progress(
 
 
 @router.post("/documents/{doc_id}/reembed", dependencies=[Depends(verify_api_key)])
-async def admin_reembed_document(doc_id: str, background_tasks: BackgroundTasks, _: User = Depends(get_current_admin)):
+async def admin_reembed_document(doc_id: str, background_tasks: BackgroundTasks, current_user: User = Depends(get_current_admin)):
     """
     Admin Endpoint: Re-trigger embedding for a document that has failed or partial chunks.
     Downloads the PDF from Google Drive and re-runs the full ingestion pipeline.
@@ -1222,19 +1264,16 @@ async def admin_reembed_document(doc_id: str, background_tasks: BackgroundTasks,
     db = _db_client()
     if not db:
         raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
+    admin_scope = await _get_admin_scope(current_user)
 
     # 1. Fetch document metadata
     try:
-        response = await _execute_with_retry_async(
-            lambda: db.table("pans_library")
-                .select("id, drive_file_id, file_name, embedding_status")
-                .eq("id", doc_id)
-                .execute(),
-            f"Fetch document for reembed {doc_id}",
+        doc = await _get_document_row_for_admin(
+            db,
+            doc_id,
+            admin_scope,
+            "id,drive_file_id,file_name,embedding_status,university_id",
         )
-        if not response.data:
-            raise HTTPException(status_code=404, detail="Document not found")
-        doc = response.data[0]
     except HTTPException:
         raise
     except Exception as e:
