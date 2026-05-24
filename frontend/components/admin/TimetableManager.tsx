@@ -206,7 +206,7 @@ export default function TimetableManager() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="w-full max-w-5xl mx-auto md:pt-6 md:px-4 space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">Timetable Management</h1>

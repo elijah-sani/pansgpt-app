@@ -33,6 +33,15 @@ interface Document {
     embedding_error?: string; // For partial success or failure details
     total_chunks: number;
     target_levels?: string[];
+    academic_session?: string;
+    semester?: string;
+    department?: string;
+    faculty?: string;
+    material_status?: string;
+    visibility?: string;
+    source_type?: string;
+    approval_status?: string;
+    version_label?: string;
 }
 
 interface AIBadgeConfig {
@@ -57,11 +66,45 @@ interface FormInputProps {
     name: string;
     placeholder?: string;
     value: string;
+    required?: boolean;
     onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }
 
+interface FormSelectProps {
+    label: string;
+    name: string;
+    value: string;
+    options: Array<{ value: string; label: string }>;
+    onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
+}
+
+const MATERIAL_STATUS_OPTIONS = [
+    { value: 'active', label: 'Active' },
+    { value: 'archived', label: 'Archived' },
+    { value: 'hidden', label: 'Hidden' },
+    { value: 'deprecated', label: 'Deprecated' }
+];
+
+const VISIBILITY_OPTIONS = [
+    { value: 'visible', label: 'Visible' },
+    { value: 'hidden', label: 'Hidden' }
+];
+
+const APPROVAL_STATUS_OPTIONS = [
+    { value: 'approved', label: 'Approved' },
+    { value: 'pending', label: 'Pending' },
+    { value: 'rejected', label: 'Rejected' }
+];
+
+const SEMESTER_OPTIONS = [
+    { value: '', label: 'Not set' },
+    { value: 'First', label: 'First' },
+    { value: 'Second', label: 'Second' }
+];
+
 export default function LibraryPage() {
     const [searchQuery, setSearchQuery] = useState('');
+    const [showMobileSearch, setShowMobileSearch] = useState(false);
     const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
     const [editingDoc, setEditingDoc] = useState<Document | null>(null);
     const [deleteTarget, setDeleteTarget] = useState<Document | null>(null); // Store full doc object
@@ -115,6 +158,15 @@ export default function LibraryPage() {
                 embedding_error?: string;
                 total_chunks?: number;
                 target_levels?: string[];
+                academic_session?: string;
+                semester?: string;
+                department?: string;
+                faculty?: string;
+                material_status?: string;
+                visibility?: string;
+                source_type?: string;
+                approval_status?: string;
+                version_label?: string;
             }) => {
                 const status = row.embedding_status || 'pending';
                 const progress = status === 'completed' ? 100 : (Number(row.embedding_progress) || 0);
@@ -135,7 +187,16 @@ export default function LibraryPage() {
                     embedding_progress: progress,
                     embedding_error: row.embedding_error,
                     total_chunks: Number(row.total_chunks) || 0,
-                    target_levels: row.target_levels || []
+                    target_levels: row.target_levels || [],
+                    academic_session: row.academic_session || '',
+                    semester: row.semester || '',
+                    department: row.department || '',
+                    faculty: row.faculty || '',
+                    material_status: row.material_status || 'active',
+                    visibility: row.visibility || 'visible',
+                    source_type: row.source_type || 'admin',
+                    approval_status: row.approval_status || 'approved',
+                    version_label: row.version_label || ''
                 };
             });
 
@@ -315,16 +376,16 @@ export default function LibraryPage() {
     if (!userEmail) return null; // Wait for session fetch
 
     return (
-        <div className="relative pb-24">
+        <div className="w-full max-w-5xl mx-auto md:pt-6 md:px-4 space-y-8 animate-in fade-in duration-500 pb-24">
             {/* Header */}
-            <header className="flex justify-between items-start mb-8">
+            <header className="mb-8 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                 <div>
                     <div className="flex items-center gap-3 mb-1">
                         <h2 className="text-2xl font-bold text-foreground">Library Management</h2>
                     </div>
                     <p className="text-muted-foreground">Organize course materials, track storage, and manage document access permissions.</p>
                 </div>
-                <div className="flex items-center gap-4">
+                <div className="hidden items-center gap-4 md:flex">
                     <SystemStatusBadge />
                 </div>
             </header>
@@ -338,15 +399,42 @@ export default function LibraryPage() {
 
             {/* Toolbar */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-                <div className="flex items-center gap-2 w-full md:flex-1 md:max-w-lg bg-card border border-border rounded-xl px-4 py-2.5 focus-within:border-primary/50 transition-colors">
+                {/* Desktop Search */}
+                <div className="hidden md:flex items-center gap-2 w-full md:flex-1 md:max-w-lg bg-card border border-border rounded-xl px-4 py-2.5 focus-within:border-primary/50 transition-colors">
                     <Search className="w-4 h-4 text-muted-foreground" />
                     <input
                         type="text"
                         placeholder="Search documents by title, code or lecturer..."
-                        className="bg-transparent border-none outline-none text-sm w-full placeholder:text-muted-foreground/70"
+                        className="bg-transparent border-none outline-none text-sm w-full placeholder:text-muted-foreground/70 text-foreground"
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                     />
+                </div>
+
+                {/* Mobile Search Toggle */}
+                <div className="md:hidden w-full">
+                    {!showMobileSearch ? (
+                        <button onClick={() => setShowMobileSearch(true)} className="flex items-center gap-2 text-sm text-muted-foreground bg-card border border-border rounded-xl px-4 py-2.5 w-full transition-all hover:border-primary/50">
+                            <Search className="w-4 h-4 shrink-0" />
+                            <span className="truncate">Search documents...</span>
+                        </button>
+                    ) : (
+                        <div className="flex items-center gap-2 w-full bg-card border border-primary/50 rounded-xl px-4 py-2.5 focus-within:ring-2 focus-within:ring-primary/20 transition-all">
+                            <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+                            <input
+                                autoFocus
+                                type="text"
+                                placeholder="Search documents..."
+                                className="bg-transparent border-none outline-none text-sm w-full placeholder:text-muted-foreground/70 text-foreground"
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                onBlur={() => !searchQuery && setShowMobileSearch(false)}
+                            />
+                            <button onClick={() => { setSearchQuery(''); setShowMobileSearch(false); }} className="text-muted-foreground hover:text-foreground shrink-0">
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 <div className="flex gap-3 w-full md:w-auto">
@@ -399,9 +487,101 @@ export default function LibraryPage() {
             </div>
 
             {/* Data Table */}
-            <div className="bg-card border border-border rounded-2xl overflow-hidden backdrop-blur-sm min-h-[400px]">
+            <div className="space-y-4 md:hidden">
+                {isLoadingData ? (
+                    <div className="rounded-2xl border border-border bg-card px-6 py-14 text-center text-muted-foreground">
+                        <Loader2 className="mx-auto mb-4 h-8 w-8 animate-spin text-primary" />
+                        Loading library data...
+                    </div>
+                ) : filteredDocs.length === 0 ? (
+                    <div className="rounded-2xl border border-border bg-card px-6 py-14 text-center text-muted-foreground">
+                        No documents found.
+                    </div>
+                ) : (
+                    filteredDocs.map((doc) => (
+                        <article key={doc.id} className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">{doc.course_code}</p>
+                                    <h3 className="mt-1 text-base font-semibold text-foreground">{doc.title}</h3>
+                                    <p className="mt-1 text-sm text-muted-foreground">{doc.lecturer}</p>
+                                </div>
+                                <input
+                                    type="checkbox"
+                                    className="mt-1 h-4 w-4 rounded border-border text-primary focus:ring-primary/50 bg-card cursor-pointer"
+                                    checked={selectedIds.has(doc.id)}
+                                    onChange={() => toggleSelect(doc.id)}
+                                />
+                            </div>
+
+                            <div className="mt-4 flex items-center gap-2">
+                                <span className="rounded-full bg-secondary/20 px-3 py-1 text-xs font-medium text-secondary-foreground border border-secondary/30">
+                                    {doc.topic}
+                                </span>
+                                <AIBadge
+                                    status={doc.embedding_status}
+                                    progress={doc.embedding_progress}
+                                    error={doc.embedding_error}
+                                />
+                            </div>
+
+                            <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                                <div>
+                                    <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Date</p>
+                                    <p className="mt-1 text-foreground">{doc.date}</p>
+                                </div>
+                                <div>
+                                    <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Levels</p>
+                                    <p className="mt-1 text-foreground">{doc.target_levels?.join(', ') || 'All'}</p>
+                                </div>
+                            </div>
+
+                            <div className="mt-4 flex flex-wrap gap-1.5">
+                                <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-400">
+                                    {doc.material_status || 'active'}
+                                </span>
+                                <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-400">
+                                    {doc.visibility || 'visible'}
+                                </span>
+                                <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-[10px] font-bold uppercase text-sky-400">
+                                    {doc.approval_status || 'approved'}
+                                </span>
+                            </div>
+
+                            <div className="mt-4 flex items-center justify-end gap-2">
+                                {doc.embedding_status === 'processing' ? (
+                                    <button
+                                        onClick={() => handleCancelIngestion(doc)}
+                                        disabled={cancellingIds.has(doc.id)}
+                                        className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-500 disabled:opacity-50"
+                                        title="Cancel ingestion"
+                                    >
+                                        {cancellingIds.has(doc.id) ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />}
+                                    </button>
+                                ) : null}
+                                <button
+                                    onClick={() => setEditingDoc(doc)}
+                                    className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+                                    title="Quick Edit"
+                                >
+                                    <Pencil className="h-4 w-4" />
+                                </button>
+                                <button
+                                    onClick={() => setDeleteTarget(doc)}
+                                    className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                                    title="Delete"
+                                >
+                                    <Trash2 className="h-4 w-4" />
+                                </button>
+                            </div>
+                        </article>
+                    ))
+                )}
+            </div>
+
+            <div className="hidden min-h-[400px] overflow-hidden rounded-2xl border border-border bg-card backdrop-blur-sm md:block">
                 <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm min-w-[800px]">
+                    <table className="w-full text-left text-sm min-w-[1120px]">
                         <thead className="bg-muted/50 border-b border-border text-muted-foreground uppercase tracking-wider text-xs font-semibold">
                             <tr>
                                 <th className="px-6 py-4 whitespace-nowrap w-4">
@@ -419,6 +599,8 @@ export default function LibraryPage() {
                                 <th className="px-6 py-4 whitespace-nowrap">Topic</th>
                                 <th className="px-6 py-4 whitespace-nowrap">Lecturer</th>
                                 <th className="px-6 py-4 whitespace-nowrap">Date</th>
+                                <th className="px-6 py-4 whitespace-nowrap">Academic Meta</th>
+                                <th className="px-6 py-4 whitespace-nowrap">State</th>
                                 <th className="px-6 py-4 whitespace-nowrap">Levels</th>
                                 <th className="px-6 py-4 text-center whitespace-nowrap">Uploaded By</th>
                                 <th className="px-6 py-4 text-right whitespace-nowrap">Action</th>
@@ -427,14 +609,14 @@ export default function LibraryPage() {
                         <tbody className="divide-y divide-border">
                             {isLoadingData ? (
                                 <tr>
-                                    <td colSpan={9} className="px-6 py-20 text-center text-muted-foreground">
+                                    <td colSpan={11} className="px-6 py-20 text-center text-muted-foreground">
                                         <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-primary" />
                                         Loading library data...
                                     </td>
                                 </tr>
                             ) : filteredDocs.length === 0 ? (
                                 <tr>
-                                    <td colSpan={9} className="px-6 py-20 text-center text-slate-500">
+                                    <td colSpan={11} className="px-6 py-20 text-center text-slate-500">
                                         No documents found.
                                     </td>
                                 </tr>
@@ -474,6 +656,32 @@ export default function LibraryPage() {
                                         <td className="px-6 py-4 text-muted-foreground whitespace-nowrap">{doc.lecturer}</td>
 
                                         <td className="px-6 py-4 text-muted-foreground whitespace-nowrap">{doc.date}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <div className="space-y-1">
+                                                <div className="text-xs font-semibold text-foreground">
+                                                    {doc.academic_session || 'Session not set'}
+                                                </div>
+                                                <div className="text-[11px] text-muted-foreground">
+                                                    {[doc.semester, doc.department, doc.faculty].filter(Boolean).join(' • ') || 'No academic tags'}
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <div className="flex flex-wrap gap-1">
+                                                <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-bold uppercase">
+                                                    {doc.material_status || 'active'}
+                                                </span>
+                                                <span className="px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-bold uppercase">
+                                                    {doc.visibility || 'visible'}
+                                                </span>
+                                                <span className="px-2 py-0.5 rounded-full bg-sky-500/10 border border-sky-500/20 text-sky-400 text-[10px] font-bold uppercase">
+                                                    {doc.approval_status || 'approved'}
+                                                </span>
+                                            </div>
+                                            <div className="mt-1 text-[11px] text-muted-foreground">
+                                                {[doc.source_type, doc.version_label].filter(Boolean).join(' • ')}
+                                            </div>
+                                        </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             {doc.target_levels && doc.target_levels.length > 0 ? (
                                                 <div className="flex flex-wrap gap-1">
@@ -722,7 +930,18 @@ function UploadModal({ onClose, userEmail, onSuccess }: { isOpen: boolean, onClo
     const [error, setError] = useState('');
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [fileName, setFileName] = useState('');
-    const [formData, setFormData] = useState({ title: '', course_code: '', lecturer: '', topic: '' });
+    const [formData, setFormData] = useState({
+        title: '',
+        course_code: '',
+        lecturer: '',
+        topic: '',
+        academic_session: '',
+        semester: '',
+        department: '',
+        faculty: '',
+        material_status: 'active',
+        visibility: 'visible'
+    });
     const [selectedLevels, setSelectedLevels] = useState<string[]>([]);
     const LEVEL_CHOICES = ['100lvl', '200lvl', '300lvl', '400lvl', '500lvl', '600lvl'];
 
@@ -762,6 +981,12 @@ function UploadModal({ onClose, userEmail, onSuccess }: { isOpen: boolean, onClo
             data.append('course_code', formData.course_code);
             data.append('lecturer', formData.lecturer);
             data.append('topic', formData.topic);
+            if (formData.academic_session) data.append('academic_session', formData.academic_session);
+            if (formData.semester) data.append('semester', formData.semester);
+            if (formData.department) data.append('department', formData.department);
+            if (formData.faculty) data.append('faculty', formData.faculty);
+            data.append('material_status', formData.material_status);
+            data.append('visibility', formData.visibility);
             if (userEmail) data.append('uploaded_by', userEmail);
             if (selectedLevels.length > 0) data.append('target_levels', JSON.stringify(selectedLevels));
 
@@ -868,7 +1093,18 @@ function UploadModal({ onClose, userEmail, onSuccess }: { isOpen: boolean, onClo
             // Reset states after close
             setTimeout(() => {
                 setIsSuccess(false);
-                setFormData({ title: '', course_code: '', lecturer: '', topic: '' });
+                setFormData({
+                    title: '',
+                    course_code: '',
+                    lecturer: '',
+                    topic: '',
+                    academic_session: '',
+                    semester: '',
+                    department: '',
+                    faculty: '',
+                    material_status: 'active',
+                    visibility: 'visible'
+                });
                 setFileName('');
                 setTrainingProgress(0);
                 setSelectedLevels([]);
@@ -920,10 +1156,16 @@ function UploadModal({ onClose, userEmail, onSuccess }: { isOpen: boolean, onClo
                             className="p-5 space-y-5"
                         >
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <FormInput label="Course Code" name="course_code" placeholder="e.g. CS101" value={formData.course_code} onChange={handleInputChange} />
-                                <FormInput label="Course Title" name="title" placeholder="e.g. Intro to AI" value={formData.title} onChange={handleInputChange} />
-                                <FormInput label="Lecturer" name="lecturer" placeholder="e.g. Dr. Vance" value={formData.lecturer} onChange={handleInputChange} />
-                                <FormInput label="Topic" name="topic" placeholder="e.g. Neural Nets" value={formData.topic} onChange={handleInputChange} />
+                                <FormInput label="Course Code" name="course_code" placeholder="e.g. CS101" value={formData.course_code} required onChange={handleInputChange} />
+                                <FormInput label="Course Title" name="title" placeholder="e.g. Intro to AI" value={formData.title} required onChange={handleInputChange} />
+                                <FormInput label="Lecturer" name="lecturer" placeholder="e.g. Dr. Vance" value={formData.lecturer} required onChange={handleInputChange} />
+                                <FormInput label="Topic" name="topic" placeholder="e.g. Neural Nets" value={formData.topic} required onChange={handleInputChange} />
+                                <FormInput label="Academic Session" name="academic_session" placeholder="e.g. 2024/2025" value={formData.academic_session} onChange={handleInputChange} />
+                                <FormSelect label="Semester" name="semester" value={formData.semester} options={SEMESTER_OPTIONS} onChange={(e) => setFormData({ ...formData, semester: e.target.value })} />
+                                <FormInput label="Department" name="department" placeholder="e.g. Computer Science" value={formData.department} onChange={handleInputChange} />
+                                <FormInput label="Faculty" name="faculty" placeholder="e.g. Science" value={formData.faculty} onChange={handleInputChange} />
+                                <FormSelect label="Material Status" name="material_status" value={formData.material_status} options={MATERIAL_STATUS_OPTIONS} onChange={(e) => setFormData({ ...formData, material_status: e.target.value })} />
+                                <FormSelect label="Visibility" name="visibility" value={formData.visibility} options={VISIBILITY_OPTIONS} onChange={(e) => setFormData({ ...formData, visibility: e.target.value })} />
                             </div>
 
                             {/* Target Level Selector */}
@@ -1070,7 +1312,7 @@ function UploadModal({ onClose, userEmail, onSuccess }: { isOpen: boolean, onClo
 }
 
 // Helper Component for Inputs
-function FormInput({ label, name, placeholder, value, onChange }: FormInputProps) {
+function FormInput({ label, name, placeholder, value, onChange, required = false }: FormInputProps) {
     return (
         <div className="space-y-2 group">
             <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest group-focus-within:text-primary transition-colors ml-1">
@@ -1081,9 +1323,31 @@ function FormInput({ label, name, placeholder, value, onChange }: FormInputProps
                 value={value}
                 onChange={onChange}
                 placeholder={placeholder}
-                required
+                required={required}
                 className="w-full bg-muted/50 border border-border text-foreground text-sm rounded-xl px-4 py-3 outline-none focus:border-primary/50 focus:bg-background focus:shadow-[0_0_15px_color-mix(in_srgb,var(--primary),transparent_90%)] transition-all placeholder:text-muted-foreground/70"
             />
+        </div>
+    );
+}
+
+function FormSelect({ label, name, value, options, onChange }: FormSelectProps) {
+    return (
+        <div className="space-y-2 group">
+            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest group-focus-within:text-primary transition-colors ml-1">
+                {label}
+            </label>
+            <select
+                name={name}
+                value={value}
+                onChange={onChange}
+                className="w-full bg-muted/50 border border-border text-foreground text-sm rounded-xl px-4 py-3 outline-none focus:border-primary/50 focus:bg-background transition-all"
+            >
+                {options.map((option) => (
+                    <option key={option.value || option.label} value={option.value}>
+                        {option.label}
+                    </option>
+                ))}
+            </select>
         </div>
     );
 }
@@ -1160,7 +1424,15 @@ function EditDocumentModal({ onClose, doc, onUpdate }: { isOpen: boolean, onClos
         title: doc.title || '',
         course_code: doc.course_code || '',
         topic: doc.topic || '',
-        lecturer: doc.lecturer || ''
+        lecturer: doc.lecturer || '',
+        academic_session: doc.academic_session || '',
+        semester: doc.semester || '',
+        department: doc.department || '',
+        faculty: doc.faculty || '',
+        material_status: doc.material_status || 'active',
+        visibility: doc.visibility || 'visible',
+        approval_status: doc.approval_status || 'approved',
+        version_label: doc.version_label || ''
     });
     const [editLevels, setEditLevels] = useState<string[]>(doc.target_levels || []);
     const LEVEL_CHOICES = ['100lvl', '200lvl', '300lvl', '400lvl', '500lvl', '600lvl'];
@@ -1180,7 +1452,15 @@ function EditDocumentModal({ onClose, doc, onUpdate }: { isOpen: boolean, onClos
                 course_code: formData.course_code,
                 topic: formData.topic,
                 lecturer_name: formData.lecturer,
-                target_levels: editLevels
+                target_levels: editLevels,
+                academic_session: formData.academic_session || null,
+                semester: formData.semester || null,
+                department: formData.department || null,
+                faculty: formData.faculty || null,
+                material_status: formData.material_status,
+                visibility: formData.visibility,
+                approval_status: formData.approval_status,
+                version_label: formData.version_label || null
             });
 
             if (!response.ok) {
@@ -1199,7 +1479,15 @@ function EditDocumentModal({ onClose, doc, onUpdate }: { isOpen: boolean, onClos
                 },
                 lecturer: formData.lecturer, // Fix frontend mapping
                 course_code: formData.course_code,
-                target_levels: editLevels
+                target_levels: editLevels,
+                academic_session: formData.academic_session,
+                semester: formData.semester,
+                department: formData.department,
+                faculty: formData.faculty,
+                material_status: formData.material_status,
+                visibility: formData.visibility,
+                approval_status: formData.approval_status,
+                version_label: formData.version_label
             });
 
             // Optional: Success Toast could go here if we had a toaster context
@@ -1231,11 +1519,21 @@ function EditDocumentModal({ onClose, doc, onUpdate }: { isOpen: boolean, onClos
                 <form onSubmit={handleSubmit} className="p-5 space-y-4">
                     <div className="space-y-4">
                         <div className="grid grid-cols-2 gap-4">
-                            <FormInput label="Course Code" name="course_code" value={formData.course_code} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, course_code: e.target.value })} />
-                            <FormInput label="Topic" name="topic" value={formData.topic} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, topic: e.target.value })} />
+                            <FormInput label="Course Code" name="course_code" value={formData.course_code} required onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, course_code: e.target.value })} />
+                            <FormInput label="Topic" name="topic" value={formData.topic} required onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, topic: e.target.value })} />
                         </div>
-                        <FormInput label="Course Title" name="title" value={formData.title} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, title: e.target.value })} />
-                        <FormInput label="Lecturer" name="lecturer" value={formData.lecturer} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, lecturer: e.target.value })} />
+                        <FormInput label="Course Title" name="title" value={formData.title} required onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, title: e.target.value })} />
+                        <FormInput label="Lecturer" name="lecturer" value={formData.lecturer} required onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, lecturer: e.target.value })} />
+                        <div className="grid grid-cols-2 gap-4">
+                            <FormInput label="Academic Session" name="academic_session" value={formData.academic_session} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, academic_session: e.target.value })} />
+                            <FormSelect label="Semester" name="semester" value={formData.semester} options={SEMESTER_OPTIONS} onChange={(e) => setFormData({ ...formData, semester: e.target.value })} />
+                            <FormInput label="Department" name="department" value={formData.department} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, department: e.target.value })} />
+                            <FormInput label="Faculty" name="faculty" value={formData.faculty} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, faculty: e.target.value })} />
+                            <FormSelect label="Material Status" name="material_status" value={formData.material_status} options={MATERIAL_STATUS_OPTIONS} onChange={(e) => setFormData({ ...formData, material_status: e.target.value })} />
+                            <FormSelect label="Visibility" name="visibility" value={formData.visibility} options={VISIBILITY_OPTIONS} onChange={(e) => setFormData({ ...formData, visibility: e.target.value })} />
+                            <FormSelect label="Approval Status" name="approval_status" value={formData.approval_status} options={APPROVAL_STATUS_OPTIONS} onChange={(e) => setFormData({ ...formData, approval_status: e.target.value })} />
+                            <FormInput label="Version Label" name="version_label" value={formData.version_label} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, version_label: e.target.value })} />
+                        </div>
                         {/* Target Level Selector */}
                         <div>
                             <label className="block text-xs font-bold text-muted-foreground mb-2 uppercase tracking-wider">Target Academic Levels</label>

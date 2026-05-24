@@ -1,5 +1,7 @@
 'use client';
 
+'use client';
+
 import React, { useEffect, useState } from 'react';
 import {
     ThumbsUp,
@@ -8,7 +10,8 @@ import {
     MessageSquare,
     Search,
     ArrowUpRight,
-    List
+    List,
+    X
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import Link from 'next/link';
@@ -63,6 +66,7 @@ export default function AdminFeedbackPage() {
     const [feedback, setFeedback] = useState<FeedbackItem[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
+    const [showMobileSearch, setShowMobileSearch] = useState(false);
     const [filterRating, setFilterRating] = useState<'all' | 'up' | 'down' | 'report'>('all');
 
     // --- Fetch Data ---
@@ -148,7 +152,7 @@ export default function AdminFeedbackPage() {
     };
 
     return (
-        <div className="space-y-8 animate-in fade-in duration-500 w-full">
+        <div className="w-full max-w-5xl mx-auto md:pt-6 md:px-4 space-y-8 animate-in fade-in duration-500">
             {/* Header */}
             <div>
                 <h1 className="text-2xl font-bold tracking-tight">User Feedback & Analytics</h1>
@@ -158,7 +162,7 @@ export default function AdminFeedbackPage() {
             </div>
 
             {/* Stats Cards - Full Width */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 w-full">
+            <div className="grid grid-cols-2 gap-4 w-full md:grid-cols-4">
                 <StatsCard
                     label="Total Feedback"
                     value={totalFeedback}
@@ -193,10 +197,10 @@ export default function AdminFeedbackPage() {
             </div>
 
             {/* Filters & Search - Combined Bar */}
-            <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
 
                 {/* Compact Icon-Only Filter Bar */}
-                <div className="flex items-center gap-2 p-1 rounded-lg border border-border/50 bg-card w-fit shadow-sm">
+                <div className="flex w-full items-center gap-2 overflow-x-auto rounded-lg border border-border/50 bg-card p-1 shadow-sm md:w-fit">
                     <button
                         onClick={() => setFilterRating('all')}
                         title="All Feedback"
@@ -240,8 +244,8 @@ export default function AdminFeedbackPage() {
                     </button>
                 </div>
 
-                {/* Search */}
-                <div className="relative w-full md:w-72">
+                {/* Desktop Search */}
+                <div className="relative hidden md:block w-full md:w-72">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                     <input
                         type="text"
@@ -251,10 +255,104 @@ export default function AdminFeedbackPage() {
                         className="w-full pl-9 pr-4 py-2 bg-background border border-input rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all shadow-sm hover:border-primary/30"
                     />
                 </div>
+
+                {/* Mobile Search Toggle */}
+                <div className="md:hidden w-full">
+                    {!showMobileSearch ? (
+                        <button onClick={() => setShowMobileSearch(true)} className="flex items-center gap-2 text-sm text-muted-foreground bg-background border border-input rounded-lg px-4 py-2 w-full transition-all hover:border-primary/30">
+                            <Search className="w-4 h-4 shrink-0" />
+                            <span>Search feedback...</span>
+                        </button>
+                    ) : (
+                        <div className="flex items-center gap-2 w-full bg-background border border-input rounded-lg px-4 py-2 focus-within:ring-2 focus-within:ring-primary/20 transition-all">
+                            <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+                            <input
+                                autoFocus
+                                type="text"
+                                placeholder="Search feedback..."
+                                className="bg-transparent border-none outline-none text-sm w-full placeholder:text-muted-foreground/70 text-foreground"
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                onBlur={() => !searchQuery && setShowMobileSearch(false)}
+                            />
+                            <button onClick={() => { setSearchQuery(''); setShowMobileSearch(false); }} className="text-muted-foreground hover:text-foreground shrink-0">
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+                    )}
+                </div>
             </div>
 
             {/* Table Card - Full Width */}
-            <div className="bg-card border border-border/50 rounded-xl shadow-sm overflow-hidden w-full">
+            <div className="space-y-4 md:hidden">
+                {isLoading ? (
+                    Array.from({ length: 3 }).map((_, i) => (
+                        <div key={i} className="animate-pulse rounded-xl border border-border/50 bg-card p-4 shadow-sm">
+                            <div className="h-4 w-24 rounded bg-muted" />
+                            <div className="mt-4 h-4 w-40 rounded bg-muted" />
+                            <div className="mt-3 h-6 w-20 rounded-full bg-muted" />
+                            <div className="mt-4 h-16 w-full rounded bg-muted" />
+                        </div>
+                    ))
+                ) : filteredFeedback.length === 0 ? (
+                    <div className="rounded-xl border border-border/50 bg-card px-6 py-16 text-center text-muted-foreground shadow-sm">
+                        <div className="mb-2 flex justify-center">
+                            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted/30">
+                                <MessageSquare className="h-8 w-8 text-muted-foreground/50" />
+                            </div>
+                        </div>
+                        <p className="text-lg font-medium text-foreground">No feedback found</p>
+                        <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground/80">
+                            {searchQuery ? `No results matching "${searchQuery}"` : 'No feedback received yet. Keep checking back!'}
+                        </p>
+                    </div>
+                ) : (
+                    filteredFeedback.map((item) => (
+                        <article key={item.id} className="rounded-xl border border-border/50 bg-card p-4 shadow-sm">
+                            <div className="flex items-start justify-between gap-3">
+                                <div>
+                                    <p className="font-medium text-foreground">{item.display_name}</p>
+                                    {(item.profiles?.university || item.profiles?.level) ? (
+                                        <p className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                                            {[item.profiles?.university, item.profiles?.level].filter(Boolean).join(' • ')}
+                                        </p>
+                                    ) : null}
+                                </div>
+                                {renderRatingBadge(item.rating)}
+                            </div>
+
+                            <div className="mt-4 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                                <span>
+                                    {new Date(item.created_at).toLocaleDateString('en-US', {
+                                        month: 'short',
+                                        day: 'numeric',
+                                        year: 'numeric',
+                                    })}
+                                </span>
+                                <span className="rounded border border-border/50 bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                                    {item.category || 'General'}
+                                </span>
+                            </div>
+
+                            <p className="mt-4 text-sm leading-6 text-foreground/80">{item.comments}</p>
+
+                            {item.session_id ? (
+                                <div className="mt-4">
+                                    <Link
+                                        href={`/admin/chat/${item.session_id}?messageId=${item.message_id}&rating=${item.rating}`}
+                                        className="inline-flex items-center gap-1.5 rounded-md border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/15 hover:text-primary/80"
+                                    >
+                                        View Chat
+                                        <ArrowUpRight className="h-3 w-3" />
+                                    </Link>
+                                </div>
+                            ) : null}
+                        </article>
+                    ))
+                )}
+            </div>
+
+            <div className="hidden w-full overflow-hidden rounded-xl border border-border/50 bg-card shadow-sm md:block">
                 <div className="overflow-x-auto">
                     <table className="w-full text-sm text-left">
                         <thead className="text-xs text-muted-foreground uppercase bg-muted/40 border-b border-border/50">

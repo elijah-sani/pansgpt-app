@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Search, Users, GraduationCap, Crown, User } from 'lucide-react';
+import { Search, Users, GraduationCap, Crown, User, X } from 'lucide-react';
 import { api } from '@/lib/api';
 
 interface Student {
@@ -19,6 +19,7 @@ export default function StudentsPage() {
     const [students, setStudents] = useState<Student[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
+    const [showMobileSearch, setShowMobileSearch] = useState(false);
     const [filterUniversity, setFilterUniversity] = useState('all');
     const [filterLevel, setFilterLevel] = useState('all');
     const [filterTier, setFilterTier] = useState('all');
@@ -84,7 +85,7 @@ export default function StudentsPage() {
     const proCount = students.filter(s => s.subscription_tier === 'pro').length;
 
     return (
-        <div>
+        <div className="w-full max-w-5xl mx-auto md:pt-6 md:px-4">
             {/* Header */}
             <div className="flex justify-between items-start mb-8">
                 <div>
@@ -105,7 +106,8 @@ export default function StudentsPage() {
 
             <div className="flex flex-col lg:flex-row lg:items-center gap-3 mb-6">
                 {/* Search */}
-                <div className="flex items-center gap-2 flex-1 w-full lg:max-w-sm bg-card border border-border rounded-xl px-4 py-2.5 focus-within:border-primary/50 transition-colors">
+                {/* Desktop Search */}
+                <div className="hidden md:flex items-center gap-2 flex-1 w-full lg:max-w-sm bg-card border border-border rounded-xl px-4 py-2.5 focus-within:border-primary/50 transition-colors">
                     <Search className="w-4 h-4 text-muted-foreground shrink-0" />
                     <input
                         type="text"
@@ -114,6 +116,32 @@ export default function StudentsPage() {
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                     />
+                </div>
+
+                {/* Mobile Search Toggle */}
+                <div className="md:hidden flex-1 w-full">
+                    {!showMobileSearch ? (
+                        <button onClick={() => setShowMobileSearch(true)} className="flex items-center gap-2 text-sm text-muted-foreground bg-card border border-border rounded-xl px-4 py-2.5 w-full transition-colors hover:border-primary/50">
+                            <Search className="w-4 h-4 shrink-0" />
+                            <span>Search students...</span>
+                        </button>
+                    ) : (
+                        <div className="flex items-center gap-2 w-full bg-card border border-border rounded-xl px-4 py-2.5 focus-within:border-primary/50 transition-colors">
+                            <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+                            <input
+                                autoFocus
+                                type="text"
+                                placeholder="Search by name or level..."
+                                className="bg-transparent border-none outline-none text-sm w-full placeholder:text-muted-foreground/70 text-foreground"
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                onBlur={() => !searchQuery && setShowMobileSearch(false)}
+                            />
+                            <button onClick={() => { setSearchQuery(''); setShowMobileSearch(false); }} className="text-muted-foreground hover:text-foreground shrink-0">
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 {/* Filters  right side */}

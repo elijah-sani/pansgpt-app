@@ -134,7 +134,7 @@ export default function FacultyKnowledgeManager() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="w-full max-w-5xl mx-auto md:pt-6 md:px-4 space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold tracking-tight text-foreground">Faculty Knowledge Base</h2>

@@ -111,6 +111,7 @@ export default function AdminMaterialSubmissionsPage() {
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
+    const [showMobileSearch, setShowMobileSearch] = useState(false);
     const [statusFilter, setStatusFilter] = useState<'all' | MaterialStatus>('all');
     const [dialog, setDialog] = useState<ReviewDialogState>(null);
     const [detailsSubmission, setDetailsSubmission] = useState<DetailsDialogState>(null);
@@ -293,7 +294,7 @@ export default function AdminMaterialSubmissionsPage() {
     };
 
     return (
-        <div className="mx-auto max-w-7xl pb-12">
+        <div className="w-full max-w-5xl mx-auto md:pt-6 md:px-4 pb-12">
             <div className="space-y-6 md:grid md:grid-cols-12 md:gap-8 md:space-y-0">
                 <div className="space-y-6 md:col-span-10 md:col-start-2">
                     <header>
@@ -311,7 +312,8 @@ export default function AdminMaterialSubmissionsPage() {
 
                     <section className="space-y-4">
                         <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-                            <div className="flex flex-1 items-center gap-2 rounded-xl border border-border bg-background px-4 py-2.5 focus-within:border-primary/50">
+                            {/* Desktop Search */}
+                            <div className="hidden md:flex flex-1 items-center gap-2 rounded-xl border border-border bg-background px-4 py-2.5 focus-within:border-primary/50">
                                 <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
                                 <input
                                     type="text"
@@ -320,6 +322,32 @@ export default function AdminMaterialSubmissionsPage() {
                                     placeholder="Search topic, course, lecturer, university, or file..."
                                     className="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/70"
                                 />
+                            </div>
+
+                            {/* Mobile Search Toggle */}
+                            <div className="md:hidden flex-1 w-full">
+                                {!showMobileSearch ? (
+                                    <button onClick={() => setShowMobileSearch(true)} className="flex items-center gap-2 text-sm text-muted-foreground bg-card border border-border rounded-xl px-4 py-2.5 w-full transition-colors hover:border-primary/50">
+                                        <Search className="w-4 h-4 shrink-0" />
+                                        <span>Search submissions...</span>
+                                    </button>
+                                ) : (
+                                    <div className="flex items-center gap-2 w-full bg-card border border-border rounded-xl px-4 py-2.5 focus-within:border-primary/50 transition-colors">
+                                        <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+                                        <input
+                                            autoFocus
+                                            type="text"
+                                            placeholder="Search topic, course..."
+                                            className="bg-transparent border-none outline-none text-sm w-full placeholder:text-muted-foreground/70 text-foreground"
+                                            value={searchQuery}
+                                            onChange={(e) => setSearchQuery(e.target.value)}
+                                            onBlur={() => !searchQuery && setShowMobileSearch(false)}
+                                        />
+                                        <button onClick={() => { setSearchQuery(''); setShowMobileSearch(false); }} className="text-muted-foreground hover:text-foreground shrink-0">
+                                            <X className="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                )}
                             </div>
 
                             <div className="flex flex-wrap gap-2">

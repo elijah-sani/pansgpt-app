@@ -599,7 +599,7 @@ export default function SettingsPage() {
     );
 
     return (
-        <div className="md:max-w-7xl md:mx-auto pb-32 md:pb-12">
+        <div className="w-full max-w-5xl mx-auto pb-32 md:pb-12">
 
             {/* Header (Desktop Only Check) */}
             <div className="flex items-center justify-center md:justify-between mb-6 md:mb-8 relative">
