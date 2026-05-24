@@ -514,7 +514,10 @@ async def _build_streaming_response(
         emitted_graceful = False
         disconnected = False
         cancelled = False
-        parser = ThinkingStreamParser() if thinking_mode else None
+        # Always instantiate the parser — even in Fast mode it acts as a safety
+        # net to strip any <thought> / <think> blocks the model emits despite
+        # /no_think (models occasionally ignore the directive).
+        parser = ThinkingStreamParser()
 
         if saved_user_message_id is not None:
             yield f"data: {json.dumps({'user_message_id': saved_user_message_id})}\n\n"
@@ -540,14 +543,11 @@ async def _build_streaming_response(
 
                     delta = event.get("delta")
                     if delta:
-                        if parser:
-                            visible_chunk, thinking_chunk = parser.feed(delta)
-                        else:
-                            visible_chunk, thinking_chunk = delta, ""
+                        visible_chunk, thinking_chunk = parser.feed(delta)
                         if visible_chunk:
                             full_text += visible_chunk
                             yield f"data: {json.dumps({'delta': visible_chunk})}\n\n"
-                        if thinking_chunk:
+                        if thinking_chunk and thinking_mode:
                             yield f"data: {json.dumps({'thinking_delta': thinking_chunk})}\n\n"
         except asyncio.CancelledError:
             cancelled = True
@@ -578,9 +578,13 @@ async def _build_streaming_response(
                     yield f"data: {json.dumps({'delta': visible_rem})}\n\n"
                 if thinking_rem:
                     yield f"data: {json.dumps({'thinking_delta': thinking_rem})}\n\n"
-                yield f"data: {json.dumps({'thinking_done': True})}\n\n"
+                # Only fire thinking_done when the user requested Thinking mode.
+                # In Fast mode the parser runs silently — the frontend never
+                # receives a thinking_done event and shows no reasoning block.
+                if thinking_mode:
+                    yield f"data: {json.dumps({'thinking_done': True})}\n\n"
 
-            thinking_text_to_save = parser.get_full_thinking() if parser else ""
+            thinking_text_to_save = parser.get_full_thinking()
             text_to_save, _batch_thinking = strip_thinking_tokens(full_text)
             if not thinking_text_to_save and _batch_thinking:
                 thinking_text_to_save = _batch_thinking
@@ -1130,6 +1134,14 @@ Do not mention the limit in your response unless the user explicitly asks why we
 
         final_system_prompt += "\n\nIMPORTANT: Do NOT cite sources, lecturers, course codes, or page numbers inline in your response. Never write things like (Prof. X, PTE 411) or (Source: ...) in your answers. Sources are provided separately to the user."
 
+        # /no_think must be the very first token the model sees so Qwen3-family
+        # models skip their chain-of-thought.  Placing it in the system prompt
+        # keeps the user message and the saved DB record completely clean.
+        # It is intentionally added AFTER the system prompt is fully built so
+        # it always appears at position 0 of the content the LLM receives.
+        # NOTE: selected_model is not yet resolved at this point; we re-check
+        # inside the event_stream generator below where selected_model is set.
+
         messages = []
         all_images = request.images or []
         if len(all_images) > 4:
@@ -1226,17 +1238,14 @@ Do not mention the limit in your response unless the user explicitly asks why we
                 is_vision_mode = False
             yield {"status": "thinking"}
 
-            # Append /no_think for Qwen3 when thinking mode is off
+            # Inject /no_think at the START of the system prompt so Qwen3-family
+            # models skip chain-of-thought without touching the user message.
             if not request.thinking_mode and model_uses_thinking(selected_model):
-                if messages and messages[-1]["role"] == "user":
-                    last_content = messages[-1]["content"]
-                    if isinstance(last_content, str):
-                        messages[-1]["content"] = "/no_think " + last_content
-                    elif isinstance(last_content, list):
-                        for block in last_content:
-                            if block.get("type") == "text":
-                                block["text"] = "/no_think " + block["text"]
-                                break
+                # Mutate the already-appended system message in the messages list
+                for msg in messages:
+                    if msg["role"] == "system" and msg["content"] == final_system_prompt:
+                        msg["content"] = "/no_think\n" + msg["content"]
+                        break
 
             messages = _trim_messages_to_fit(messages, final_system_prompt)
 
