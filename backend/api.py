@@ -21,6 +21,9 @@ from dependencies import (
     prime_jwks_cache,
     get_current_user,
     get_current_user_role,
+    get_current_user_role_info,
+    get_current_global_admin,
+    get_admin_university_scope,
     get_lecturer_profile_for_user,
     require_admin_role,
     require_super_admin_role,
@@ -50,6 +53,10 @@ is_production = os.getenv("ENVIRONMENT", "development").lower() == "production"
 
 
 async def _resolve_profile_university_id(sb, profile_row: dict) -> Optional[str]:
+    explicit_university_id = (profile_row.get("university_id") or "").strip()
+    if explicit_university_id:
+        return explicit_university_id
+
     university_candidates = build_university_candidates(profile_row.get("university"))
     if not university_candidates:
         return None
@@ -69,6 +76,139 @@ async def _resolve_profile_university_id(sb, profile_row: dict) -> Optional[str]
         None,
     )
     return match.get("id") if match else None
+
+
+async def _resolve_university_name_by_id(sb, university_id: Optional[str]) -> Optional[str]:
+    normalized_university_id = (university_id or "").strip()
+    if not normalized_university_id:
+        return None
+
+    university_res = await _run_db(
+        lambda: sb.table("universities").select("name").eq("id", normalized_university_id).limit(1).execute(),
+        operation_name="resolve university name",
+    )
+    university_row = _first_row(university_res)
+    if not university_row:
+        return None
+    return (university_row.get("name") or "").strip() or None
+
+
+async def _resolve_profile_university_payload(
+    sb,
+    *,
+    university_id: Optional[str],
+    university_text: Optional[str],
+) -> dict:
+    normalized_university_id = (university_id or "").strip() or None
+    normalized_university_text = (university_text or "").strip() or None
+
+    if normalized_university_id:
+        university_res = await _run_db(
+            lambda: sb.table("universities")
+            .select("id,name,short_name,status")
+            .eq("id", normalized_university_id)
+            .limit(1)
+            .execute(),
+            operation_name="validate profile university_id",
+        )
+        university_row = _first_row(university_res)
+        if not university_row:
+            raise HTTPException(status_code=400, detail="Selected university was not found")
+
+        if (university_row.get("status") or "").strip().lower() != "active":
+            raise HTTPException(status_code=400, detail="Selected university is not active")
+
+        university_name = (university_row.get("name") or "").strip() or normalized_university_text
+        return {
+            "university_id": str(university_row.get("id")),
+            "university": university_name,
+            "university_name": university_name,
+        }
+
+    if not normalized_university_text:
+        return {
+            "university_id": None,
+            "university": None,
+            "university_name": None,
+        }
+
+    university_candidates = build_university_candidates(normalized_university_text)
+    if not university_candidates:
+        return {
+            "university_id": None,
+            "university": normalized_university_text,
+            "university_name": normalized_university_text,
+        }
+
+    university_res = await _run_db(
+        lambda: sb.table("universities").select("id,name,short_name,status").execute(),
+        operation_name="resolve profile university fallback",
+    )
+    candidate_set = set(university_candidates)
+    university_row = next(
+        (
+            row for row in (university_res.data or [])
+            if (row.get("status") or "").strip().lower() == "active"
+            and (
+                normalize_university_name(row.get("name")) in candidate_set
+                or normalize_university_name(row.get("short_name")) in candidate_set
+            )
+        ),
+        None,
+    )
+
+    if not university_row:
+        return {
+            "university_id": None,
+            "university": normalized_university_text,
+            "university_name": normalized_university_text,
+        }
+
+    university_name = (university_row.get("name") or "").strip() or normalized_university_text
+    return {
+        "university_id": str(university_row.get("id")),
+        "university": university_name,
+        "university_name": university_name,
+    }
+
+
+async def _hydrate_profile_university_fields(sb, profile: Optional[dict]) -> Optional[dict]:
+    if not profile:
+        return None
+
+    resolved_university_id = (profile.get("university_id") or "").strip() or None
+    if not resolved_university_id:
+        resolved_university_id = await _resolve_profile_university_id(sb, profile)
+
+    if resolved_university_id:
+        profile["university_id"] = resolved_university_id
+        resolved_university_name = await _resolve_university_name_by_id(sb, resolved_university_id)
+        profile["university_name"] = resolved_university_name or (profile.get("university") or "").strip() or None
+        if not (profile.get("university") or "").strip() and profile.get("university_name"):
+            profile["university"] = profile["university_name"]
+    else:
+        profile["university_name"] = (profile.get("university") or "").strip() or None
+
+    return profile
+
+
+async def _get_auth_user_metadata(user_id: str) -> dict:
+    if not supabase_service_client:
+        raise HTTPException(status_code=503, detail="Profile sync is temporarily unavailable")
+
+    try:
+        auth_response = await asyncio.to_thread(lambda: supabase_service_client.auth.admin.get_user_by_id(user_id))
+    except Exception as exc:
+        logger.error("Auth user lookup failed for profile sync user_id=%s: %s", user_id, exc)
+        raise HTTPException(status_code=500, detail="Unable to read account metadata")
+
+    user_obj = getattr(auth_response, "user", None) or auth_response
+    metadata = getattr(user_obj, "user_metadata", None)
+    if metadata is None and isinstance(user_obj, dict):
+        metadata = user_obj.get("user_metadata") or user_obj.get("raw_user_meta_data")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    return metadata
 
 
 def _level_tokens(value: str) -> set[str]:
@@ -106,13 +246,27 @@ def _document_matches_level(doc: dict, user_tokens: set[str]) -> bool:
     return bool(user_tokens.intersection(doc_tokens))
 
 
+def _is_student_visible_document(doc: dict) -> bool:
+    material_status = str(doc.get("material_status") or "active").strip().lower()
+    visibility = str(doc.get("visibility") or "visible").strip().lower()
+    approval_status = str(doc.get("approval_status") or "approved").strip().lower()
+    return (
+        material_status == "active"
+        and visibility == "visible"
+        and approval_status == "approved"
+    )
+
+
 async def _can_user_access_library_document(sb, current_user: User, db_record: dict) -> bool:
-    role = await get_current_user_role(current_user)
-    if role in {"admin", "super_admin"}:
+    role_info = await get_current_user_role_info(current_user)
+    if role_info.is_admin:
         return True
 
+    if not _is_student_visible_document(db_record):
+        return False
+
     profile_resp = await _run_db(
-        lambda: sb.table("profiles").select("level,university").eq("id", current_user.id).limit(1).execute(),
+        lambda: sb.table("profiles").select("level,university,university_id").eq("id", current_user.id).limit(1).execute(),
         operation_name="document access profile lookup",
         user_id=current_user.id,
     )
@@ -226,7 +380,13 @@ except Exception as e:
 # NOTE: Using supabase==2.0.3 for httpx compatibility
 logger.info("--- Supabase Initialization Debug ---")
 SUPABASE_URL = os.getenv("NEXT_PUBLIC_SUPABASE_URL") or os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or \
+               os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+if not os.getenv("SUPABASE_SERVICE_ROLE_KEY"):
+    logger.warning(
+        "[WARNING] SUPABASE_SERVICE_ROLE_KEY not set — "
+        "falling back to anon key. Service-role operations may fail."
+    )
 
 supabase_client = None
 supabase_service_client = None
@@ -285,6 +445,19 @@ app.include_router(lecturer_router)
 @limiter.limit("60/minute")
 def health_check(request: Request):
     return {"status": "ok", "service": "PansGPT Backend"}
+
+
+class UniversityUpsertRequest(BaseModel):
+    name: Optional[str] = None
+    short_name: Optional[str] = None
+    country: Optional[str] = "Nigeria"
+    state: Optional[str] = None
+    status: Optional[str] = "active"
+
+
+class UniversityAdminAssignmentRequest(BaseModel):
+    email: str
+    university_id: str
 
 
 def _db():
@@ -349,6 +522,51 @@ def _profile_with_display_name(profile):
     }
 
 
+def _auth_metadata_value(metadata: dict, *keys: str) -> Optional[str]:
+    for key in keys:
+        value = metadata.get(key)
+        if value is None:
+            continue
+        normalized = str(value).strip()
+        if normalized:
+            return normalized
+    return None
+
+
+def _normalize_university_payload(payload: dict) -> dict:
+    name = (payload.get("name") or "").strip()
+    short_name = (payload.get("short_name") or "").strip() or None
+    country = (payload.get("country") or "Nigeria").strip() or "Nigeria"
+    state = (payload.get("state") or "").strip() or None
+    status_value = (payload.get("status") or "active").strip().lower() or "active"
+
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    if status_value not in {"active", "inactive"}:
+        raise HTTPException(status_code=400, detail="status must be active or inactive")
+
+    return {
+        "name": name,
+        "short_name": short_name,
+        "country": country,
+        "state": state,
+        "status": status_value,
+    }
+
+
+def _apply_university_scope_to_query(query, scope: Optional[str], field: str = "university_id"):
+    if scope:
+        return query.eq(field, scope)
+    return query
+
+
+def _assert_record_matches_admin_scope(scope: Optional[str], record: Optional[dict], *, field: str = "university_id", resource_name: str = "record") -> None:
+    if not record:
+        raise HTTPException(status_code=404, detail=f"{resource_name.capitalize()} not found")
+    if scope and (record.get(field) or None) != scope:
+        raise HTTPException(status_code=403, detail=f"You do not have access to this {resource_name}")
+
+
 async def _get_user_role(current_user: User) -> Optional[str]:
     return await get_current_user_role(current_user)
 
@@ -365,21 +583,21 @@ async def get_me_bootstrap(current_user: User = Depends(get_current_user)):
 
     profile_res = await _run_db(
         lambda: sb.table("profiles")
-        .select("id,first_name,other_names,avatar_url,level,university,subscription_tier,has_seen_welcome")
+        .select("id,first_name,other_names,avatar_url,level,university,university_id,subscription_tier,has_seen_welcome")
         .eq("id", current_user.id)
         .limit(1)
         .execute(),
         operation_name="/me/bootstrap profile lookup",
         user_id=current_user.id,
     )
-    profile = _profile_with_display_name(_first_row(profile_res))
+    profile = await _hydrate_profile_university_fields(sb, _profile_with_display_name(_first_row(profile_res)))
 
     try:
-        role = await _get_user_role(current_user)
+        role_info = await get_current_user_role_info(current_user)
     except HTTPException as exc:
         if exc.status_code == 503:
             logger.warning("Bootstrap role lookup fell back to non-admin for user_id=%s", current_user.id)
-            role = None
+            role_info = None
         else:
             raise
 
@@ -447,12 +665,22 @@ async def get_me_bootstrap(current_user: User = Depends(get_current_user)):
             "email": lecturer_profile.email,
             "phone_number": lecturer_profile.phone_number,
         }
+    else:
+        profile_university_id = profile.get("university_id") if profile else None
+        if profile_university_id:
+            university_id = profile_university_id
+            university_name = await _resolve_university_name_by_id(sb, profile_university_id)
+        elif profile:
+            university_id = await _resolve_profile_university_id(sb, profile)
+            university_name = await _resolve_university_name_by_id(sb, university_id)
 
     return {
         "profile": profile,
-        "role": role,
-        "is_admin": role in {"admin", "super_admin"},
-        "is_super_admin": role == "super_admin",
+        "role": role_info.role if role_info else None,
+        "is_admin": bool(role_info.is_admin) if role_info else False,
+        "is_super_admin": bool(role_info.is_super_admin) if role_info else False,
+        "is_global_admin": bool(role_info.is_global_admin) if role_info else False,
+        "is_university_admin": bool(role_info.is_university_admin) if role_info else False,
         "is_lecturer": is_lecturer,
         "lecturer_status": lecturer_status,
         "lecturer_profile": lecturer_payload,
@@ -472,12 +700,12 @@ async def get_my_profile(current_user: User = Depends(get_current_user)):
 
     res = await _run_db(
         lambda: sb.table("profiles")
-        .select("id,first_name,other_names,avatar_url,level,university,subscription_tier,has_seen_welcome,updated_at")
+        .select("id,first_name,other_names,avatar_url,level,university,university_id,subscription_tier,has_seen_welcome,updated_at")
         .eq("id", current_user.id)
         .limit(1)
         .execute()
     )
-    return _profile_with_display_name(_first_row(res))
+    return await _hydrate_profile_university_fields(sb, _profile_with_display_name(_first_row(res)))
 
 
 @app.get("/me/restriction-status", dependencies=[Depends(verify_api_key)])
@@ -510,19 +738,102 @@ async def update_my_profile(payload: dict, current_user: User = Depends(get_curr
         "avatar_url",
         "level",
         "university",
+        "university_id",
         "subscription_tier",
         "has_seen_welcome",
     }
     update_data = {key: value for key, value in payload.items() if key in allowed_fields}
     update_data["id"] = current_user.id
 
-    if not update_data:
+    if "university_id" in payload or "university" in payload:
+        university_payload = await _resolve_profile_university_payload(
+            sb,
+            university_id=payload.get("university_id"),
+            university_text=payload.get("university"),
+        )
+        update_data["university_id"] = university_payload["university_id"]
+        update_data["university"] = university_payload["university"]
+
+    if len(update_data) == 1:
         raise HTTPException(status_code=400, detail="No valid profile fields provided")
+
+    if not supabase_service_client:
+        logger.error("[ERROR] Service role client unavailable for admin operation — skipping")
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
     res = await _run_db(
         lambda: sb.table("profiles").upsert(update_data).execute()
     )
-    return {"data": res.data[0] if res.data else update_data}
+    profile_row = res.data[0] if res.data else update_data
+    return {"data": await _hydrate_profile_university_fields(sb, _profile_with_display_name(profile_row))}
+
+
+@app.post("/me/profile/sync")
+async def sync_my_profile(current_user: User = Depends(get_current_user)):
+    sb = _db()
+    if not sb:
+        raise HTTPException(status_code=503, detail="Database not active")
+
+    metadata = await _get_auth_user_metadata(current_user.id)
+    existing_res = await _run_db(
+        lambda: sb.table("profiles")
+        .select("id,first_name,other_names,full_name,avatar_url,level,university,university_id,subscription_tier,has_seen_welcome,updated_at")
+        .eq("id", current_user.id)
+        .limit(1)
+        .execute(),
+        operation_name="/me/profile/sync existing profile lookup",
+        user_id=current_user.id,
+    )
+    existing_profile = _first_row(existing_res) or {}
+
+    first_name = _auth_metadata_value(metadata, "first_name")
+    other_names = _auth_metadata_value(metadata, "other_names")
+    full_name = _auth_metadata_value(metadata, "full_name")
+    university_text = _auth_metadata_value(metadata, "university")
+    university_id = _auth_metadata_value(metadata, "university_id")
+    level = _auth_metadata_value(metadata, "level")
+
+    resolved_university = await _resolve_profile_university_payload(
+        sb,
+        university_id=university_id,
+        university_text=university_text,
+    )
+
+    update_data = {
+        "id": current_user.id,
+        "first_name": first_name if first_name is not None else existing_profile.get("first_name"),
+        "other_names": other_names if other_names is not None else existing_profile.get("other_names"),
+        "full_name": full_name if full_name is not None else existing_profile.get("full_name"),
+        "level": level if level is not None else existing_profile.get("level"),
+        "university": resolved_university["university"] if university_id or university_text is not None else existing_profile.get("university"),
+        "university_id": resolved_university["university_id"] if university_id or university_text is not None else existing_profile.get("university_id"),
+        "avatar_url": existing_profile.get("avatar_url"),
+        "subscription_tier": existing_profile.get("subscription_tier") or "free",
+        "has_seen_welcome": existing_profile.get("has_seen_welcome") if existing_profile.get("has_seen_welcome") is not None else False,
+    }
+
+    if not update_data.get("full_name"):
+        composed_name = " ".join(
+            part for part in [
+                (update_data.get("first_name") or "").strip(),
+                (update_data.get("other_names") or "").strip(),
+            ]
+            if part
+        ).strip()
+        if composed_name:
+            update_data["full_name"] = composed_name
+
+    if not supabase_service_client:
+        logger.error("[ERROR] Service role client unavailable for admin operation — skipping")
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+
+    res = await _run_db(
+        lambda: sb.table("profiles").upsert(update_data).execute(),
+        operation_name="/me/profile/sync upsert",
+        user_id=current_user.id,
+    )
+    profile_row = res.data[0] if res.data else update_data
+    return {"data": await _hydrate_profile_university_fields(sb, _profile_with_display_name(profile_row))}
 
 
 @app.delete("/me/account")
@@ -553,22 +864,22 @@ async def get_web_search_usage(current_user: User = Depends(get_current_user)):
 
 
 @app.get("/admin/users")
-async def list_admin_users(current_user: User = Depends(get_current_user)):
-    await _require_admin(current_user)
+async def list_admin_users(current_user: User = Depends(get_current_global_admin)):
     sb = _db()
     if not sb:
         raise HTTPException(status_code=503, detail="Database not active")
 
     res = await _run_db(
-        lambda: sb.table("user_roles").select("*").order("created_at", desc=True).execute()
+        lambda: sb.table("user_roles")
+        .select("*, university:universities(id,name,short_name,status)")
+        .order("created_at", desc=True)
+        .execute()
     )
     return {"data": res.data or []}
 
 
 @app.post("/admin/users")
-async def create_admin_user(payload: dict, current_user: User = Depends(get_current_user)):
-    await require_super_admin_role(current_user)
-
+async def create_admin_user(payload: dict, current_user: User = Depends(get_current_global_admin)):
     sb = _db()
     if not sb:
         raise HTTPException(status_code=503, detail="Database not active")
@@ -586,6 +897,10 @@ async def create_admin_user(payload: dict, current_user: User = Depends(get_curr
     if _first_row(existing):
         raise HTTPException(status_code=409, detail="User already exists in admin list")
 
+    if not supabase_service_client:
+        logger.error("[ERROR] Service role client unavailable for admin operation — skipping")
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+
     res = await _run_db(
         lambda: sb.table("user_roles").insert({
             "email": email,
@@ -597,9 +912,7 @@ async def create_admin_user(payload: dict, current_user: User = Depends(get_curr
 
 
 @app.delete("/admin/users")
-async def delete_admin_user(target_email: str, current_user: User = Depends(get_current_user)):
-    await require_super_admin_role(current_user)
-
+async def delete_admin_user(target_email: str, current_user: User = Depends(get_current_global_admin)):
     sb = _db()
     if not sb:
         raise HTTPException(status_code=503, detail="Database not active")
@@ -610,10 +923,152 @@ async def delete_admin_user(target_email: str, current_user: User = Depends(get_
     if current_user.email and normalized_email == current_user.email.strip().lower():
         raise HTTPException(status_code=400, detail="You cannot remove yourself")
 
+    if not supabase_service_client:
+        logger.error("[ERROR] Service role client unavailable for admin operation — skipping")
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+
     await _run_db(
         lambda: sb.table("user_roles").delete().eq("email", normalized_email).execute()
     )
     return {"status": "success", "email": normalized_email}
+
+
+@app.get("/admin/universities")
+async def list_admin_universities(current_user: User = Depends(get_current_global_admin)):
+    sb = _db()
+    if not sb:
+        raise HTTPException(status_code=503, detail="Database not active")
+
+    res = await _run_db(
+        lambda: sb.table("universities").select("*").order("name", desc=False).execute()
+    )
+    return {"data": res.data or []}
+
+
+@app.post("/admin/universities")
+async def create_university(payload: UniversityUpsertRequest, current_user: User = Depends(get_current_global_admin)):
+    sb = _db()
+    if not sb:
+        raise HTTPException(status_code=503, detail="Database not active")
+
+    normalized_payload = _normalize_university_payload(payload.model_dump())
+    existing_res = await _run_db(
+        lambda: sb.table("universities").select("id").ilike("name", normalized_payload["name"]).limit(1).execute()
+    )
+    if _first_row(existing_res):
+        raise HTTPException(status_code=409, detail="University with this name already exists")
+
+    if not supabase_service_client:
+        logger.error("[ERROR] Service role client unavailable for admin operation — skipping")
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+
+    res = await _run_db(
+        lambda: sb.table("universities").insert(normalized_payload).execute()
+    )
+    return {"data": _first_row(res)}
+
+
+@app.patch("/admin/universities/{university_id}")
+async def update_university(
+    university_id: str,
+    payload: UniversityUpsertRequest,
+    current_user: User = Depends(get_current_global_admin),
+):
+    sb = _db()
+    if not sb:
+        raise HTTPException(status_code=503, detail="Database not active")
+
+    existing_res = await _run_db(
+        lambda: sb.table("universities").select("*").eq("id", university_id).limit(1).execute()
+    )
+    existing_row = _first_row(existing_res)
+    if not existing_row:
+        raise HTTPException(status_code=404, detail="University not found")
+
+    merged_payload = {
+        "name": payload.name if payload.name is not None else existing_row.get("name"),
+        "short_name": payload.short_name if payload.short_name is not None else existing_row.get("short_name"),
+        "country": payload.country if payload.country is not None else existing_row.get("country"),
+        "state": payload.state if payload.state is not None else existing_row.get("state"),
+        "status": payload.status if payload.status is not None else existing_row.get("status"),
+    }
+    normalized_payload = _normalize_university_payload(merged_payload)
+
+    name_conflict_res = await _run_db(
+        lambda: sb.table("universities")
+        .select("id")
+        .ilike("name", normalized_payload["name"])
+        .neq("id", university_id)
+        .limit(1)
+        .execute()
+    )
+    if _first_row(name_conflict_res):
+        raise HTTPException(status_code=409, detail="Another university with this name already exists")
+
+    if not supabase_service_client:
+        logger.error("[ERROR] Service role client unavailable for admin operation — skipping")
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+
+    res = await _run_db(
+        lambda: sb.table("universities").update(normalized_payload).eq("id", university_id).execute()
+    )
+    return {"data": _first_row(res)}
+
+
+@app.post("/admin/users/university-admin")
+async def assign_university_admin(
+    payload: UniversityAdminAssignmentRequest,
+    current_user: User = Depends(get_current_global_admin),
+):
+    sb = _db()
+    if not sb:
+        raise HTTPException(status_code=503, detail="Database not active")
+
+    email = (payload.email or "").strip().lower()
+    university_id = (payload.university_id or "").strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="email is required")
+    if not university_id:
+        raise HTTPException(status_code=400, detail="university_id is required")
+
+    university_res = await _run_db(
+        lambda: sb.table("universities").select("id,name,status").eq("id", university_id).limit(1).execute()
+    )
+    university_row = _first_row(university_res)
+    if not university_row:
+        raise HTTPException(status_code=404, detail="University not found")
+
+    existing_res = await _run_db(
+        lambda: sb.table("user_roles").select("*").eq("email", email).limit(1).execute()
+    )
+    existing_row = _first_row(existing_res)
+    existing_role = ((existing_row or {}).get("role") or "").strip().lower()
+    if existing_role in {"super_admin", "global_admin"}:
+        raise HTTPException(status_code=400, detail="Global admins cannot be reassigned with this endpoint")
+    payload_data = {
+        "email": email,
+        "role": "university_admin",
+        "is_admin": True,
+        "university_id": university_id,
+    }
+
+    if not supabase_service_client:
+        logger.error("[ERROR] Service role client unavailable for admin operation — skipping")
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+
+    if existing_row:
+        res = await _run_db(
+            lambda: sb.table("user_roles")
+            .update(payload_data)
+            .eq("id", existing_row["id"])
+            .execute()
+        )
+    else:
+        res = await _run_db(
+            lambda: sb.table("user_roles").insert(payload_data).execute()
+        )
+
+    return {"data": _first_row(res)}
 
 
 @app.get("/admin/students")
@@ -623,12 +1078,11 @@ async def list_students(current_user: User = Depends(get_current_user)):
     if not sb:
         raise HTTPException(status_code=503, detail="Database not active")
 
-    res = await _run_db(
-        lambda: sb.table("profiles")
-        .select("id,first_name,other_names,level,university,subscription_tier,updated_at")
-        .order("updated_at", desc=True)
-        .execute()
-    )
+    admin_scope = await get_admin_university_scope(current_user)
+
+    query = sb.table("profiles").select("id,first_name,other_names,level,university,university_id,subscription_tier,updated_at")
+    query = _apply_university_scope_to_query(query, admin_scope)
+    res = await _run_db(lambda: query.order("updated_at", desc=True).execute())
     return {"data": res.data or []}
 
 
@@ -639,10 +1093,22 @@ async def update_student_profile(student_id: str, payload: dict, current_user: U
     if not sb:
         raise HTTPException(status_code=503, detail="Database not active")
 
+    admin_scope = await get_admin_university_scope(current_user)
+
     allowed_fields = {"subscription_tier", "level", "university", "first_name", "other_names", "avatar_url"}
     update_data = {key: value for key, value in payload.items() if key in allowed_fields}
     if not update_data:
         raise HTTPException(status_code=400, detail="No valid student fields provided")
+
+    existing_res = await _run_db(
+        lambda: sb.table("profiles").select("id,university_id").eq("id", student_id).limit(1).execute()
+    )
+    existing_row = _first_row(existing_res)
+    _assert_record_matches_admin_scope(admin_scope, existing_row, resource_name="student")
+
+    if not supabase_service_client:
+        logger.error("[ERROR] Service role client unavailable for admin operation — skipping")
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
     res = await _run_db(
         lambda: sb.table("profiles").update(update_data).eq("id", student_id).execute()
@@ -657,8 +1123,25 @@ async def get_admin_dashboard(current_user: User = Depends(get_current_user)):
     if not sb:
         raise HTTPException(status_code=503, detail="Database not active")
 
-    users_res = await _run_db(lambda: sb.table("user_roles").select("email,created_at", count="exact").order("created_at", desc=True).limit(5).execute())
-    docs_res = await _run_db(lambda: sb.table("pans_library").select("id,file_size,created_at,title,uploaded_by_email").order("created_at", desc=True).execute())
+    admin_scope = await get_admin_university_scope(current_user)
+
+    if admin_scope is None:
+        users_res = await _run_db(lambda: sb.table("user_roles").select("email,created_at", count="exact").order("created_at", desc=True).limit(5).execute())
+        recent_users = users_res.data or []
+        user_count = users_res.count or 0
+    else:
+        scoped_profiles_res = await _run_db(
+            lambda: sb.table("profiles")
+            .select("id", count="exact")
+            .eq("university_id", admin_scope)
+            .execute()
+        )
+        user_count = scoped_profiles_res.count or 0
+        recent_users = []
+
+    docs_query = sb.table("pans_library").select("id,file_size,created_at,title,uploaded_by_email").order("created_at", desc=True)
+    docs_query = _apply_university_scope_to_query(docs_query, admin_scope)
+    docs_res = await _run_db(lambda: docs_query.execute())
     settings_res = await _run_db(lambda: sb.table("system_settings").select("maintenance_mode,total_api_calls").eq("id", 1).limit(1).execute())
 
     docs = docs_res.data or []
@@ -667,14 +1150,14 @@ async def get_admin_dashboard(current_user: User = Depends(get_current_user)):
 
     return {
         "stats": {
-            "userCount": users_res.count or 0,
+            "userCount": user_count,
             "docCount": len(docs),
             "storageUsed": f"{(total_bytes / (1024 * 1024 * 1024)):.2f}",
             "storagePercentage": storage_percentage,
             "aiStatus": "Maintenance" if ((_first_row(settings_res) or {}).get("maintenance_mode")) else "Optimal",
             "apiCalls": str(((_first_row(settings_res) or {}).get("total_api_calls")) or 0),
         },
-        "recentUsers": users_res.data or [],
+        "recentUsers": recent_users,
         "recentDocs": docs[:5],
     }
 
@@ -685,6 +1168,8 @@ async def get_admin_chat_session(session_id: str, current_user: User = Depends(g
     sb = _db()
     if not sb:
         raise HTTPException(status_code=503, detail="Database not active")
+
+    admin_scope = await get_admin_university_scope(current_user)
 
     session_res = await _run_db(
         lambda: sb.table("chat_sessions").select("id,title,created_at,user_id").eq("id", session_id).limit(1).execute()
@@ -698,12 +1183,15 @@ async def get_admin_chat_session(session_id: str, current_user: User = Depends(g
     if user_id:
         profile_res = await _run_db(
             lambda: sb.table("profiles")
-            .select("first_name,other_names,university,level")
+            .select("first_name,other_names,university,university_id,level")
             .eq("id", user_id)
             .limit(1)
             .execute()
         )
         profile = _first_row(profile_res)
+        _assert_record_matches_admin_scope(admin_scope, profile, resource_name="chat session")
+    elif admin_scope is not None:
+        raise HTTPException(status_code=403, detail="You do not have access to this chat session")
 
     messages_res = await _run_db(
         lambda: sb.table("chat_messages").select("*").eq("session_id", session_id).order("created_at", desc=False).execute()
@@ -768,17 +1256,17 @@ async def list_documents(level: Optional[str] = None, current_user: User = Depen
 
     try:
         try:
-            role = await get_current_user_role(current_user)
+            role_info = await get_current_user_role_info(current_user)
         except HTTPException as exc:
             if exc.status_code == 503:
                 logger.warning("Documents role lookup fell back to non-admin for user_id=%s", current_user.id)
-                role = None
+                role_info = None
             else:
                 raise
 
         # 1. Fetch the user's academic level from the profiles table
         profile_resp = await _run_db(
-            lambda: sb.table("profiles").select("level,university").eq("id", current_user.id).limit(1).execute(),
+            lambda: sb.table("profiles").select("level,university,university_id").eq("id", current_user.id).limit(1).execute(),
             operation_name="/documents profile lookup",
             user_id=current_user.id,
         )
@@ -800,13 +1288,15 @@ async def list_documents(level: Optional[str] = None, current_user: User = Depen
         )
         all_docs = response.data or []
 
-        if role in {"admin", "super_admin"}:
+        if role_info and role_info.is_admin:
             return all_docs
 
         # 3. Filter: return docs explicitly assigned to the user's level.
         user_tokens = _level_tokens(user_level)
         filtered_docs = []
         for doc in all_docs:
+            if not _is_student_visible_document(doc):
+                continue
             document_university_id = doc.get("university_id")
             if document_university_id and document_university_id != user_university_id:
                 continue
@@ -850,8 +1340,8 @@ async def get_document_metadata(file_id: str, current_user: User = Depends(get_c
                     "size": db_record.get('file_size'),
                     "drive_file_id": db_record.get('drive_file_id')
                 }
-            role = await get_current_user_role(current_user)
-            if role not in {"admin", "super_admin"}:
+            role_info = await get_current_user_role_info(current_user)
+            if not role_info.is_admin:
                 raise HTTPException(status_code=404, detail="Document not found")
         except Exception as e:
             if isinstance(e, HTTPException):
@@ -890,8 +1380,8 @@ async def stream_document(file_id: str, size: Optional[str] = None, current_user
             if not await _can_user_access_library_document(sb, current_user, rows[0]):
                 raise HTTPException(status_code=403, detail="You do not have access to this document")
         else:
-            role = await get_current_user_role(current_user)
-            if role not in {"admin", "super_admin"}:
+            role_info = await get_current_user_role_info(current_user)
+            if not role_info.is_admin:
                 raise HTTPException(status_code=404, detail="Document not found")
 
     file_size = size
