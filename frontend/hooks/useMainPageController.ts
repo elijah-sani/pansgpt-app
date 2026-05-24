@@ -73,6 +73,9 @@ export function useMainPageController() {
   // Message queue: holds messages typed while a response is in-flight
   const [messageQueue, setMessageQueue] = useState<Array<{ text: string; attachments: string[] }>>([]);
   const messageQueueRef = useRef<Array<{ text: string; attachments: string[] }>>([]);
+  const [thinkingMode, setThinkingMode] = useState(false);
+  const [thinkingText, setThinkingText] = useState('');
+  const [isThinking, setIsThinking] = useState(false);
 
   const {
     sessions,
@@ -389,6 +392,15 @@ export function useMainPageController() {
 
         if (typeof parsed?.delta === 'string' && parsed.delta.length > 0) {
           updateUIWithChunk(parsed.delta);
+        }
+
+        if (typeof parsed?.thinking_delta === 'string' && parsed.thinking_delta.length > 0) {
+          setThinkingText((prev) => prev + parsed.thinking_delta);
+          setIsThinking(true);
+        }
+
+        if (parsed?.thinking_done === true) {
+          setIsThinking(false);
         }
 
         if (parsed?.message_id) {
@@ -776,6 +788,7 @@ export function useMainPageController() {
           session_id: currentSessionId,
           is_retry: isRetry,
           web_search: isWebSearchEnabled,
+          thinking_mode: thinkingMode,
         };
 
         const response = await api.fetch('/chat', {
@@ -1331,6 +1344,10 @@ export function useMainPageController() {
     messageQueue,
     queuedMessageCount: messageQueue.length,
     isSyncingBackend,
+    thinkingMode,
+    setThinkingMode,
+    thinkingText,
+    isThinking,
   };
 }
 

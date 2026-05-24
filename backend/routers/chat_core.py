@@ -61,7 +61,12 @@ from .shared import (
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from services.web_search import search_web
-from utils.thinking_token_utils import strip_thinking_tokens
+from utils.thinking_token_utils import (
+    strip_thinking_tokens,
+    ThinkingStreamParser,
+    model_uses_thinking,
+)
+
 from .sanitize import sanitize_text, CHAT_MAX, TITLE_MAX
 import random
 from restrictions import build_restriction_block_payload, get_applicable_user_restriction
@@ -497,6 +502,7 @@ async def _build_streaming_response(
     saved_user_message_id: Optional[str] = None,
     citations: Optional[list] = None,
     user_id: Optional[str] = None,
+    thinking_mode: bool = True,
 ) -> StreamingResponse:
     """
     Stream assistant deltas via SSE and persist full assistant response to DB after completion.
@@ -508,6 +514,7 @@ async def _build_streaming_response(
         emitted_graceful = False
         disconnected = False
         cancelled = False
+        parser = ThinkingStreamParser() if thinking_mode else None
 
         if saved_user_message_id is not None:
             yield f"data: {json.dumps({'user_message_id': saved_user_message_id})}\n\n"
@@ -533,8 +540,15 @@ async def _build_streaming_response(
 
                     delta = event.get("delta")
                     if delta:
-                        full_text += delta
-                        yield f"data: {json.dumps({'delta': delta})}\n\n"
+                        if parser:
+                            visible_chunk, thinking_chunk = parser.feed(delta)
+                        else:
+                            visible_chunk, thinking_chunk = delta, ""
+                        if visible_chunk:
+                            full_text += visible_chunk
+                            yield f"data: {json.dumps({'delta': visible_chunk})}\n\n"
+                        if thinking_chunk:
+                            yield f"data: {json.dumps({'thinking_delta': thinking_chunk})}\n\n"
         except asyncio.CancelledError:
             cancelled = True
             logger.info("Stream task cancelled; persisting partial assistant response.")
@@ -556,7 +570,20 @@ async def _build_streaming_response(
                 full_text = GRACEFUL_ASSISTANT_ERROR_PAYLOAD["content"]
                 yield f"data: {json.dumps({'delta': full_text})}\n\n"
 
-            text_to_save = strip_thinking_tokens(full_text)
+            # Flush any remaining buffered partial tag from the stream parser
+            if parser:
+                visible_rem, thinking_rem = parser.flush()
+                if visible_rem:
+                    full_text += visible_rem
+                    yield f"data: {json.dumps({'delta': visible_rem})}\n\n"
+                if thinking_rem:
+                    yield f"data: {json.dumps({'thinking_delta': thinking_rem})}\n\n"
+                yield f"data: {json.dumps({'thinking_done': True})}\n\n"
+
+            thinking_text_to_save = parser.get_full_thinking() if parser else ""
+            text_to_save, _batch_thinking = strip_thinking_tokens(full_text)
+            if not thinking_text_to_save and _batch_thinking:
+                thinking_text_to_save = _batch_thinking
             if disconnected or cancelled:
                 if text_to_save.strip():
                     if STOPPED_ASSISTANT_NOTE not in text_to_save:
@@ -572,6 +599,7 @@ async def _build_streaming_response(
                             session_id=session_id,
                             content=text_to_save,
                             citations=citations,
+                            thinking_text=thinking_text_to_save,
                         )
                         save_failed = False
                         break
@@ -858,8 +886,8 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
         return_exceptions=False,
     )
     faculty_info, timetable_info, recent_summaries = await asyncio.gather(
-        get_cached_faculty_knowledge(student_level),
-        get_cached_student_timetable(student_level),
+        get_cached_faculty_knowledge(student_level, current_user),
+        get_cached_student_timetable(student_level, current_user),
         _get_recent_session_summaries(current_user.id, request.session_id),
     )
 
@@ -993,6 +1021,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                     rag_query,
                     request.document_id,
                     None if student_level == "Unknown" else student_level,
+                    current_user=current_user,
                 )
             else:
                 logger.info(f"Global RAG enabled for user level: {student_level}")
@@ -1000,6 +1029,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                     rag_query,
                     document_id=None,
                     user_level=None if student_level == "Unknown" else student_level,
+                    current_user=current_user,
                 )
         citations.clear()
         citations.extend(retrieved_citations)
@@ -1196,7 +1226,20 @@ Do not mention the limit in your response unless the user explicitly asks why we
                 is_vision_mode = False
             yield {"status": "thinking"}
 
+            # Append /no_think for Qwen3 when thinking mode is off
+            if not request.thinking_mode and model_uses_thinking(selected_model):
+                if messages and messages[-1]["role"] == "user":
+                    last_content = messages[-1]["content"]
+                    if isinstance(last_content, str):
+                        messages[-1]["content"] = "/no_think " + last_content
+                    elif isinstance(last_content, list):
+                        for block in last_content:
+                            if block.get("type") == "text":
+                                block["text"] = "/no_think " + block["text"]
+                                break
+
             messages = _trim_messages_to_fit(messages, final_system_prompt)
+
             messages = merge_system_into_user(messages)
 
             completion_stream = llm_engine.generate_dual_cloud_stream(
@@ -1219,6 +1262,7 @@ Do not mention the limit in your response unless the user explicitly asks why we
         str(saved_user_message_id) if saved_user_message_id is not None else None,
         citations=citations,
         user_id=current_user.id,
+        thinking_mode=request.thinking_mode,
     )
 
 # --- Save Partial (Stopped) Response ---
@@ -1620,6 +1664,7 @@ async def edit_message(
                     user_question=rag_query,
                     document_id=None,
                     user_level=None if student_level == "Unknown" else student_level,
+                    current_user=current_user,
                 )
             citations.clear()
             citations.extend(retrieved_citations)
@@ -1711,6 +1756,7 @@ Answer the student's question prioritizing your general knowledge, but tailor yo
             str(new_msg_id) if new_msg_id else None,
             citations=citations,
             user_id=current_user.id,
+            thinking_mode=True,
         )
 
     except HTTPException:
@@ -1775,8 +1821,8 @@ async def regenerate_response(
                 temperature = float(cached_config["temperature"])
 
         student_profile_text, student_level = await _build_student_profile_text(current_user)
-        faculty_info = await get_cached_faculty_knowledge(student_level)
-        timetable_info = await get_cached_student_timetable(student_level)
+        faculty_info = await get_cached_faculty_knowledge(student_level, current_user)
+        timetable_info = await get_cached_student_timetable(student_level, current_user)
         recent_summaries = await _get_recent_session_summaries(current_user.id, session_id)
 
         user_text = last_user_msg['content']
@@ -1795,6 +1841,7 @@ async def regenerate_response(
                     user_text,
                     document_id=None,
                     user_level=None if student_level == "Unknown" else student_level,
+                    current_user=current_user,
                 )
             citations.clear()
             citations.extend(retrieved_citations)
@@ -1904,6 +1951,7 @@ TIMETABLE PROTOCOL: You possess the student's exact weekly class schedule under 
             session_id,
             citations=citations,
             user_id=current_user.id,
+            thinking_mode=True,
         )
 
     except HTTPException:

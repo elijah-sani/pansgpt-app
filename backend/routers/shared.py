@@ -27,6 +27,7 @@ from dependencies import (
     require_super_admin_role,
     User,
 )
+from restrictions import build_university_candidates, normalize_university_name
 
 logger = logging.getLogger("PansGPT")
 RAG_NETWORK_TIMEOUT_MESSAGE = (
@@ -214,6 +215,7 @@ _settings_cache = TTLCache(maxsize=1, ttl=300)
 _faculty_cache = TTLCache(maxsize=10, ttl=300)
 _timetable_cache = TTLCache(maxsize=10, ttl=300)
 _profile_cache = TTLCache(maxsize=100, ttl=300)
+_student_scope_cache = TTLCache(maxsize=100, ttl=300)
 _drive_metadata_cache = TTLCache(maxsize=200, ttl=7200)
 
 def invalidate_settings_cache() -> None:
@@ -249,12 +251,177 @@ async def get_cached_settings():
     
     return None
 
-async def get_cached_faculty_knowledge(level: str) -> str:
+
+def _normalize_optional_text(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
+
+
+def _level_candidates(level: str) -> set[str]:
+    raw = (level or "").strip()
+    if not raw:
+        return set()
+    candidates = {raw, raw.lower()}
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if digits:
+        candidates.update({digits, f"{digits}lvl", f"{digits}l", f"{digits} level"})
+    return {c.strip().lower() for c in candidates if c.strip()}
+
+
+def _doc_matches_level(target_levels, user_level: str) -> bool:
+    user_tokens = _level_candidates(user_level)
+    if not user_tokens:
+        return False
+
+    if isinstance(target_levels, str):
+        levels = [target_levels]
+    elif isinstance(target_levels, list):
+        levels = [str(item) for item in target_levels]
+    else:
+        levels = []
+
+    if not levels:
+        return False
+
+    doc_tokens = set()
+    for lvl in levels:
+        token = str(lvl or "").strip().lower()
+        if not token:
+            continue
+        doc_tokens.add(token)
+        digits = "".join(ch for ch in token if ch.isdigit())
+        if digits:
+            doc_tokens.update({digits, f"{digits}lvl", f"{digits}l", f"{digits} level"})
+
+    return bool(user_tokens.intersection(doc_tokens))
+
+
+def _is_ai_retrievable_document(document_row: Optional[dict]) -> bool:
+    if not document_row:
+        return False
+    embedding_status = str(document_row.get("embedding_status") or "").strip().lower()
+    material_status = str(document_row.get("material_status") or "").strip().lower()
+    visibility = str(document_row.get("visibility") or "").strip().lower()
+    approval_status = str(document_row.get("approval_status") or "").strip().lower()
+    return (
+        embedding_status == "completed"
+        and material_status == "active"
+        and visibility == "visible"
+        and approval_status == "approved"
+    )
+
+
+async def _resolve_active_university_by_text(sb, university_text: Optional[str]) -> Optional[dict]:
+    candidates = build_university_candidates(university_text)
+    if not candidates:
+        return None
+
+    res = await _execute_with_retry(
+        lambda: sb.table("universities").select("id,name,short_name,status").eq("status", "active").execute(),
+        "Resolve active university by text",
+    )
+    candidate_set = set(candidates)
+    matches = [
+        row for row in (res.data or [])
+        if normalize_university_name(row.get("name")) in candidate_set
+        or normalize_university_name(row.get("short_name")) in candidate_set
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        logger.warning("Ambiguous university text match for profile university='%s'", university_text)
+    return None
+
+
+async def resolve_student_university_context(current_user: User, *, persist_resolution: bool = True) -> dict:
+    cache_key = current_user.id
+    if cache_key in _student_scope_cache:
+        return _student_scope_cache[cache_key]
+
+    sb = supabase_service_client or supabase_client
+    if not sb:
+        return {
+            "profile": None,
+            "university_id": None,
+            "university_name": None,
+            "level": "",
+        }
+
+    profile_res = await _execute_with_retry(
+        lambda: sb.table("profiles")
+        .select("id,first_name,other_names,level,university,university_id")
+        .eq("id", current_user.id)
+        .limit(1)
+        .execute(),
+        "Fetch student university context",
+    )
+    profile = (profile_res.data or [None])[0] or {}
+    explicit_university_id = _normalize_optional_text(profile.get("university_id"))
+    university_name = _normalize_optional_text(profile.get("university"))
+    resolved_university_id = explicit_university_id
+
+    if explicit_university_id:
+        university_res = await _execute_with_retry(
+            lambda: sb.table("universities")
+            .select("id,name,status")
+            .eq("id", explicit_university_id)
+            .limit(1)
+            .execute(),
+            "Validate student university_id",
+        )
+        university_row = (university_res.data or [None])[0]
+        if university_row and (university_row.get("status") or "").strip().lower() == "active":
+            university_name = _normalize_optional_text(university_row.get("name")) or university_name
+        else:
+            logger.warning("Student user_id=%s has missing or inactive university_id=%s", current_user.id, explicit_university_id)
+            resolved_university_id = None
+    elif university_name:
+        matched_university = await _resolve_active_university_by_text(sb, university_name)
+        if matched_university:
+            resolved_university_id = _normalize_optional_text(matched_university.get("id"))
+            university_name = _normalize_optional_text(matched_university.get("name")) or university_name
+            if persist_resolution and resolved_university_id:
+                try:
+                    await _execute_with_retry(
+                        lambda: sb.table("profiles")
+                        .update({"university_id": resolved_university_id, "university": university_name})
+                        .eq("id", current_user.id)
+                        .execute(),
+                        "Persist resolved student university_id",
+                    )
+                    profile["university_id"] = resolved_university_id
+                    profile["university"] = university_name
+                except Exception as exc:
+                    logger.warning("Could not persist resolved university_id for user_id=%s: %s", current_user.id, exc)
+        else:
+            logger.info("Student user_id=%s has no safely resolvable university_id", current_user.id)
+
+    result = {
+        "profile": profile or None,
+        "university_id": resolved_university_id,
+        "university_name": university_name,
+        "level": _normalize_optional_text(profile.get("level")) or "",
+    }
+    _student_scope_cache[cache_key] = result
+    return result
+
+async def get_cached_faculty_knowledge(level: str, current_user: Optional[User] = None) -> str:
     """
-    Fetch faculty knowledge for a specific level plus General knowledge with 5-minute cache.
+    Fetch faculty knowledge for a specific level and university with 5-minute cache.
     """
     normalized_level = (level or "Unknown").strip() or "Unknown"
-    cache_key = normalized_level.lower()
+    if current_user is None:
+        return ""
+
+    student_context = await resolve_student_university_context(current_user)
+    university_id = student_context.get("university_id")
+    if not university_id:
+        logger.info("Skipping faculty knowledge injection for user_id=%s because university_id is missing", current_user.id)
+        return ""
+
+    cache_key = f"{university_id}:{normalized_level.lower()}"
     if cache_key in _faculty_cache:
         return _faculty_cache[cache_key]
 
@@ -263,54 +430,49 @@ async def get_cached_faculty_knowledge(level: str) -> str:
         return ""
 
     try:
-        # Fetch all rows to handle matching in Python
         res = await _execute_with_retry(
-            lambda: sb.table("faculty_knowledge").select("id,level,knowledge_text").execute(),
-            "Fetch faculty knowledge",
+            lambda: sb.table("faculty_knowledge")
+            .select("id,level,knowledge_text")
+            .eq("university_id", university_id)
+            .execute(),
+            "Fetch university-scoped faculty knowledge",
         )
         rows = res.data or []
-        
-        # Build a dictionary mapping both raw strings and pure digits
+
         rows_by_level = {}
         for row in rows:
             lvl = (row.get("level") or "").strip().lower()
             if lvl:
                 rows_by_level[lvl] = row
-                # Extract just the digits (e.g., "400l" -> "400")
                 digits = "".join(filter(str.isdigit, lvl))
                 if digits:
                     rows_by_level[digits] = row
 
-        sections: list[str] = []
-        
-        # 1. Always append General knowledge if it exists
-        general_row = rows_by_level.get("general")
-        if general_row and (general_row.get("knowledge_text") or "").strip():
-            sections.append(f"General:\n{general_row.get('knowledge_text').strip()}")
+        user_lvl_raw = normalized_level.lower()
+        user_lvl_digits = "".join(filter(str.isdigit, user_lvl_raw))
+        level_row = rows_by_level.get(user_lvl_raw)
+        if not level_row and user_lvl_digits:
+            level_row = rows_by_level.get(user_lvl_digits)
 
-        # 2. Append the specific student level if it matches
-        if normalized_level.lower() != "general":
-            user_lvl_raw = normalized_level.lower()
-            user_lvl_digits = "".join(filter(str.isdigit, user_lvl_raw))
-            
-            # Try exact match first, then fallback to digit match ("400lvl" matches "400")
-            level_row = rows_by_level.get(user_lvl_raw)
-            if not level_row and user_lvl_digits:
-                level_row = rows_by_level.get(user_lvl_digits)
-                
-            if level_row and (level_row.get("knowledge_text") or "").strip():
-                sections.append(f"{normalized_level}:\n{level_row.get('knowledge_text').strip()}")
-
-        combined = "\n\n".join(sections).strip()
+        combined = (level_row.get("knowledge_text") or "").strip() if level_row else ""
         _faculty_cache[cache_key] = combined
         return combined
     except Exception as e:
-        logger.warning(f"Could not fetch faculty knowledge for level '{normalized_level}': {e}")
+        logger.warning(f"Could not fetch faculty knowledge for university_id='{university_id}' level '{normalized_level}': {e}")
         return ""
 
-async def get_cached_student_timetable(level: str) -> str:
+async def get_cached_student_timetable(level: str, current_user: Optional[User] = None) -> str:
     normalized_level = (level or "Unknown").strip() or "Unknown"
-    cache_key = normalized_level.lower()
+    if current_user is None:
+        return ""
+
+    student_context = await resolve_student_university_context(current_user)
+    university_id = student_context.get("university_id")
+    if not university_id:
+        logger.info("Skipping timetable injection for user_id=%s because university_id is missing", current_user.id)
+        return ""
+
+    cache_key = f"{university_id}:{normalized_level.lower()}"
     if cache_key in _timetable_cache:
         return _timetable_cache[cache_key]
 
@@ -325,12 +487,17 @@ async def get_cached_student_timetable(level: str) -> str:
 
         # Fetch all classes for this level
         res = await _execute_with_retry(
-            lambda: sb.table("timetables").select("*").ilike("level", f"%{user_lvl_digits}%").order("start_time").execute(),
-            "Fetch student timetable for LLM",
+            lambda: sb.table("timetables")
+            .select("*")
+            .eq("university_id", university_id)
+            .ilike("level", f"%{user_lvl_digits}%")
+            .order("start_time")
+            .execute(),
+            "Fetch university-scoped student timetable for LLM",
         )
         rows = res.data or []
         if not rows:
-            return "No timetable configured for this level yet."
+            return ""
 
         # Group the classes by Day of the week
         schedule = {"Monday": [], "Tuesday": [], "Wednesday": [], "Thursday": [], "Friday": [], "Saturday": [], "Sunday": []}
@@ -356,8 +523,8 @@ async def get_cached_student_timetable(level: str) -> str:
         return combined
 
     except Exception as e:
-        logger.warning(f"Could not fetch timetable for LLM (level '{normalized_level}'): {e}")
-        return "Timetable data temporarily unavailable."
+        logger.warning(f"Could not fetch timetable for LLM (university_id '{university_id}', level '{normalized_level}'): {e}")
+        return ""
 
 # --- Models ---
 class Message(BaseModel):
@@ -376,6 +543,7 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None # For history persistence
     is_retry: bool = False  # If True, skip saving user message (already in DB from failed attempt)
     web_search: bool = False  # If True, augment response with live Tavily web search results
+    thinking_mode: bool = False  # If True, strip+stream thinking tokens via ThinkingStreamParser
 
     @field_validator('text', mode='before')  # changed: strip HTML tags, null bytes, enforce 4000-char limit
     @classmethod
@@ -415,10 +583,12 @@ class FeedbackRequest(BaseModel):
 class FacultyKnowledgeCreateRequest(BaseModel):
     level: str
     knowledge_text: str
+    university_id: Optional[str] = None
 
 class FacultyKnowledgeUpdateRequest(BaseModel):
     level: Optional[str] = None
     knowledge_text: Optional[str] = None
+    university_id: Optional[str] = None
 
 class TimetableUpdateRequest(BaseModel):
     day: Optional[str] = None
@@ -426,6 +596,7 @@ class TimetableUpdateRequest(BaseModel):
     start_time: Optional[str] = None
     course_code: Optional[str] = None
     course_title: Optional[str] = None
+    university_id: Optional[str] = None
 
 # Function to set dependencies (called from main api.py)
 
@@ -506,21 +677,12 @@ async def _build_student_profile_text(current_user: User) -> tuple[str, str]:
     level = ""
     university = ""
     try:
-        profile_sb = supabase_service_client or supabase_client
-        if profile_sb:
-            profile_res = await _execute_with_retry(
-                lambda: profile_sb.table("profiles")
-                .select("first_name,other_names,level,university")
-                .eq("id", current_user.id)
-                .execute(),
-                "Fetch current user profile",
-            )
-            if profile_res.data and len(profile_res.data) > 0:
-                profile = profile_res.data[0]
-                first_name = (profile.get("first_name") or "").strip()
-                other_names = (profile.get("other_names") or "").strip()
-                level = (profile.get("level") or "").strip()
-                university = (profile.get("university") or "").strip()
+        student_context = await resolve_student_university_context(current_user)
+        profile = student_context.get("profile") or {}
+        first_name = (profile.get("first_name") or "").strip()
+        other_names = (profile.get("other_names") or "").strip()
+        level = (student_context.get("level") or "").strip()
+        university = (student_context.get("university_name") or profile.get("university") or "").strip()
     except Exception as profile_err:
         logger.warning(f"Could not fetch user profile context: {profile_err}")
 
@@ -531,6 +693,11 @@ async def _build_student_profile_text(current_user: User) -> tuple[str, str]:
         f"Level: {student_level}\n"
         f"University: {university or 'Unknown'}"
     )
+    if not university:
+        profile_text += (
+            "\nUniversity Scope Status: Missing. University-specific document retrieval, faculty knowledge, "
+            "and timetable context are unavailable until the student completes their profile university."
+        )
     result = (profile_text, student_level)
     if first_name or other_names or level or university:
         _profile_cache[cache_key] = result
@@ -542,6 +709,7 @@ async def get_relevant_context(
     user_question: str,
     document_id: Optional[str] = None,
     user_level: Optional[str] = None,
+    current_user: Optional[User] = None,
 ) -> tuple[str, list[dict]]:
     """
     RAG Helper: Embed user question and retrieve relevant chunks via vector search.
@@ -563,7 +731,15 @@ async def get_relevant_context(
     if not supabase_client:
         logger.warning("Supabase not available for RAG")
         return "", []
-    
+
+    student_university_id = None
+    resolved_level = (user_level or "").strip()
+    if current_user is not None:
+        student_context = await resolve_student_university_context(current_user)
+        student_university_id = student_context.get("university_id")
+        if not resolved_level:
+            resolved_level = (student_context.get("level") or "").strip()
+
     try:
         # Step 1: Embed the user's question using Gemini
         # CRITICAL: Must match ingestion settings (model, dimensions)
@@ -599,6 +775,10 @@ async def get_relevant_context(
         # Branch A: Local RAG (Study Mode) - keep existing behavior
         # ----------------------------
         if document_id:
+            if not student_university_id:
+                logger.info("Skipping study-mode retrieval for user_id=%s because university_id is missing", getattr(current_user, "id", "unknown"))
+                return "", []
+
             # Step 0: Convert Drive file ID to Supabase UUID if needed
             # The frontend sends drive_file_id, but we need the pans_library.id (UUID)
             supabase_doc_id = document_id
@@ -613,7 +793,10 @@ async def get_relevant_context(
                 logger.info(f"Using UUID directly: {document_id}")
                 try:
                     meta_response = await _execute_with_retry(
-                        lambda: supabase_client.table("pans_library").select("file_name, topic, lecturer_name, course_code").eq("id", document_id).execute(),
+                        lambda: supabase_client.table("pans_library")
+                        .select("id,file_name,topic,lecturer_name,course_code,university_id,embedding_status,material_status,visibility,approval_status")
+                        .eq("id", document_id)
+                        .execute(),
                         "Fetch document metadata by UUID",
                     )
                     if meta_response.data and len(meta_response.data) > 0:
@@ -630,7 +813,10 @@ async def get_relevant_context(
                 else:
                     try:
                         doc_response = await _execute_with_retry(
-                            lambda: supabase_client.table("pans_library").select("id, file_name, topic, lecturer_name, course_code").eq("drive_file_id", document_id).execute(),
+                            lambda: supabase_client.table("pans_library")
+                            .select("id,file_name,topic,lecturer_name,course_code,university_id,embedding_status,material_status,visibility,approval_status")
+                            .eq("drive_file_id", document_id)
+                            .execute(),
                             "Fetch document metadata by Drive ID",
                         )
                         if doc_response.data and len(doc_response.data) > 0:
@@ -644,6 +830,25 @@ async def get_relevant_context(
                     except Exception as lookup_err:
                         logger.error(f"Document ID lookup failed: {lookup_err}")
                         return "", []
+
+            if not doc_metadata:
+                logger.info("Skipping study-mode retrieval because document metadata could not be resolved for document_id=%s", document_id)
+                return "", []
+            if (doc_metadata.get("university_id") or None) != student_university_id:
+                logger.warning(
+                    "Skipping study-mode retrieval for user_id=%s document_id=%s because document university_id=%s does not match user university_id=%s",
+                    getattr(current_user, "id", "unknown"),
+                    doc_metadata.get("id") or document_id,
+                    doc_metadata.get("university_id"),
+                    student_university_id,
+                )
+                return "", []
+            if not _is_ai_retrievable_document(doc_metadata):
+                logger.info(
+                    "Skipping study-mode retrieval for document_id=%s because document is not AI-retrievable (embedding/material/visibility/approval state)",
+                    doc_metadata.get("id") or document_id,
+                )
+                return "", []
 
             # Step 2: Retrieve chunks
             # For broad/listing queries in study mode: fetch ALL chunks for this document
@@ -758,6 +963,7 @@ async def get_relevant_context(
                     context_parts.append("\n\n---\n\n".join(c['content'] for c in fallback_chunks))
                     context_text = "\n\n".join(context_parts)
                     citation = {
+                        "document_id": doc_metadata.get("id"),
                         "topic": (doc_metadata or {}).get("topic") or None,
                         "title": (doc_metadata or {}).get("file_name") or "Unknown Document",
                         "course": (doc_metadata or {}).get("course_code") or "N/A",
@@ -768,6 +974,7 @@ async def get_relevant_context(
                 if doc_metadata:
                     logger.info(f"Using metadata only, no vector or text chunks found")
                     citation = {
+                        "document_id": doc_metadata.get("id"),
                         "topic": doc_metadata.get("topic") or None,
                         "title": doc_metadata.get("file_name") or "Unknown Document",
                         "course": doc_metadata.get("course_code") or "N/A",
@@ -785,6 +992,7 @@ async def get_relevant_context(
             citations_list: list[dict] = []
             citations_list.append(
                 {
+                    "document_id": (doc_metadata or {}).get("id"),
                     "topic": (doc_metadata or {}).get("topic") or None,
                     "title": (doc_metadata or {}).get("file_name") or "Unknown Document",
                     "course": (doc_metadata or {}).get("course_code") or "N/A",
@@ -796,54 +1004,40 @@ async def get_relevant_context(
         # ----------------------------
         # Branch B: Global RAG (Main Chat) with user-level filtering + multi-source citations
         # ----------------------------
+        if not student_university_id:
+            logger.info("Skipping global chat retrieval for user_id=%s because university_id is missing", getattr(current_user, "id", "unknown"))
+            return "", []
+        if not resolved_level:
+            logger.info("Skipping global chat retrieval for user_id=%s because level is missing", getattr(current_user, "id", "unknown"))
+            return "", []
+
         # Build candidate level strings to handle format mismatches
         # User profile might store "400" but documents use "400lvl", "400l", etc.
-        level_candidates = set()
-        if user_level:
-            raw = user_level.strip()
-            level_candidates.add(raw)
-            level_candidates.add(raw.lower())
-            digits = "".join(filter(str.isdigit, raw))
-            if digits:
-                level_candidates.add(digits)
-                level_candidates.add(f"{digits}lvl")
-                level_candidates.add(f"{digits}l")
-                level_candidates.add(f"{digits} Level")
-
-        # Query documents that match ANY of the candidate level strings
-        allowed_doc_ids = []
-        for candidate in level_candidates:
-            try:
-                level_res = await _execute_with_retry(
-                    lambda c=candidate: supabase_client.table("pans_library")
-                    .select("id")
-                    .contains("target_levels", [c])
-                    .execute(),
-                    f"Fetch allowed doc IDs for level variant '{candidate}'",
-                )
-                for row in (level_res.data or []):
-                    if row.get("id") and row["id"] not in allowed_doc_ids:
-                        allowed_doc_ids.append(row["id"])
-            except Exception as lvl_err:
-                logger.warning(f"Level filter query failed for '{candidate}': {lvl_err}")
-
-        # Also include documents with empty target_levels (available to all levels)
-        try:
-            empty_res = await _execute_with_retry(
-                lambda: supabase_client.table("pans_library")
-                .select("id")
-                .eq("target_levels", "{}")
-                .execute(),
-                "Fetch documents with empty target_levels",
-            )
-            for row in (empty_res.data or []):
-                if row.get("id") and row["id"] not in allowed_doc_ids:
-                    allowed_doc_ids.append(row["id"])
-        except Exception:
-            pass  # Non-critical
+        docs_res = await _execute_with_retry(
+            lambda: supabase_client.table("pans_library")
+            .select("id,target_levels,university_id,embedding_status,material_status,visibility,approval_status")
+            .eq("university_id", student_university_id)
+            .eq("embedding_status", "completed")
+            .eq("material_status", "active")
+            .eq("visibility", "visible")
+            .eq("approval_status", "approved")
+            .execute(),
+            "Fetch university-scoped global RAG documents",
+        )
+        scoped_docs = docs_res.data or []
+        allowed_doc_ids = [
+            row.get("id")
+            for row in scoped_docs
+            if row.get("id") and _doc_matches_level(row.get("target_levels"), resolved_level)
+        ]
 
         if not allowed_doc_ids:
-            logger.info(f"No allowed global documents found for level: {user_level or 'Unknown'}")
+            logger.info(
+                "No university-scoped active documents found for user_id=%s university_id=%s level=%s",
+                getattr(current_user, "id", "unknown"),
+                student_university_id,
+                resolved_level,
+            )
             return "", []
 
         rpc_response = await _execute_with_retry(
@@ -917,6 +1111,7 @@ async def get_relevant_context(
             source_meta = meta_by_id.get(doc_id, {})
             citations_list.append(
                 {
+                    "document_id": doc_id,
                     "topic": source_meta.get("topic") or None,
                     "title": source_meta.get("file_name") or "Unknown Document",
                     "course": source_meta.get("course_code") or "N/A",

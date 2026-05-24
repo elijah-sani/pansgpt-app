@@ -77,6 +77,10 @@ export default function MainPage() {
     webSearchAvailable,
     webSearchUsage,
     queuedMessageCount,
+    thinkingMode,
+    setThinkingMode,
+    thinkingText,
+    isThinking,
   } = useMainPageController();
 
   if (authLoading) {
@@ -152,6 +156,10 @@ export default function MainPage() {
           webSearchAvailable={webSearchAvailable}
           webSearchUsage={webSearchUsage}
           queuedMessageCount={queuedMessageCount}
+          thinkingMode={thinkingMode}
+          onThinkingModeChange={setThinkingMode}
+          thinkingText={thinkingText}
+          isThinking={isThinking}
         />
       </div>
 

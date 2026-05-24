@@ -4,6 +4,7 @@ import React, { useCallback, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Globe, ImageIcon, Loader2, Mic, Paperclip, Send, Square, X } from 'lucide-react';
 import { InlineWaveform } from '@/components/InlineWaveform';
+import ThinkingModeToggle from '@/components/ThinkingModeToggle';
 
 type ChatInputProps = {
   pendingAttachments: string[];
@@ -30,6 +31,8 @@ type ChatInputProps = {
   onDropImage: (base64: string) => void;
   /** Number of messages queued while a response is in-flight. Shows a badge on the stop button. */
   queuedMessageCount?: number;
+  thinkingMode?: boolean;
+  onThinkingModeChange?: (value: boolean) => void;
 };
 
 export default function ChatInput({
@@ -56,6 +59,8 @@ export default function ChatInput({
   onSendMessage,
   onDropImage,
   queuedMessageCount = 0,
+  thinkingMode = false,
+  onThinkingModeChange,
 }: ChatInputProps) {
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const dragCounter = useRef(0);
@@ -237,8 +242,12 @@ export default function ChatInput({
               </div>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            {isLoading ? (
+          <div className="flex items-center gap-1">
+            {!isLoading && onThinkingModeChange && (
+              <ThinkingModeToggle thinkingMode={thinkingMode} onChange={onThinkingModeChange} />
+            )}
+            <div className="flex items-center gap-2">
+              {isLoading ? (
               <div className="relative">
                 <button
                   type="button"
@@ -293,6 +302,7 @@ export default function ChatInput({
                 )}
               </div>
             )}
+          </div>
           </div>
         </div>
       </div>

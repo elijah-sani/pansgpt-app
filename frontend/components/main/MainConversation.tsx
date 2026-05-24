@@ -7,6 +7,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import ChatInput from '@/components/ChatInput';
 import ChatSkeleton from '@/components/ChatSkeleton';
 import MessageBubble, { type Message } from '@/components/MessageBubble';
+import ThinkingBlock from '@/components/ThinkingBlock';
 import { api } from '@/lib/api';
 import { CHAT_TEXT_SIZE_EVENT, CHAT_TEXT_SIZE_KEY, type ChatTextSize } from '@/lib/settings-events';
 import type { WebSearchUsage } from './types';
@@ -117,6 +118,10 @@ type MainConversationProps = {
   webSearchUsage: WebSearchUsage;
   /** Number of messages queued while isLoading — shown as a badge on the stop button. */
   queuedMessageCount?: number;
+  thinkingMode: boolean;
+  onThinkingModeChange: (value: boolean) => void;
+  thinkingText: string;
+  isThinking: boolean;
 };
 
 export function MainConversation({
@@ -165,6 +170,10 @@ export function MainConversation({
   webSearchAvailable,
   webSearchUsage,
   queuedMessageCount = 0,
+  thinkingMode,
+  onThinkingModeChange,
+  thinkingText,
+  isThinking,
 }: MainConversationProps) {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [chatTextSize, setChatTextSize] = useState<ChatTextSize>('medium');
@@ -565,14 +574,17 @@ export function MainConversation({
                         {message.content}
                       </div>
                     ) : (
-                      <MessageBubble
-                        message={message}
-                        isThinking={Boolean(message.isThinking)}
-                        isStreaming={isStreamingAI}
-                        onAddToNote={openBookmarkModal}
-                        noteActionIcon="bookmark"
-                        onRegenerate={index === messages.length - 1 && activeSessionId ? handleRegenerate : undefined}
-                      />
+                      <>
+                        <ThinkingBlock thinkingText={thinkingText} isStreaming={isThinking && isStreamingAI} />
+                        <MessageBubble
+                          message={message}
+                          isThinking={Boolean(message.isThinking)}
+                          isStreaming={isStreamingAI}
+                          onAddToNote={openBookmarkModal}
+                          noteActionIcon="bookmark"
+                          onRegenerate={index === messages.length - 1 && activeSessionId ? handleRegenerate : undefined}
+                        />
+                      </>
                     )}
                   </div>
                 );
@@ -734,6 +746,8 @@ export function MainConversation({
         onSendMessage={handleSendMessage}
         onDropImage={onDropImage}
         queuedMessageCount={queuedMessageCount}
+        thinkingMode={thinkingMode}
+        onThinkingModeChange={onThinkingModeChange}
       />
     </div>
   );
