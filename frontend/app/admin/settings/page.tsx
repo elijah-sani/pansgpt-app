@@ -397,7 +397,7 @@ export default function SettingsPage() {
                     displayName: finalDisplayName,
                     avatarUrl: finalAvatarUrl
                 });
-                const superAdmin = bootstrap?.is_super_admin === true;
+                const superAdmin = bootstrap?.is_super_admin === true || bootstrap?.is_global_admin === true;
                 setIsSuperAdmin(superAdmin);
                 setFileCount(bootstrap?.file_count || 0);
 
@@ -592,13 +592,14 @@ export default function SettingsPage() {
                             {children}
                         </div>
                     </motion.div>
+
                 </>
             )}
         </AnimatePresence>
     );
 
     return (
-        <div className="max-w-7xl mx-auto pb-32 md:pb-12">
+        <div className="md:max-w-7xl md:mx-auto pb-32 md:pb-12">
 
             {/* Header (Desktop Only Check) */}
             <div className="flex items-center justify-center md:justify-between mb-6 md:mb-8 relative">

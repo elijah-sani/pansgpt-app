@@ -3,13 +3,14 @@
 import React, { useState, useEffect } from 'react';
 import {
     Users, FileText, Brain, Zap,
-    Activity,
+    Activity, Search,
     ShieldCheck, AlertTriangle
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import Link from 'next/link';
 import { motion } from 'framer-motion';
-import { SystemStatusBadge } from '../../components/SystemStatusBadge';
 import { api } from '@/lib/api';
+import { fetchBootstrap } from '@/lib/bootstrap-cache';
 
 // --- Types ---
 interface ActivityItem {
@@ -56,6 +57,7 @@ interface StatCardProps {
 }
 
 export default function MissionControlPage() {
+    const [adminName, setAdminName] = useState('Admin');
     const [stats, setStats] = useState({
         userCount: 0,
         docCount: 0,
@@ -72,6 +74,13 @@ export default function MissionControlPage() {
         const fetchDashboardData = async () => {
             setIsLoading(true);
             try {
+                const bootstrap = await fetchBootstrap();
+                if (bootstrap?.profile?.first_name) {
+                    setAdminName(bootstrap.profile.first_name);
+                } else if (bootstrap?.profile?.full_name) {
+                    setAdminName(bootstrap.profile.full_name.split(' ')[0]);
+                }
+
                 const response = await api.get('/admin/dashboard');
                 if (!response.ok) throw new Error('Failed to fetch dashboard');
                 const payload = await response.json();
@@ -118,138 +127,210 @@ export default function MissionControlPage() {
         fetchDashboardData();
     }, []);
 
+    const timeGreeting = getTimeGreeting();
+
     return (
-        <div className="space-y-8 pb-12">
-            {/* Header */}
-            <header className="flex justify-between items-start">
-                <div>
-                    <h1 className="text-3xl font-bold text-foreground flex items-center gap-3">
-                        Mission Control
-                        <span className="flex h-3 w-3 relative">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary/70 opacity-75"></span>
-                            <span className="relative inline-flex rounded-full h-3 w-3 bg-primary"></span>
-                        </span>
-                    </h1>
-                    <p className="text-muted-foreground mt-1">System Overview & Live Operations</p>
-                </div>
-                <div className="flex items-center gap-4">
-                    <SystemStatusBadge />
-                </div>
-            </header>
+        <div className="mx-auto w-full max-w-6xl px-4 pb-12 sm:px-5 md:px-0">
+            <div className="space-y-6 md:space-y-7">
+                {/* Mobile View */}
+                <div className="space-y-5 md:hidden">
+                    <section className="space-y-1">
+                        <h2 className="text-3xl font-semibold tracking-tight text-foreground">Hi, {adminName}!</h2>
+                        <p className="text-sm text-muted-foreground">{timeGreeting}</p>
+                    </section>
 
-            {/* Row 1: The Vitals */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <StatCard
-                    icon={Users}
-                    label="Active Users"
-                    value={stats.userCount}
-                    trend="+2 today"
-                    color="text-blue-500"
-                    bg="bg-blue-500/10"
-                />
-
-                {/* Dynamic Storage Card */}
-                {(() => {
-                    let sColor = "text-purple-500";
-                    let sBg = "bg-purple-500/10";
-                    if (stats.storagePercentage > 90) {
-                        sColor = "text-red-500";
-                        sBg = "bg-red-500/10";
-                    } else if (stats.storagePercentage > 75) {
-                        sColor = "text-amber-500";
-                        sBg = "bg-amber-500/10";
-                    }
-                    return (
-                        <StatCard
-                            icon={FileText}
-                            label="Knowledge Base"
-                            value={stats.docCount}
-                            sub={`${stats.storageUsed} GB Used`}
-                            color={sColor}
-                            bg={sBg}
-                            progress={stats.storagePercentage}
-                        />
-                    );
-                })()}
-
-                <StatCard
-                    icon={Brain}
-                    label="AI Health"
-                    value={stats.aiStatus}
-                    color={stats.aiStatus === 'Optimal' ? "text-primary" : "text-amber-500"}
-                    bg={stats.aiStatus === 'Optimal' ? "bg-primary/10" : "bg-amber-500/10"}
-                    iconType={stats.aiStatus === 'Optimal' ? ShieldCheck : AlertTriangle}
-                />
-                <StatCard
-                    icon={Zap}
-                    label="API Usage"
-                    value={stats.apiCalls}
-                    trend="Stable"
-                    color="text-yellow-500"
-                    bg="bg-yellow-500/10"
-                />
-            </div>
-
-            {/* Row 2: Analytics & Activity */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-
-                {/* System Analytics (2/3) */}
-                <div className="lg:col-span-2 space-y-6">
-                    <SystemAnalytics stats={stats} />
-                </div>
-
-                {/* Recent Activity (1/3) */}
-                <div className="bg-card border border-border rounded-2xl p-6 min-h-[400px]">
-                    <div className="flex items-center justify-between mb-6 pb-4 border-b border-border">
-                        <div className="flex items-center gap-2">
-                            <Activity className="w-4 h-4 text-primary" />
-                            <h2 className="text-sm font-bold text-foreground">LIVE FEED</h2>
+                    <section className="space-y-3 mt-6">
+                        <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-muted-foreground">The Vitals</h2>
+                        <div className="grid grid-cols-2 gap-3">
+                            <QuickToolCard 
+                                icon={Users} 
+                                label="Active Users" 
+                                value={stats.userCount} 
+                                color="text-blue-500" 
+                                bg="bg-blue-500/10" 
+                            />
+                            {(() => {
+                                let sColor = "text-purple-500";
+                                let sBg = "bg-purple-500/10";
+                                if (stats.storagePercentage > 90) {
+                                    sColor = "text-red-500";
+                                    sBg = "bg-red-500/10";
+                                } else if (stats.storagePercentage > 75) {
+                                    sColor = "text-amber-500";
+                                    sBg = "bg-amber-500/10";
+                                }
+                                return (
+                                    <QuickToolCard 
+                                        icon={FileText} 
+                                        label="KB Storage" 
+                                        value={stats.docCount} 
+                                        color={sColor} 
+                                        bg={sBg} 
+                                    />
+                                );
+                            })()}
+                            <QuickToolCard 
+                                icon={stats.aiStatus === 'Optimal' ? ShieldCheck : AlertTriangle} 
+                                label="AI Health" 
+                                value={stats.aiStatus} 
+                                color={stats.aiStatus === 'Optimal' ? "text-primary" : "text-amber-500"} 
+                                bg={stats.aiStatus === 'Optimal' ? "bg-primary/10" : "bg-amber-500/10"} 
+                            />
+                            <QuickToolCard 
+                                icon={Zap} 
+                                label="API Usage" 
+                                value={stats.apiCalls} 
+                                color="text-yellow-500" 
+                                bg="bg-yellow-500/10" 
+                            />
                         </div>
-                        <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-                            <span className="text-[10px] text-muted-foreground font-mono">REALTIME</span>
-                        </div>
-                    </div>
+                    </section>
 
-                    <div className="space-y-4">
+                    <section className="space-y-3 mt-6">
+                        <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-muted-foreground">Live Feed</h2>
                         {isLoading ? (
-                            <div className="text-center py-12 text-muted-foreground text-xs">Initializing sensors...</div>
+                            <div className="text-center py-6 text-muted-foreground text-sm">Initializing sensors...</div>
                         ) : recentActivity.length === 0 ? (
-                            <div className="text-center py-12 text-muted-foreground text-xs">All systems quiet.</div>
+                            <div className="text-center py-6 text-muted-foreground text-sm">All systems quiet.</div>
                         ) : (
-                            recentActivity.map((item, idx) => (
-                                <motion.div
-                                    key={`${item.type}-${item.id}`}
-                                    initial={{ opacity: 0, x: 10 }}
-                                    animate={{ opacity: 1, x: 0 }}
-                                    transition={{ delay: idx * 0.05 }}
-                                    className="flex items-center gap-3 group"
-                                >
-                                    {/* Compact Icon */}
-                                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${item.type === 'upload'
-                                        ? 'bg-blue-500/10 border-blue-500/20 text-blue-500'
-                                        : 'bg-primary/10 border-primary/30 text-primary'
-                                        }`}>
-                                        {item.type === 'upload' ? <FileText className="w-4 h-4" /> : <Users className="w-4 h-4" />}
-                                    </div>
-
-                                    <div className="flex-1 min-w-0">
-                                        <p className="font-medium text-foreground text-xs truncate group-hover:text-primary transition-colors">
-                                            {item.title}
-                                        </p>
-                                        <p className="text-muted-foreground text-[10px] truncate">
-                                            {item.subtitle}
-                                        </p>
-                                    </div>
-
-                                    <span className="text-[10px] font-mono text-muted-foreground/50 whitespace-nowrap">
-                                        {timeAgo(item.timestamp).replace(' ago', '')}
-                                    </span>
-                                </motion.div>
-                            ))
+                            <div className="relative mt-5">
+                                {recentActivity.map((item) => (
+                                    <MobileActivityCard 
+                                        key={`${item.type}-${item.id}`} 
+                                        item={item} 
+                                    />
+                                ))}
+                            </div>
                         )}
-                    </div>
+                    </section>
                 </div>
+
+                {/* Desktop View */}
+                <section className="hidden space-y-6 md:block">
+                    <div className="space-y-5 border-b border-border pb-6">
+                        <div className="flex justify-between items-start">
+                            <div className="space-y-3">
+                                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">System Overview & Live Operations</p>
+                                <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl md:text-[2.8rem] flex items-center gap-3">
+                                    Welcome back, {adminName}
+                                </h1>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Row 1: The Vitals */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <StatCard
+                            icon={Users}
+                            label="Active Users"
+                            value={stats.userCount}
+                            trend="+2 today"
+                            color="text-blue-500"
+                            bg="bg-blue-500/10"
+                        />
+
+                        {/* Dynamic Storage Card */}
+                        {(() => {
+                            let sColor = "text-purple-500";
+                            let sBg = "bg-purple-500/10";
+                            if (stats.storagePercentage > 90) {
+                                sColor = "text-red-500";
+                                sBg = "bg-red-500/10";
+                            } else if (stats.storagePercentage > 75) {
+                                sColor = "text-amber-500";
+                                sBg = "bg-amber-500/10";
+                            }
+                            return (
+                                <StatCard
+                                    icon={FileText}
+                                    label="Knowledge Base"
+                                    value={stats.docCount}
+                                    sub={`${stats.storageUsed} GB Used`}
+                                    color={sColor}
+                                    bg={sBg}
+                                    progress={stats.storagePercentage}
+                                />
+                            );
+                        })()}
+
+                        <StatCard
+                            icon={Brain}
+                            label="AI Health"
+                            value={stats.aiStatus}
+                            color={stats.aiStatus === 'Optimal' ? "text-primary" : "text-amber-500"}
+                            bg={stats.aiStatus === 'Optimal' ? "bg-primary/10" : "bg-amber-500/10"}
+                            iconType={stats.aiStatus === 'Optimal' ? ShieldCheck : AlertTriangle}
+                        />
+                        <StatCard
+                            icon={Zap}
+                            label="API Usage"
+                            value={stats.apiCalls}
+                            trend="Stable"
+                            color="text-yellow-500"
+                            bg="bg-yellow-500/10"
+                        />
+                    </div>
+
+                    {/* Row 2: Analytics & Activity */}
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                        {/* System Analytics (2/3) */}
+                        <div className="lg:col-span-2 space-y-6">
+                            <SystemAnalytics stats={stats} />
+                        </div>
+
+                        {/* Recent Activity (1/3) */}
+                        <div className="bg-card border border-border rounded-2xl p-6 min-h-[400px]">
+                            <div className="flex items-center justify-between mb-6 pb-4 border-b border-border">
+                                <div className="flex items-center gap-2">
+                                    <Activity className="w-4 h-4 text-primary" />
+                                    <h2 className="text-sm font-bold text-foreground tracking-[0.16em] uppercase">Live Feed</h2>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+                                    <span className="text-[10px] text-muted-foreground font-mono">REALTIME</span>
+                                </div>
+                            </div>
+
+                            <div className="space-y-4">
+                                {isLoading ? (
+                                    <div className="text-center py-12 text-muted-foreground text-xs">Initializing sensors...</div>
+                                ) : recentActivity.length === 0 ? (
+                                    <div className="text-center py-12 text-muted-foreground text-xs">All systems quiet.</div>
+                                ) : (
+                                    recentActivity.map((item, idx) => (
+                                        <motion.div
+                                            key={`${item.type}-${item.id}`}
+                                            initial={{ opacity: 0, x: 10 }}
+                                            animate={{ opacity: 1, x: 0 }}
+                                            transition={{ delay: idx * 0.05 }}
+                                            className="flex items-center gap-3 group"
+                                        >
+                                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${item.type === 'upload'
+                                                ? 'bg-blue-500/10 border-blue-500/20 text-blue-500'
+                                                : 'bg-primary/10 border-primary/30 text-primary'
+                                                }`}>
+                                                {item.type === 'upload' ? <FileText className="w-4 h-4" /> : <Users className="w-4 h-4" />}
+                                            </div>
+
+                                            <div className="flex-1 min-w-0">
+                                                <p className="font-medium text-foreground text-xs truncate group-hover:text-primary transition-colors">
+                                                    {item.title}
+                                                </p>
+                                                <p className="text-muted-foreground text-[10px] truncate">
+                                                    {item.subtitle}
+                                                </p>
+                                            </div>
+
+                                            <span className="text-[10px] font-mono text-muted-foreground/50 whitespace-nowrap">
+                                                {timeAgo(item.timestamp).replace(' ago', '')}
+                                            </span>
+                                        </motion.div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </section>
             </div>
         </div>
     );
@@ -388,4 +469,44 @@ function timeAgo(date: Date) {
     interval = seconds / 60;
     if (interval > 1) return Math.floor(interval) + "m ago";
     return "Just now";
+}
+
+function getTimeGreeting() {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Good morning';
+    if (hour < 18) return 'Good afternoon';
+    return 'Good evening';
+}
+
+function QuickToolCard({ icon: Icon, label, value, color, bg }: { icon: LucideIcon; label: string; value: string | number; color: string; bg: string }) {
+    return (
+        <div className="rounded-2xl border border-border bg-background/90 p-4 transition-colors hover:border-primary/30 hover:bg-muted/40">
+            <div className={`inline-flex h-10 w-10 items-center justify-center rounded-2xl border ${color.replace('text-', 'border-')}/15 ${bg} ${color}`}>
+                <Icon className="h-4 w-4" />
+            </div>
+            <p className="mt-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
+            <p className="mt-1 text-lg font-bold text-foreground">{value}</p>
+        </div>
+    );
+}
+
+function MobileActivityCard({ item }: { item: ActivityItem }) {
+    return (
+        <div className="grid grid-cols-[32px_minmax(0,1fr)] gap-3 pb-4 last:pb-0">
+            <div className="relative flex justify-center">
+                <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-primary/20" />
+                <span className="relative mt-1 h-2.5 w-2.5 rounded-full bg-primary ring-4 ring-primary/10" />
+            </div>
+
+            <div className="flex min-w-0 items-start justify-between gap-3 border-b border-border/60 pb-4 last:border-b-0 last:pb-0">
+                <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-foreground">{item.title}</p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">{item.subtitle}</p>
+                </div>
+                <span className="shrink-0 rounded-full border border-border bg-muted/50 text-muted-foreground px-2 py-1 text-[11px] font-semibold whitespace-nowrap">
+                    {timeAgo(item.timestamp).replace(' ago', '')}
+                </span>
+            </div>
+        </div>
+    );
 }

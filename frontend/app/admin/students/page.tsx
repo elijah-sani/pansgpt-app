@@ -103,9 +103,9 @@ export default function StudentsPage() {
                 </div>
             </div>
 
-            <div className="flex items-center gap-3 mb-6">
+            <div className="flex flex-col lg:flex-row lg:items-center gap-3 mb-6">
                 {/* Search */}
-                <div className="flex items-center gap-2 flex-1 max-w-sm bg-card border border-border rounded-xl px-4 py-2.5 focus-within:border-primary/50 transition-colors">
+                <div className="flex items-center gap-2 flex-1 w-full lg:max-w-sm bg-card border border-border rounded-xl px-4 py-2.5 focus-within:border-primary/50 transition-colors">
                     <Search className="w-4 h-4 text-muted-foreground shrink-0" />
                     <input
                         type="text"
@@ -117,7 +117,7 @@ export default function StudentsPage() {
                 </div>
 
                 {/* Filters  right side */}
-                <div className="flex items-center gap-2 ml-auto">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 lg:ml-auto">
                     <select
                         value={filterUniversity}
                         onChange={(e) => setFilterUniversity(e.target.value)}
@@ -148,8 +148,8 @@ export default function StudentsPage() {
                 </div>
             </div>
 
-            {/* Table */}
-            <div className="bg-card border border-border rounded-2xl overflow-hidden">
+            {/* Desktop Table */}
+            <div className="hidden lg:block bg-card border border-border rounded-2xl overflow-hidden">
                 <div className="overflow-x-auto">
                     <table className="w-full text-left text-sm min-w-[600px]">
                         <thead className="bg-muted/50 border-b border-border text-muted-foreground uppercase tracking-wider text-xs font-semibold">
@@ -225,6 +225,67 @@ export default function StudentsPage() {
                         </tbody>
                     </table>
                 </div>
+            </div>
+
+            {/* Mobile Cards */}
+            <div className="grid grid-cols-1 gap-4 lg:hidden">
+                {isLoading ? (
+                    <div className="p-8 text-center text-muted-foreground bg-card border border-border rounded-2xl text-sm">
+                        Loading students...
+                    </div>
+                ) : filteredStudents.length === 0 ? (
+                    <div className="p-8 text-center text-muted-foreground bg-card border border-border rounded-2xl text-sm">
+                        <Users className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                        <p>No students found</p>
+                    </div>
+                ) : (
+                    filteredStudents.map(student => (
+                        <div key={student.id} className="bg-card border border-border rounded-2xl p-4 flex flex-col gap-4">
+                            <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                                        <User className="w-5 h-5 text-primary" />
+                                    </div>
+                                    <div>
+                                        <span className="font-medium text-foreground block text-sm">{getDisplayName(student)}</span>
+                                        <div className="flex items-center gap-1.5 text-muted-foreground mt-0.5">
+                                            <GraduationCap className="w-3.5 h-3.5" />
+                                            <span className="text-xs">{student.level || 'No level'}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div>
+                                    {student.subscription_tier === 'pro' ? (
+                                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-[10px] font-bold">
+                                            <Crown className="w-3 h-3" /> Pro
+                                        </span>
+                                    ) : (
+                                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-muted text-muted-foreground text-[10px] font-medium">
+                                            Free
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+                            
+                            <div className="flex items-center justify-between gap-4">
+                                <div className="text-muted-foreground text-xs truncate">
+                                    {student.university || 'No university'}
+                                </div>
+                                <button
+                                    onClick={() => handleToggleSubscription(student)}
+                                    disabled={updatingId === student.id}
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all disabled:opacity-50 shrink-0 ${student.subscription_tier === 'pro'
+                                        ? 'bg-muted text-muted-foreground hover:bg-muted/80'
+                                        : 'bg-primary/10 text-primary hover:bg-primary/20 border border-primary/20'
+                                        }`}
+                                >
+                                    {updatingId === student.id ? 'Saving...' :
+                                        student.subscription_tier === 'pro' ? 'Downgrade' : 'Upgrade to Pro'}
+                                </button>
+                            </div>
+                        </div>
+                    ))
+                )}
             </div>
         </div>
     );

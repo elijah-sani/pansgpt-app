@@ -221,7 +221,7 @@ export default function AdminRestrictionsPage() {
                             </div>
                         </div>
 
-                        <div className="overflow-hidden rounded-2xl border border-border bg-card">
+                        <div className="hidden lg:block overflow-hidden rounded-2xl border border-border bg-card">
                             <div className="overflow-x-auto">
                                 <table className="min-w-[900px] w-full text-left text-sm">
                                     <thead className="border-b border-border bg-muted/50 text-xs font-semibold uppercase text-muted-foreground">
@@ -295,6 +295,67 @@ export default function AdminRestrictionsPage() {
                                     </tbody>
                                 </table>
                             </div>
+                        </div>
+
+                        {/* Mobile Cards */}
+                        <div className="grid grid-cols-1 gap-4 lg:hidden">
+                            {isLoading ? (
+                                <div className="p-8 text-center text-muted-foreground bg-card border border-border rounded-2xl text-sm">
+                                    <span className="inline-flex items-center gap-2">
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                        Loading restrictions...
+                                    </span>
+                                </div>
+                            ) : error ? (
+                                <div className="p-8 text-center text-sm text-rose-600 bg-card border border-border rounded-2xl">
+                                    {error}
+                                </div>
+                            ) : visibleRestrictions.length === 0 ? (
+                                <div className="p-8 text-center text-muted-foreground bg-card border border-border rounded-2xl text-sm">
+                                    No restrictions found.
+                                </div>
+                            ) : (
+                                visibleRestrictions.map((restriction) => (
+                                    <div key={restriction.id} className="bg-card border border-border rounded-2xl p-4 flex flex-col gap-4">
+                                        <div className="flex items-start justify-between gap-2">
+                                            <div>
+                                                <div className="font-semibold text-foreground text-sm">
+                                                    {restriction.course_code || restriction.course_title || restriction.title || 'Untitled restriction'}
+                                                </div>
+                                                <div className="mt-1 text-xs text-muted-foreground">
+                                                    {restriction.university_name || 'Unknown university'} · Level {restriction.level || 'Unknown'}
+                                                </div>
+                                                <div className="mt-1 text-xs text-muted-foreground">
+                                                    {restriction.lecturer_name || 'Unknown lecturer'}
+                                                </div>
+                                            </div>
+                                            <div className="shrink-0">
+                                                <StatusBadge status={restriction.status} />
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="flex items-center justify-between gap-4 border-t border-border pt-4 mt-2">
+                                            <div className="text-xs text-muted-foreground">
+                                                <div>{formatDateTime(restriction.start_time)}</div>
+                                                <div className="mt-0.5">{formatDateTime(restriction.end_time)}</div>
+                                            </div>
+                                            <div>
+                                                {canCancelRestriction(restriction.status) ? (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => openCancelDialog(restriction)}
+                                                        className="rounded-lg border border-rose-500/20 px-3 py-2 text-xs font-semibold text-rose-600 transition-colors hover:bg-rose-500/10 shrink-0"
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                ) : (
+                                                    <span className="text-xs text-muted-foreground">No action</span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
                         </div>
                     </section>
                 </div>

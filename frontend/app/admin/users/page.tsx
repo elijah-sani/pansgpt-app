@@ -10,9 +10,16 @@ import { api } from '@/lib/api';
 interface UserRole {
     id: string;
     email: string;
-    role: 'admin' | 'super_admin'; // Using string union for roles
+    role: 'admin' | 'super_admin' | 'global_admin' | 'university_admin';
     is_admin: boolean; // Keep for backward compatibility if needed, but rely on 'role'
     user_id: string | null;
+    university_id?: string | null;
+    university?: {
+        id?: string | null;
+        name?: string | null;
+        short_name?: string | null;
+        status?: string | null;
+    } | null;
     created_at?: string;
 }
 
@@ -23,7 +30,8 @@ export default function UsersPage() {
     const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
 
     // Permission State
-    const [currentUserRole, setCurrentUserRole] = useState<'admin' | 'super_admin' | null>(null);
+    const [currentUserRole, setCurrentUserRole] = useState<'admin' | 'super_admin' | 'global_admin' | 'university_admin' | null>(null);
+    const [isGlobalAdmin, setIsGlobalAdmin] = useState(false);
 
     const fetchCurrentUserRole = useCallback(async () => {
         const response = await api.get('/me/bootstrap');
@@ -32,6 +40,7 @@ export default function UsersPage() {
         if (data?.role) {
             setCurrentUserRole(data.role);
         }
+        setIsGlobalAdmin(Boolean(data?.is_global_admin || data?.is_super_admin));
     }, [supabase]);
 
     const fetchUsers = useCallback(async () => {
@@ -85,7 +94,7 @@ export default function UsersPage() {
         user.email.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
-    const isSuperAdmin = currentUserRole === 'super_admin';
+    const canManageUsers = isGlobalAdmin;
 
     return (
         <div>
@@ -94,7 +103,7 @@ export default function UsersPage() {
                 <div>
                     <div className="flex items-center gap-3 mb-1">
                         <h2 className="text-2xl font-bold text-foreground">Users Management</h2>
-                        {!isSuperAdmin && currentUserRole && (
+                        {!canManageUsers && currentUserRole && (
                             <div className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-500 text-[10px] font-bold uppercase tracking-wider">
                                 <Lock className="w-3 h-3" />
                                 View Only
@@ -103,7 +112,7 @@ export default function UsersPage() {
                     </div>
                     <p className="text-muted-foreground">Manage user access, roles, and invitations.</p>
                 </div>
-                {isSuperAdmin && (
+                {canManageUsers && (
                     <button
                         onClick={() => setIsInviteModalOpen(true)}
                         className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-yellow-500 to-amber-500 hover:from-yellow-400 hover:to-amber-400 text-white rounded-xl text-sm font-bold shadow-lg shadow-amber-500/20 transition-all"
@@ -129,13 +138,14 @@ export default function UsersPage() {
             </div>
 
             {/* Users Table */}
-            <div className="bg-card border border-border rounded-2xl overflow-hidden backdrop-blur-sm min-h-[400px]">
+            <div className="hidden w-full overflow-hidden rounded-xl border border-border/50 bg-card shadow-sm md:block">
                 <div className="overflow-x-auto">
                     <table className="w-full text-left text-sm min-w-[600px]">
                         <thead className="bg-muted/50 border-b border-border text-muted-foreground uppercase tracking-wider text-xs font-semibold">
                             <tr>
                                 <th className="px-6 py-4 whitespace-nowrap">User</th>
                                 <th className="px-6 py-4 whitespace-nowrap">Role</th>
+                                <th className="px-6 py-4 whitespace-nowrap">University</th>
                                 <th className="px-6 py-4 whitespace-nowrap">Status</th>
                                 <th className="px-6 py-4 text-right whitespace-nowrap">Actions</th>
                             </tr>
@@ -143,13 +153,13 @@ export default function UsersPage() {
                         <tbody className="divide-y divide-border">
                             {isLoading ? (
                                 <tr>
-                                    <td colSpan={4} className="px-6 py-20 text-center text-muted-foreground">
+                                    <td colSpan={5} className="px-6 py-20 text-center text-muted-foreground">
                                         Loading users...
                                     </td>
                                 </tr>
                             ) : filteredUsers.length === 0 ? (
                                 <tr>
-                                    <td colSpan={4} className="px-6 py-20 text-center text-muted-foreground">
+                                    <td colSpan={5} className="px-6 py-20 text-center text-muted-foreground">
                                         No users found.
                                     </td>
                                 </tr>
@@ -160,7 +170,11 @@ export default function UsersPage() {
                                             <div className="flex items-center gap-3">
                                                 <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border ${user.role === 'super_admin'
                                                     ? 'bg-amber-500/10 text-amber-500 border-amber-500/20'
-                                                    : 'bg-primary/10 text-primary border-primary/20'
+                                                    : user.role === 'global_admin'
+                                                        ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20'
+                                                        : user.role === 'university_admin'
+                                                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                                                            : 'bg-primary/10 text-primary border-primary/20'
                                                     }`}>
                                                     {user.email.charAt(0).toUpperCase()}
                                                 </div>
@@ -173,12 +187,25 @@ export default function UsersPage() {
                                                     <ShieldAlert className="w-3 h-3" />
                                                     Super Admin
                                                 </span>
+                                            ) : user.role === 'global_admin' ? (
+                                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                                                    <ShieldAlert className="w-3 h-3" />
+                                                    Global Admin
+                                                </span>
+                                            ) : user.role === 'university_admin' ? (
+                                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                                    <Shield className="w-3 h-3" />
+                                                    University Admin
+                                                </span>
                                             ) : (
                                                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-primary/10 text-primary border border-primary/20">
                                                     <Shield className="w-3 h-3" />
                                                     Admin
                                                 </span>
                                             )}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-xs text-muted-foreground">
+                                            {user.university?.name || user.university_id || 'Global'}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             {user.user_id ? (
@@ -194,7 +221,7 @@ export default function UsersPage() {
                                             )}
                                         </td>
                                         <td className="px-6 py-4 text-right whitespace-nowrap">
-                                            {isSuperAdmin && user.role !== 'super_admin' ? (
+                                            {canManageUsers && user.role !== 'super_admin' ? (
                                                 <button
                                                     onClick={() => handleDeleteUser(user.email)}
                                                     className="p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
@@ -214,6 +241,99 @@ export default function UsersPage() {
                         </tbody>
                     </table>
                 </div>
+            </div>
+
+            {/* Mobile Cards */}
+            <div className="grid grid-cols-1 gap-4 lg:hidden">
+                {isLoading ? (
+                    <div className="p-8 text-center text-muted-foreground bg-card border border-border rounded-2xl text-sm">
+                        Loading users...
+                    </div>
+                ) : filteredUsers.length === 0 ? (
+                    <div className="p-8 text-center text-muted-foreground bg-card border border-border rounded-2xl text-sm">
+                        No users found.
+                    </div>
+                ) : (
+                    filteredUsers.map((user) => (
+                        <div key={user.id || user.email} className="bg-card border border-border rounded-2xl p-4 flex flex-col gap-4">
+                            <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-3 overflow-hidden">
+                                    <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 text-sm font-bold border ${user.role === 'super_admin'
+                                        ? 'bg-amber-500/10 text-amber-500 border-amber-500/20'
+                                        : user.role === 'global_admin'
+                                            ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20'
+                                            : user.role === 'university_admin'
+                                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                                                : 'bg-primary/10 text-primary border-primary/20'
+                                        }`}>
+                                        {user.email.charAt(0).toUpperCase()}
+                                    </div>
+                                    <div className="min-w-0">
+                                        <span className="font-medium text-foreground text-sm block truncate">{user.email}</span>
+                                        <div className="text-xs text-muted-foreground mt-0.5 truncate">
+                                            {user.university?.name || user.university_id || 'Global'}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div className="flex items-center justify-between gap-4">
+                                <div className="flex flex-wrap gap-2">
+                                    <div>
+                                        {user.role === 'super_admin' ? (
+                                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20 shadow-sm shadow-amber-500/10">
+                                                <ShieldAlert className="w-3 h-3" />
+                                                Super Admin
+                                            </span>
+                                        ) : user.role === 'global_admin' ? (
+                                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                                                <ShieldAlert className="w-3 h-3" />
+                                                Global Admin
+                                            </span>
+                                        ) : user.role === 'university_admin' ? (
+                                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                                <Shield className="w-3 h-3" />
+                                                Univ Admin
+                                            </span>
+                                        ) : (
+                                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-primary/10 text-primary border border-primary/20">
+                                                <Shield className="w-3 h-3" />
+                                                Admin
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div>
+                                        {user.user_id ? (
+                                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium text-green-500 bg-green-500/10 border border-green-500/20">
+                                                <div className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_8px_color-mix(in_srgb,#22c55e,transparent_50%)]" />
+                                                Active
+                                            </span>
+                                        ) : (
+                                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium text-amber-500 bg-amber-500/10 border border-amber-500/20">
+                                                <div className="w-1.5 h-1.5 rounded-full bg-amber-500 shadow-[0_0_8px_color-mix(in_srgb,#f59e0b,transparent_50%)]" />
+                                                Pending
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                                
+                                {canManageUsers && user.role !== 'super_admin' ? (
+                                    <button
+                                        onClick={() => handleDeleteUser(user.email)}
+                                        className="p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-colors shrink-0"
+                                        title="Delete User"
+                                    >
+                                        <Trash2 className="w-4 h-4" />
+                                    </button>
+                                ) : (
+                                    <span className="text-muted-foreground/30 cursor-not-allowed shrink-0 p-2" title={user.role === 'super_admin' ? "Super Admins cannot be deleted" : "View Only"}>
+                                        <Trash2 className="w-4 h-4 opacity-50" />
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                    ))
+                )}
             </div>
 
             {/* Invite Modal */}
