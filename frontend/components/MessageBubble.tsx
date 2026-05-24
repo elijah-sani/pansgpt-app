@@ -227,46 +227,55 @@ export default function MessageBubble({
                     style={{ fontFamily: "'Inter', sans-serif", fontSize: 'var(--chat-text-size, 15px)' }}
                 >
                     <div className="overflow-x-auto w-full max-w-full break-words">
-                        <ReactMarkdown
-                            remarkPlugins={[remarkGfm, remarkMath]}
-                            rehypePlugins={[rehypeRaw, rehypeKatex]}
-                            components={{
-                                table: ({ node, ...props }) => (
-                                    <div className="my-0 w-full overflow-hidden overflow-x-auto rounded-xl border border-border
+                        {/* Safety net: strip any thinking-token tags that leaked through the backend parser */}
+                        {(() => {
+                            const safeContent = (message.content || '').replace(
+                                /<(thought|think|thinking|scratchpad)[\s\S]*?<\/\1>/gi,
+                                ''
+                            ).trim();
+                            return (
+                                <ReactMarkdown
+                                    remarkPlugins={[remarkGfm, remarkMath]}
+                                    rehypePlugins={[rehypeRaw, rehypeKatex]}
+                                    components={{
+                                        table: ({ node, ...props }) => (
+                                            <div className="my-0 w-full overflow-hidden overflow-x-auto rounded-xl border border-border
       [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-track]:bg-transparent 
       [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full"> {/* changed: removed shadow-sm — eliminates unwanted box-shadow beneath tables */}
-                                        <table
-                                            className="w-full m-0 border-collapse text-sm text-left table-auto border-hidden"
-                                            style={{ marginTop: 0, marginBottom: 0 }}
-                                            {...props}
-                                        />
-                                    </div>
-                                ),
-                                thead: ({ node, ...props }) => (
-                                    <thead className="bg-card text-foreground" {...props} />
-                                ),
-                                tbody: ({ node, ...props }) => (
-                                    <tbody className="bg-muted/40" {...props} />
-                                ),
-                                th: ({ node, ...props }) => (
-                                    <th className="px-4 py-5 border border-border/70 font-semibold whitespace-nowrap first:border-l-0 last:border-r-0 border-t-0" {...props} />
-                                ),
-                                td: ({ node, ...props }) => (
-                                    <td className="px-4 py-2.5 border border-border/50 align-top text-foreground first:border-l-0 last:border-r-0 last:border-b-0" {...props} /> // changed: added text-foreground — fixes grey td text in light mode (prose default colour overridden)
-                                ),
-                                tr: ({ node, ...props }) => (
-                                    <tr className="hover:bg-muted/30 transition-colors" {...props} />
-                                ),
-                                pre: ({ ...props }) => (
-                                    <pre className="overflow-x-auto w-full max-w-full rounded-md" {...props} />
-                                ),
-                                a: ({ ...props }) => (
-                                    <a className="break-all" {...props} />
-                                ),
-                            }}
-                        >
-                            {message.content}
-                        </ReactMarkdown>
+                                                <table
+                                                    className="w-full m-0 border-collapse text-sm text-left table-auto border-hidden"
+                                                    style={{ marginTop: 0, marginBottom: 0 }}
+                                                    {...props}
+                                                />
+                                            </div>
+                                        ),
+                                        thead: ({ node, ...props }) => (
+                                            <thead className="bg-card text-foreground" {...props} />
+                                        ),
+                                        tbody: ({ node, ...props }) => (
+                                            <tbody className="bg-muted/40" {...props} />
+                                        ),
+                                        th: ({ node, ...props }) => (
+                                            <th className="px-4 py-5 border border-border/70 font-semibold whitespace-nowrap first:border-l-0 last:border-r-0 border-t-0" {...props} />
+                                        ),
+                                        td: ({ node, ...props }) => (
+                                            <td className="px-4 py-2.5 border border-border/50 align-top text-foreground first:border-l-0 last:border-r-0 last:border-b-0" {...props} /> // changed: added text-foreground — fixes grey td text in light mode (prose default colour overridden)
+                                        ),
+                                        tr: ({ node, ...props }) => (
+                                            <tr className="hover:bg-muted/30 transition-colors" {...props} />
+                                        ),
+                                        pre: ({ ...props }) => (
+                                            <pre className="overflow-x-auto w-full max-w-full rounded-md" {...props} />
+                                        ),
+                                        a: ({ ...props }) => (
+                                            <a className="break-all" {...props} />
+                                        ),
+                                    }}
+                                >
+                                    {safeContent}
+                                </ReactMarkdown>
+                            );
+                        })()}
                     </div>
                     {message.isStopped && (
                         <div className="text-sm italic text-muted-foreground mt-2 flex items-center gap-2">
