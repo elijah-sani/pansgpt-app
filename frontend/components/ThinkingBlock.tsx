@@ -1,64 +1,128 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { ChevronDown } from 'lucide-react';
 
 export interface ThinkingBlockProps {
   thinkingText: string;
-  isStreaming: boolean; // true while thinking_delta events are arriving
+  isStreaming: boolean;
 }
 
+/**
+ * ThinkingToggle — just the inline header button.
+ * Rendered beside the avatar inside MessageBubble.
+ */
+export function ThinkingToggle({
+  isStreaming,
+  expanded,
+  onToggle,
+  thinkingDuration,
+}: {
+  isStreaming: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+  thinkingDuration?: number | null;
+}) {
+  const label = thinkingDuration !== undefined && thinkingDuration !== null
+    ? `Thought for ${thinkingDuration}s`
+    : (isStreaming ? 'Thinking…' : 'Thought');
+
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={expanded}
+      className="flex items-center gap-1 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors select-none"
+    >
+      <span>{label}</span>
+      <ChevronDown
+        size={12}
+        className={`shrink-0 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+      />
+    </button>
+  );
+}
+
+/**
+ * ThinkingPanel — the expanded content area.
+ * Rendered below the avatar row, above the answer.
+ */
+export function ThinkingPanel({
+  thinkingText,
+  isStreaming,
+}: {
+  thinkingText: string;
+  isStreaming: boolean;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom while streaming
+  useEffect(() => {
+    if (isStreaming && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [thinkingText, isStreaming]);
+
+  return (
+    <div
+      ref={scrollRef}
+      className="mb-3 overflow-auto max-h-64 pr-4 py-4 text-sm text-muted-foreground leading-relaxed"
+      style={{
+        fontFamily: "'Inter', sans-serif",
+        maskImage: 'linear-gradient(to bottom, transparent 0%, black 20px, black calc(100% - 20px), transparent 100%)',
+        WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 20px, black calc(100% - 20px), transparent 100%)'
+      }}
+    >
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          p: ({ ...props }) => <p className="mb-1 last:mb-0" {...props} />,
+          ul: ({ ...props }) => <ul className="list-disc pl-4 mb-1" {...props} />,
+          ol: ({ ...props }) => <ol className="list-decimal pl-4 mb-1" {...props} />,
+          li: ({ ...props }) => <li className="mb-0.5" {...props} />,
+          strong: ({ ...props }) => <strong className="text-foreground/80 font-semibold" {...props} />,
+          code: ({ ...props }) => (
+            <code
+              className="px-1 py-0.5 rounded text-xs font-mono bg-amber-500/15 text-amber-300"
+              {...props}
+            />
+          ),
+        }}
+      >
+        {thinkingText}
+      </ReactMarkdown>
+      {/* Blinking cursor while streaming */}
+      {isStreaming && (
+        <span className="inline-block w-[2px] h-[0.9em] bg-muted-foreground/70 ml-0.5 align-middle animate-pulse" />
+      )}
+    </div>
+  );
+}
+
+/**
+ * ThinkingBlock — standalone usage (not used in main chat, kept for other contexts).
+ */
 export default function ThinkingBlock({ thinkingText, isStreaming }: ThinkingBlockProps) {
   const [expanded, setExpanded] = useState(false);
 
-  // Nothing to show
+  useEffect(() => {
+    setExpanded(isStreaming);
+  }, [isStreaming]);
+
   if (!isStreaming && !thinkingText) return null;
 
-  // Streaming in progress — animated pulse banner
-  if (isStreaming) {
-    return (
-      <div
-        id="thinking-block-streaming"
-        className="flex items-center gap-2 mb-2 px-3 py-2 rounded-xl border border-blue-500/20 bg-blue-500/5 text-blue-400 text-sm font-medium"
-        style={{ animation: 'pulse 1.8s ease-in-out infinite' }}
-      >
-        <span className="text-base leading-none" aria-hidden="true">🧠</span>
-        <span>Thinking…</span>
-        <style>{`
-          @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.45; }
-          }
-        `}</style>
-      </div>
-    );
-  }
-
-  // Done streaming, has content — collapsible block
   return (
-    <div
-      id="thinking-block-done"
-      className="mb-3 rounded-xl border border-border overflow-hidden"
-    >
-      <button
-        type="button"
-        onClick={() => setExpanded((prev) => !prev)}
-        aria-expanded={expanded}
-        className="w-full flex items-center gap-2 px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors text-left"
-      >
-        <span className="text-base leading-none shrink-0" aria-hidden="true">🧠</span>
-        <span className="flex-1">Reasoning</span>
-        <ChevronDown
-          size={15}
-          className={`shrink-0 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
-        />
-      </button>
-
+    <div className="mb-3">
+      <ThinkingToggle
+        isStreaming={isStreaming}
+        expanded={expanded}
+        onToggle={() => setExpanded((p) => !p)}
+      />
       {expanded && (
-        <div className="border-t border-border px-3 py-3 border-l-2 border-l-blue-500/40">
-          <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-muted-foreground overflow-auto max-h-80">
-            {thinkingText}
-          </pre>
+        <div className="mt-2">
+          <ThinkingPanel thinkingText={thinkingText} isStreaming={isStreaming} />
         </div>
       )}
     </div>

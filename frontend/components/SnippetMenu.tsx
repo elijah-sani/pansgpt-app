@@ -8,7 +8,7 @@ interface SnippetMenuProps {
     onClose: () => void;
     onSend: (data: { text: string; attachments: string[]; systemInstruction?: string }) => void;
     onAddToInput: (image: string) => void;
-    onSaveNote: (image: string) => void;
+    onSaveNote?: (image: string) => void;
 }
 
 const SnippetMenu: React.FC<SnippetMenuProps> = ({
@@ -90,13 +90,13 @@ const SnippetMenu: React.FC<SnippetMenuProps> = ({
                 </span>
             </button>
 
+            {/* COMMENTED OUT: divider + Add to notes — re-enable when ready
             <div className="w-px h-5 bg-zinc-700 mx-1" />
 
-            {/* ADD TO NOTES */}
             <button
                 onClick={() => {
                     const attachment = typeof imageBlob === 'string' ? imageBlob : '';
-                    if (attachment) onSaveNote(attachment);
+                    if (attachment) onSaveNote?.(attachment);
                     onClose();
                 }}
                 disabled={isSaving}
@@ -112,6 +112,7 @@ const SnippetMenu: React.FC<SnippetMenuProps> = ({
                     Add to notes
                 </span>
             </button>
+            */}
         </div>
     );
 };

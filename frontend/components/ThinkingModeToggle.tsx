@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
+import { Zap, Brain, ChevronDown } from 'lucide-react';
 
 export interface ThinkingModeToggleProps {
   thinkingMode: boolean;
@@ -39,19 +40,27 @@ export default function ThinkingModeToggle({ thinkingMode, onChange }: ThinkingM
       <button
         type="button"
         id="thinking-mode-toggle-btn"
-        onClick={() => setOpen((prev) => !prev)}
+        onClick={() => setOpen(!open)}
         title={thinkingMode ? 'Thinking mode active' : 'Fast mode active'}
-        className={`p-2 rounded-full transition-colors text-muted-foreground ${
-          thinkingMode
-            ? 'text-blue-500 hover:bg-blue-500/10'
-            : 'hover:text-foreground hover:bg-accent'
-        }`}
+        className="flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
         aria-haspopup="true"
         aria-expanded={open}
       >
-        <span className="text-base leading-none select-none" aria-hidden="true">
-          {thinkingMode ? '🧠' : '⚡'}
-        </span>
+        {thinkingMode ? (
+          <>
+            <Brain size={13} className="text-blue-400" />
+            <span>Thinking</span>
+          </>
+        ) : (
+          <>
+            <Zap size={13} className="text-zinc-400" />
+            <span>Fast</span>
+          </>
+        )}
+        <ChevronDown
+          size={12}
+          className={`transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+        />
       </button>
 
       {/* Popup panel — positioned above the trigger */}
@@ -70,7 +79,7 @@ export default function ThinkingModeToggle({ thinkingMode, onChange }: ThinkingM
               !thinkingMode ? 'bg-accent/60' : ''
             }`}
           >
-            <span className="text-lg leading-none mt-0.5 shrink-0" aria-hidden="true">⚡</span>
+            <Zap size={14} className="shrink-0 mt-0.5 text-muted-foreground" />
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-foreground">Fast</p>
               <p className="text-xs text-muted-foreground mt-0.5">Quick responses</p>
@@ -92,7 +101,7 @@ export default function ThinkingModeToggle({ thinkingMode, onChange }: ThinkingM
               thinkingMode ? 'bg-accent/60' : ''
             }`}
           >
-            <span className="text-lg leading-none mt-0.5 shrink-0" aria-hidden="true">🧠</span>
+            <Brain size={14} className="shrink-0 mt-0.5 text-muted-foreground" />
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-foreground">Thinking</p>
               <p className="text-xs text-muted-foreground mt-0.5">Reasons before answering</p>

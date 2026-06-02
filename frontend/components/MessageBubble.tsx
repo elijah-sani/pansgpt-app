@@ -1,6 +1,7 @@
 'use client';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { ThinkingToggle, ThinkingPanel } from './ThinkingBlock';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -24,6 +25,7 @@ export interface Message {
     isThinking?: boolean;
     isStopped?: boolean;
     status?: string;
+    thinking_text?: string;
 }
 
 interface MessageBubbleProps {
@@ -34,6 +36,8 @@ interface MessageBubbleProps {
     showCitationsButton?: boolean;
     onAddToNote?: (content: string) => Promise<boolean | void> | boolean | void;
     noteActionIcon?: 'bookmark' | 'bookmark-plus';
+    thinkingText?: string;
+    isThinkingStreaming?: boolean;
 }
 
 export default function MessageBubble({
@@ -44,10 +48,34 @@ export default function MessageBubble({
     showCitationsButton = true,
     onAddToNote,
     noteActionIcon = 'bookmark-plus',
+    thinkingText = '',
+    isThinkingStreaming = false,
 }: MessageBubbleProps) {
     const [feedback, setFeedback] = useState<'up' | 'down' | null>(null);
     const [copied, setCopied] = useState(false);
     const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
+    const [reasoningExpanded, setReasoningExpanded] = useState(false);
+    const [thinkingDuration, setThinkingDuration] = useState<number | null>(null);
+
+    // Track thinking duration during active streaming
+    useEffect(() => {
+        if (isThinkingStreaming) {
+            const startTime = Date.now();
+            setThinkingDuration(0);
+            const timer = setInterval(() => {
+                setThinkingDuration(Math.round((Date.now() - startTime) / 1000));
+            }, 1000);
+            return () => clearInterval(timer);
+        }
+    }, [isThinkingStreaming]);
+
+    // Auto-expand while streaming, auto-collapse when thinking_done fires
+    useEffect(() => {
+        setReasoningExpanded(isThinkingStreaming);
+    }, [isThinkingStreaming]);
+
+    const reasoningText = thinkingText || message.thinking_text || '';
+    const hasReasoning = isThinkingStreaming || Boolean(thinkingText) || Boolean(message.thinking_text);
     const [currentRating, setCurrentRating] = useState<'up' | 'down'>('up');
     const [showToast, setShowToast] = useState(false);
     const [displayedStatus, setDisplayedStatus] = useState('Processing...');
@@ -209,18 +237,28 @@ export default function MessageBubble({
                             <img
                                 src="/avatar.png"
                                 alt="PansGPT"
-                                className={`z-10 object-contain transition-all duration-500 ease-out ${isThinking ? 'h-4 w-4' : 'h-5 w-5'}`}
+                                className="z-10 object-contain h-5 w-5"
                             />
                         </div>
                     </div>
-                    {isThinking && (
-                        <span
-                            className={`text-sm text-muted-foreground transition-opacity duration-300 ${isStatusVisible ? 'opacity-100' : 'opacity-0'}`}
-                        >
-                            {displayedStatus}
-                        </span>
+                    {/* Reasoning toggle — inline beside avatar, only in thinking mode */}
+                    {hasReasoning && (
+                        <ThinkingToggle
+                            isStreaming={isThinkingStreaming}
+                            expanded={reasoningExpanded}
+                            onToggle={() => setReasoningExpanded((p) => !p)}
+                            thinkingDuration={thinkingDuration}
+                        />
                     )}
                 </div>
+
+                {/* Reasoning panel — below avatar row, above answer */}
+                {hasReasoning && reasoningExpanded && (
+                    <ThinkingPanel
+                        thinkingText={reasoningText}
+                        isStreaming={isThinkingStreaming}
+                    />
+                )}
 
                 <div
                     className="w-full max-w-full break-words flex-1 prose dark:prose-invert prose-p:leading-relaxed prose-li:marker:text-primary/70 prose-p:text-foreground prose-headings:text-foreground prose-strong:text-foreground prose-li:text-foreground"
@@ -321,7 +359,8 @@ export default function MessageBubble({
                         )}
                     </button>
 
-                    {onAddToNote && (
+                    {/* COMMENTED OUT: Add to notes button — re-enable when ready */}
+                    {/* {onAddToNote && (
                         <button
                             onClick={() => void handleAddToNote()}
                             className="p-1.5 hover:bg-muted rounded-md transition-colors"
@@ -336,7 +375,7 @@ export default function MessageBubble({
                                 noteActionIcon === 'bookmark' ? <Bookmark className="w-4 h-4" /> : <BookmarkPlus className="w-4 h-4" />
                             )}
                         </button>
-                    )}
+                    )} */}
 
                     {/* References Button */}
                     {showCitationsButton && Array.isArray(message.citations) && message.citations.length > 0 && (

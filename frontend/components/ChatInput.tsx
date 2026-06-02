@@ -209,7 +209,8 @@ export default function ChatInput({
                 />
               </>
             )}
-            {!isListening && !isProcessing && webSearchAvailable !== false && (
+            {/* COMMENTED OUT: web search — re-enable when ready */}
+            {/* {!isListening && !isProcessing && webSearchAvailable !== false && (
               <div className="relative">
                 <button
                   type="button"
@@ -240,7 +241,7 @@ export default function ChatInput({
                   )}
                 </button>
               </div>
-            )}
+            )} */}
           </div>
           <div className="flex items-center gap-1">
             {!isLoading && onThinkingModeChange && (

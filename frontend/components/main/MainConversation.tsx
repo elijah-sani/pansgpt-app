@@ -7,7 +7,6 @@ import { AnimatePresence, motion } from 'framer-motion';
 import ChatInput from '@/components/ChatInput';
 import ChatSkeleton from '@/components/ChatSkeleton';
 import MessageBubble, { type Message } from '@/components/MessageBubble';
-import ThinkingBlock from '@/components/ThinkingBlock';
 import { api } from '@/lib/api';
 import { CHAT_TEXT_SIZE_EVENT, CHAT_TEXT_SIZE_KEY, type ChatTextSize } from '@/lib/settings-events';
 import type { WebSearchUsage } from './types';
@@ -575,7 +574,6 @@ export function MainConversation({
                       </div>
                     ) : (
                       <>
-                        <ThinkingBlock thinkingText={thinkingText} isStreaming={isThinking && isStreamingAI} />
                         <MessageBubble
                           message={message}
                           isThinking={Boolean(message.isThinking)}
@@ -583,6 +581,8 @@ export function MainConversation({
                           onAddToNote={openBookmarkModal}
                           noteActionIcon="bookmark"
                           onRegenerate={index === messages.length - 1 && activeSessionId ? handleRegenerate : undefined}
+                          thinkingText={isStreamingAI ? thinkingText : message.thinking_text}
+                          isThinkingStreaming={isThinking && isStreamingAI}
                         />
                       </>
                     )}
