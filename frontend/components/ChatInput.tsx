@@ -113,7 +113,7 @@ export default function ChatInput({
 
   return (
     <div
-      className="relative w-full max-w-3xl mx-auto px-4 pb-6"
+      className="relative w-full max-w-4xl mx-auto px-4 pb-6"
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -139,7 +139,7 @@ export default function ChatInput({
         </div>
       )}
 
-      <div className="relative flex flex-col bg-card rounded-2xl p-3 shadow-sm">
+      <div className="relative flex flex-col bg-card rounded-[28px] border border-border/50 p-4 shadow-lg shadow-black/10">
         {isListening ? (
           <div className="w-full flex items-center justify-center py-3 px-4">
             <InlineWaveform volume={volume} />
@@ -165,7 +165,7 @@ export default function ChatInput({
                 onSendMessage();
               }
             }}
-            className="w-full bg-transparent text-foreground placeholder-muted-foreground resize-none outline-none min-h-[44px] max-h-[200px] py-3 px-2"
+            className="w-full bg-transparent text-foreground placeholder-muted-foreground resize-none outline-none min-h-[52px] max-h-[220px] py-3 px-2 text-[16px]"
             placeholder="Ask anything..."
             rows={1}
             autoFocus

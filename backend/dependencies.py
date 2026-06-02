@@ -87,6 +87,15 @@ class LecturerProfile(BaseModel):
     phone_number: Optional[str] = None
 
 
+class UserRoleInfo(BaseModel):
+    role: Optional[str] = None
+    is_admin: bool = False
+    is_super_admin: bool = False
+    is_global_admin: bool = False
+    is_university_admin: bool = False
+    university_id: Optional[str] = None
+
+
 def _normalize_lecturer_profile(row: Optional[Dict[str, Any]]) -> Optional[LecturerProfile]:
     if not row:
         return None
@@ -118,6 +127,45 @@ def _normalize_lecturer_profile(row: Optional[Dict[str, Any]]) -> Optional[Lectu
         full_name=full_name,
         email=email,
         phone_number=(row.get("phone_number") or None),
+    )
+
+
+def is_global_admin_role(role: Optional[str], university_id: Optional[str] = None) -> bool:
+    normalized_role = (role or "").strip().lower()
+    normalized_university_id = (university_id or "").strip() or None
+    if normalized_role in {"global_admin", "super_admin"}:
+        return True
+    if normalized_role == "admin" and normalized_university_id is None:
+        return True
+    return False
+
+
+def is_university_admin_role(role: Optional[str], university_id: Optional[str] = None) -> bool:
+    normalized_role = (role or "").strip().lower()
+    normalized_university_id = (university_id or "").strip() or None
+    if not normalized_university_id:
+        return False
+    return normalized_role in {"university_admin", "admin"}
+
+
+def _build_role_info(row: Optional[Dict[str, Any]]) -> UserRoleInfo:
+    if not row:
+        return UserRoleInfo()
+
+    role = (row.get("role") or "").strip().lower() or None
+    university_id = (row.get("university_id") or "").strip() or None
+    is_super_admin = role == "super_admin"
+    is_global_admin = is_global_admin_role(role, university_id)
+    is_university_admin = is_university_admin_role(role, university_id)
+    is_admin = role in {"admin", "super_admin", "global_admin", "university_admin"}
+
+    return UserRoleInfo(
+        role=role,
+        is_admin=is_admin,
+        is_super_admin=is_super_admin,
+        is_global_admin=is_global_admin,
+        is_university_admin=is_university_admin,
+        university_id=university_id,
     )
 
 
@@ -248,7 +296,7 @@ async def _run_role_query(execute_fn, *, operation_name: str, user_id: Optional[
     raise last_error
 
 
-async def get_current_user_role(current_user: User) -> Optional[str]:
+async def get_current_user_role_info(current_user: User) -> UserRoleInfo:
     sb = _role_db()
     if not sb:
         raise HTTPException(status_code=503, detail="Database not active")
@@ -258,7 +306,7 @@ async def get_current_user_role(current_user: User) -> Optional[str]:
         if current_user.email:
             normalized_email = current_user.email.strip().lower()
             res = await _run_role_query(
-                lambda: sb.table("user_roles").select("role,email").ilike("email", normalized_email).execute(),
+                lambda: sb.table("user_roles").select("role,email,university_id,created_at").ilike("email", normalized_email).execute(),
                 operation_name="role lookup by email",
                 user_id=current_user.id,
             )
@@ -266,7 +314,7 @@ async def get_current_user_role(current_user: User) -> Optional[str]:
 
         if not rows:
             res = await _run_role_query(
-                lambda: sb.table("user_roles").select("role,user_id").eq("user_id", current_user.id).execute(),
+                lambda: sb.table("user_roles").select("role,user_id,university_id,created_at").eq("user_id", current_user.id).execute(),
                 operation_name="role lookup by user_id",
                 user_id=current_user.id,
             )
@@ -277,11 +325,37 @@ async def get_current_user_role(current_user: User) -> Optional[str]:
             raise HTTPException(status_code=503, detail="Authorization service temporarily unavailable")
         raise HTTPException(status_code=500, detail="Authorization check failed")
 
+    best_info = UserRoleInfo()
+    best_rank = -1
     for row in rows:
-        role = (row.get("role") or "").strip().lower()
-        if role in {"admin", "super_admin"}:
-            return role
-    return None
+        info = _build_role_info(row)
+        if not info.role:
+            continue
+
+        rank = 0
+        if info.is_super_admin:
+            rank = 5
+        elif info.role == "global_admin":
+            rank = 4
+        elif info.is_global_admin:
+            rank = 3
+        elif info.is_university_admin:
+            rank = 2
+        elif info.is_admin:
+            rank = 1
+
+        if rank > best_rank:
+            best_info = info
+            best_rank = rank
+
+    return best_info
+
+
+async def get_current_user_role(current_user: User, *, include_details: bool = False):
+    info = await get_current_user_role_info(current_user)
+    if include_details:
+        return info
+    return info.role
 
 
 async def get_lecturer_profile_for_user(current_user: User) -> Optional[LecturerProfile]:
@@ -314,17 +388,17 @@ async def get_lecturer_profile_for_user(current_user: User) -> Optional[Lecturer
 
 
 async def require_admin_role(current_user: User) -> str:
-    role = await get_current_user_role(current_user)
-    if role not in {"admin", "super_admin"}:
+    role_info = await get_current_user_role_info(current_user)
+    if not role_info.is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
-    return role
+    return role_info.role or "admin"
 
 
 async def require_super_admin_role(current_user: User) -> str:
-    role = await get_current_user_role(current_user)
-    if role != "super_admin":
+    role_info = await get_current_user_role_info(current_user)
+    if role_info.role not in {"super_admin", "global_admin"}:
         raise HTTPException(status_code=403, detail="Only super admins can access this resource")
-    return role
+    return role_info.role or "super_admin"
 
 
 async def get_current_user(authorization: Optional[str] = Header(None)) -> User:
@@ -386,6 +460,31 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> User:
 async def get_current_admin(current_user: User = Depends(get_current_user)) -> User:
     await require_admin_role(current_user)
     return current_user
+
+
+async def get_current_global_admin(current_user: User = Depends(get_current_user)) -> User:
+    role_info = await get_current_user_role_info(current_user)
+    if not role_info.is_global_admin:
+        raise HTTPException(status_code=403, detail="Global admin access required")
+    return current_user
+
+
+async def get_current_university_admin(current_user: User = Depends(get_current_user)) -> User:
+    role_info = await get_current_user_role_info(current_user)
+    if not role_info.is_university_admin or not role_info.university_id:
+        raise HTTPException(status_code=403, detail="University admin access required")
+    return current_user
+
+
+async def get_admin_university_scope(current_user: User = Depends(get_current_user)) -> Optional[str]:
+    role_info = await get_current_user_role_info(current_user)
+    if not role_info.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    if role_info.is_global_admin:
+        return None
+    if role_info.is_university_admin and role_info.university_id:
+        return role_info.university_id
+    raise HTTPException(status_code=403, detail="University admin scope is not configured")
 
 
 async def get_current_super_admin(current_user: User = Depends(get_current_user)) -> User:

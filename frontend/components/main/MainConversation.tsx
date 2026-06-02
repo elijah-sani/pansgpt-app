@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'; // changed: added useLayoutEffect for synchronous scroll anchoring after DOM paint
 import type { CSSProperties, ChangeEvent, ClipboardEvent, Dispatch, RefObject, SetStateAction } from 'react';
-import { AlertCircle, Check, ChevronDown, Copy, Pencil, RotateCw } from 'lucide-react';
+import { AlertCircle, BookOpen, Check, ChevronDown, Copy, FileText, GraduationCap, HelpCircle, Layers, Pencil, RotateCw } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import ChatInput from '@/components/ChatInput';
 import ChatSkeleton from '@/components/ChatSkeleton';
@@ -19,6 +19,14 @@ const CHAT_TEXT_SIZE_STYLES: Record<ChatTextSize, CSSProperties> = {
   medium: { '--chat-text-size': '15px' } as CSSProperties,
   large: { '--chat-text-size': '17px' } as CSSProperties,
 };
+
+const EMPTY_STATE_CHIPS = [
+  { label: 'Study', prompt: 'Help me study my current pharmacy materials.', icon: GraduationCap },
+  { label: 'Summarize PDF', prompt: 'Summarize this PDF for me.', icon: FileText },
+  { label: 'Quiz me', prompt: 'Quiz me on this topic.', icon: HelpCircle },
+  { label: 'Past questions', prompt: 'Help me practice past questions.', icon: Layers },
+  { label: 'Explain topic', prompt: 'Explain this topic in simple terms.', icon: BookOpen },
+];
 
 const getImages = (imgData: string | undefined): string[] => {
   if (!imgData) {
@@ -121,6 +129,7 @@ type MainConversationProps = {
   onThinkingModeChange: (value: boolean) => void;
   thinkingText: string;
   isThinking: boolean;
+  studentFirstName: string;
 };
 
 export function MainConversation({
@@ -173,6 +182,7 @@ export function MainConversation({
   onThinkingModeChange,
   thinkingText,
   isThinking,
+  studentFirstName,
 }: MainConversationProps) {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [chatTextSize, setChatTextSize] = useState<ChatTextSize>('medium');
@@ -399,6 +409,36 @@ export function MainConversation({
     });
   };
 
+  const chatInput = (
+    <ChatInput
+      pendingAttachments={pendingAttachments}
+      maxImages={maxImages}
+      inputMessage={inputMessage}
+      isListening={isListening}
+      isStarting={isStarting}
+      isProcessing={isProcessing}
+      isLoading={isLoading}
+      isWebSearchEnabled={isWebSearchEnabled}
+      webSearchAvailable={webSearchAvailable}
+      webSearchUsage={webSearchUsage}
+      volume={volume}
+      textareaRef={textareaRef}
+      fileInputRef={fileInputRef}
+      onInputMessageChange={setInputMessage}
+      onRemoveAttachment={removeAttachment}
+      onFileUpload={handleFileUpload}
+      onPaste={handlePaste}
+      onToggleWebSearch={() => setWebSearchEnabled((previous) => !previous)}
+      onVoiceToggle={handleVoiceToggle}
+      onStopGeneration={handleStopGeneration}
+      onSendMessage={handleSendMessage}
+      onDropImage={onDropImage}
+      queuedMessageCount={queuedMessageCount}
+      thinkingMode={thinkingMode}
+      onThinkingModeChange={onThinkingModeChange}
+    />
+  );
+
   return (
     <div className="flex-1 w-full min-w-0 min-h-0 relative flex flex-col bg-background">
       {/* changed: absolute at top-[73px] = exactly below the 73px header, no z-index tricks needed */}
@@ -429,18 +469,41 @@ export function MainConversation({
         className="flex-1 min-h-0 overflow-y-auto pt-16 pb-4"
         style={{ ...CHAT_TEXT_SIZE_STYLES[chatTextSize], overflowAnchor: 'none' }} // changed: overflowAnchor:'none' lets our useLayoutEffect own scroll anchoring
       >
-        <div className="max-w-3xl mx-auto px-4 min-h-full flex flex-col">
+        <div className="max-w-4xl mx-auto px-4 min-h-full flex flex-col">
           {isLoadingChat ? (
             <ChatSkeleton />
           ) : !hasMessages ? (
-            <div className="flex-1 flex flex-col items-center justify-center">
-              <div className="relative mb-6">
-                <div className="absolute inset-0 w-16 h-16 rounded-full bg-primary/20 blur-xl" />
-                <div className="relative w-16 h-16 flex items-center justify-center">
-                  <img src="/avatar.png" alt="PansGPT" className="w-10 h-10 object-contain drop-shadow-sm" />
+            <div className="flex-1 flex flex-col items-center justify-center pb-8 pt-4 sm:pb-14">
+              <div className="w-full max-w-4xl">
+                <div className="mb-6 flex items-center justify-center gap-3 text-center sm:mb-7">
+                  <div className="relative hidden h-9 w-9 shrink-0 items-center justify-center sm:flex">
+                    <div className="absolute inset-0 rounded-full bg-primary/20 blur-lg" />
+                    <img src="/avatar.png" alt="PansGPT" className="relative h-7 w-7 object-contain drop-shadow-sm" />
+                  </div>
+                  <h2 className="text-3xl font-medium leading-tight text-foreground sm:text-4xl">
+                    Hello Pharm, {studentFirstName}
+                  </h2>
+                </div>
+
+                {chatInput}
+
+                <div className="mt-3 flex w-full gap-2 overflow-x-auto px-4 pb-1 sm:mt-4 sm:justify-center sm:overflow-visible sm:px-0">
+                  {EMPTY_STATE_CHIPS.map(({ label, prompt, icon: Icon }) => (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => {
+                        setInputMessage(prompt);
+                        window.setTimeout(() => textareaRef.current?.focus(), 0);
+                      }}
+                      className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-border/60 bg-card px-3 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-muted"
+                    >
+                      <Icon className="h-4 w-4 text-muted-foreground" />
+                      <span>{label}</span>
+                    </button>
+                  ))}
                 </div>
               </div>
-              <h2 className="text-2xl sm:text-3xl font-medium text-foreground">What can I help with?</h2>
             </div>
           ) : (
             <div className="py-4 flex flex-col">
@@ -722,33 +785,7 @@ export function MainConversation({
         </div>
       )}
 
-      <ChatInput
-        pendingAttachments={pendingAttachments}
-        maxImages={maxImages}
-        inputMessage={inputMessage}
-        isListening={isListening}
-        isStarting={isStarting}
-        isProcessing={isProcessing}
-        isLoading={isLoading}
-        isWebSearchEnabled={isWebSearchEnabled}
-        webSearchAvailable={webSearchAvailable}
-        webSearchUsage={webSearchUsage}
-        volume={volume}
-        textareaRef={textareaRef}
-        fileInputRef={fileInputRef}
-        onInputMessageChange={setInputMessage}
-        onRemoveAttachment={removeAttachment}
-        onFileUpload={handleFileUpload}
-        onPaste={handlePaste}
-        onToggleWebSearch={() => setWebSearchEnabled((previous) => !previous)}
-        onVoiceToggle={handleVoiceToggle}
-        onStopGeneration={handleStopGeneration}
-        onSendMessage={handleSendMessage}
-        onDropImage={onDropImage}
-        queuedMessageCount={queuedMessageCount}
-        thinkingMode={thinkingMode}
-        onThinkingModeChange={onThinkingModeChange}
-      />
+      {hasMessages && chatInput}
     </div>
   );
 }

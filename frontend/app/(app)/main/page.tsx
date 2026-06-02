@@ -98,6 +98,8 @@ export default function MainPage() {
     return null;
   }
 
+  const studentFirstName = user.name.trim().split(/\s+/)[0] || 'there';
+
   return (
     <div className="h-full min-h-0 flex overflow-hidden bg-background text-foreground">
       <div className="flex-1 w-full min-w-0 min-h-0 relative flex flex-col bg-background">
@@ -160,6 +162,7 @@ export default function MainPage() {
           onThinkingModeChange={setThinkingMode}
           thinkingText={thinkingText}
           isThinking={isThinking}
+          studentFirstName={studentFirstName}
         />
       </div>
 
@@ -201,7 +204,7 @@ export default function MainPage() {
       />
       <WelcomeModal
         isOpen={showWelcomeModal}
-        firstName={user.name.split(' ')[0] || 'there'}
+        firstName={studentFirstName}
         onClose={() => setShowWelcomeModal(false)}
       />
     </div>
