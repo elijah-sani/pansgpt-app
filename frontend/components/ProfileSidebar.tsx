@@ -89,7 +89,7 @@ export default function ProfileSidebar({
                     <div className="mt-4 px-4 pb-4">
                         <h3 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider px-1 mb-2">Account</h3>
 
-                        <div className="bg-card rounded-xl overflow-hidden">
+                        <div className="overflow-hidden rounded-xl border border-border/70 bg-card">
                             <div>
                                 <button
                                     onClick={onOpenPersonalInfo}

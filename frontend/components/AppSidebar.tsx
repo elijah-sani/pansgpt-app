@@ -3,13 +3,14 @@ import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
 import { usePathname, useRouter } from "next/navigation";
-import { Bug, ChevronRight, CircleHelp, FileText, Mail, PanelLeft, Settings, NotepadText, MessageSquare, BookOpen, Brain, X, Loader2 } from "lucide-react";
+import { Bug, CalendarDays, ChevronDown, ChevronRight, CircleHelp, FileText, Mail, MoreVertical, PanelLeft, Pencil, Search, Settings, SlidersHorizontal, NotepadText, MessageSquare, BookOpen, Brain, Trash2, X, Loader2, SquarePen } from "lucide-react";
 import Logo from "@/components/Logo";
 import { useChatSession } from "@/lib/ChatSessionContext";
 import { MainSidebarContent } from "@/components/sidebar/MainSidebarContent";
 import { StudySidebarContent } from "@/components/sidebar/StudySidebarContent";
 import { QuizSidebarContent } from "@/components/sidebar/QuizSidebarContent";
 import { QuizFilterModal } from "@/components/sidebar/QuizFilterModal";
+import { SidebarConversationList } from "@/components/sidebar/SidebarConversationList";
 import { SidebarLink } from "@/components/sidebar/SidebarPrimitives";
 import { useSidebarQuizHistory } from "@/hooks/useSidebarQuizHistory";
 import { api } from "@/lib/api";
@@ -40,6 +41,121 @@ type SidebarNoteItem = {
   id: string;
   title: string;
 };
+
+type SidebarChatSession = {
+  id: string;
+  title: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+function getChatDateGroup(timestamp?: string | null) {
+  if (!timestamp) {
+    return "Older";
+  }
+
+  const created = new Date(timestamp);
+  if (Number.isNaN(created.getTime())) {
+    return "Older";
+  }
+
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfCreated = new Date(created.getFullYear(), created.getMonth(), created.getDate()).getTime();
+  const dayDiff = Math.floor((startOfToday - startOfCreated) / 86400000);
+
+  if (dayDiff <= 0) return "Today";
+  if (dayDiff === 1) return "Yesterday";
+  if (dayDiff <= 7) return "Previous 7 days";
+  if (dayDiff <= 30) return "Previous 30 days";
+  return created.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+}
+
+function groupChatSessionsByDate(sessions: SidebarChatSession[]) {
+  const groups: Array<{ label: string; sessions: SidebarChatSession[] }> = [];
+  const groupMap = new Map<string, SidebarChatSession[]>();
+
+  sessions.forEach((session) => {
+    const label = getChatDateGroup(session.updated_at || session.created_at);
+    const group = groupMap.get(label) || [];
+    group.push(session);
+    if (!groupMap.has(label)) {
+      groupMap.set(label, group);
+      groups.push({ label, sessions: group });
+    }
+  });
+
+  return groups;
+}
+
+type SidebarChatHistorySectionProps = {
+  activeSessionId: string | null;
+  handleLoadSession: (id: string) => void;
+  isLoadingHistory: boolean;
+  onDeleteRequest?: (id: string) => void;
+  onRenameRequest?: (id: string, title: string) => void;
+  onSearchOpen?: () => void;
+  openMenuId: string | null;
+  sessions: SidebarChatSession[];
+  setOpenMenuId: (id: string | null) => void;
+};
+
+function SidebarChatHistorySection({
+  activeSessionId,
+  handleLoadSession,
+  isLoadingHistory,
+  onDeleteRequest,
+  onRenameRequest,
+  onSearchOpen,
+  openMenuId,
+  sessions,
+  setOpenMenuId,
+}: SidebarChatHistorySectionProps) {
+  const [isDateGroupingEnabled, setIsDateGroupingEnabled] = useState(false);
+
+  return (
+    <>
+      <div className="px-5 pt-4"><div className="border-t border-border" /></div>
+      <div className="flex flex-col flex-1 overflow-hidden pt-2 pb-2">
+        <div className="flex items-center justify-between px-6 pt-2 pb-3 shrink-0">
+          <h4 className="text-xs font-bold text-foreground/70 tracking-wider uppercase">Chat history</h4>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setIsDateGroupingEnabled((previous) => !previous)}
+              aria-pressed={isDateGroupingEnabled}
+              title={isDateGroupingEnabled ? "Disable date grouping" : "Enable date grouping"}
+              className={`rounded-md p-1.5 transition-colors ${
+                isDateGroupingEnabled ? "bg-muted text-foreground" : "text-foreground hover:bg-muted"
+              }`}
+            >
+              <CalendarDays size={14} />
+            </button>
+            {onSearchOpen && (
+              <button onClick={onSearchOpen} className="p-1.5 text-foreground hover:bg-muted rounded-md transition-colors">
+                <Search size={14} />
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto px-3 pb-2">
+          <SidebarConversationList
+            activeSessionId={activeSessionId}
+            emptyText="No chats yet"
+            handleLoadSession={handleLoadSession}
+            isDateGroupingEnabled={isDateGroupingEnabled}
+            isLoadingHistory={isLoadingHistory}
+            loadingText="Loading..."
+            onDeleteRequest={onDeleteRequest}
+            onRenameRequest={onRenameRequest}
+            openMenuId={openMenuId}
+            sessions={sessions}
+            setOpenMenuId={setOpenMenuId}
+          />
+        </div>
+      </div>
+    </>
+  );
+}
 
 function isQuickNote(note: { tags?: string[] | null }) {
   return Array.isArray(note.tags) && note.tags.some((tag) => typeof tag === "string" && tag.startsWith(QUICK_NOTE_TAG_PREFIX));
@@ -72,6 +188,8 @@ export default function AppSidebar({
   const pathname = usePathname();
   const router = useRouter();
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [isDateGroupingEnabled, setIsDateGroupingEnabled] = useState(false);
+  const [isMobileQuizHistoryOpen, setIsMobileQuizHistoryOpen] = useState(true);
   const [notesList, setNotesList] = useState<SidebarNoteItem[]>([]);
   const [notesCount, setNotesCount] = useState(0);
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
@@ -101,6 +219,7 @@ export default function AppSidebar({
   const isOnReader = pathname.startsWith("/reader");
   const isOnQuiz = pathname.startsWith("/quiz");
   const isOnNotes = pathname.startsWith("/notes");
+  const showChatHistory = isOnMain || isOnReader || isOnQuiz || isOnNotes;
   const isIconOnly = !isOpen;
   const useCompactNotesList = notesCount > NOTES_SWITCH_THRESHOLD;
   const quickNotes = useCompactNotesList ? notesList.slice(0, QUICK_NOTES_LIMIT) : [];
@@ -316,11 +435,18 @@ export default function AppSidebar({
         setIsHelpSubmenuOpen(false);
         setDesktopHelpMenuPosition(null);
       }
+      if (
+        openMenuId &&
+        targetNode instanceof Element &&
+        !targetNode.closest("[data-mobile-chat-menu]")
+      ) {
+        setOpenMenuId(null);
+      }
     };
 
     document.addEventListener('pointerdown', handlePointerDown);
     return () => document.removeEventListener('pointerdown', handlePointerDown);
-  }, []);
+  }, [openMenuId]);
 
   useEffect(() => {
     return () => {
@@ -394,6 +520,9 @@ export default function AppSidebar({
 
   const handleLoadSession = async (id: string) => {
     setActiveSessionId(id);
+    if (!isOnMain) {
+      router.push("/main");
+    }
     if (typeof window !== "undefined" && window.innerWidth < 768) {
       onClose();
     }
@@ -494,9 +623,231 @@ export default function AppSidebar({
     <>
       <aside
         className={`
-          fixed inset-y-0 left-0 z-[100] w-[80vw] max-w-sm transform transition-transform duration-300 bg-card
+          fixed inset-y-0 left-0 z-[140] flex w-screen transform flex-col bg-background text-foreground transition-transform duration-300 md:hidden
           ${isOpen ? "translate-x-0" : "-translate-x-full"}
-          md:relative md:inset-auto md:z-[100] md:max-w-none md:translate-x-0
+        `}
+      >
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex items-center justify-between px-5 pb-4 pt-6">
+            <button
+              type="button"
+              onClick={() => {
+                router.push("/main");
+                onClose();
+              }}
+              className="rounded-[10px] transition-transform active:scale-[0.98]"
+              style={{ WebkitTapHighlightColor: "transparent" }}
+            >
+              <Logo className="h-6 w-auto" />
+            </button>
+
+            <div className="flex items-center gap-3">
+              {onSearchOpen && showChatHistory && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSearchOpen();
+                    onClose();
+                  }}
+                  aria-label="Search chats"
+                  className="flex h-9 w-9 items-center justify-center rounded-[10px] text-foreground transition-all active:scale-95 active:bg-muted"
+                  style={{ WebkitTapHighlightColor: "transparent" }}
+                >
+                  <Search className="h-[18px] w-[18px]" strokeWidth={2.4} />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Close sidebar"
+                className="flex h-9 w-9 items-center justify-center rounded-[10px] text-foreground transition-all active:scale-95 active:bg-muted"
+                style={{ WebkitTapHighlightColor: "transparent" }}
+              >
+                <X className="h-[18px] w-[18px]" strokeWidth={2.4} />
+              </button>
+            </div>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-32">
+            <nav className="space-y-0.5 pt-3">
+              <button
+                type="button"
+                onClick={() => {
+                  router.push("/reader");
+                  onClose();
+                }}
+                className={`flex min-h-[40px] w-full items-center gap-3 rounded-[10px] px-1 text-left text-[15px] font-semibold transition-all active:scale-[0.98] active:bg-muted ${
+                  isOnReader ? "text-primary" : "text-foreground"
+                }`}
+                style={{ WebkitTapHighlightColor: "transparent" }}
+              >
+                <BookOpen className="h-[18px] w-[18px] shrink-0" strokeWidth={2.2} />
+                <span>Study</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  router.push("/quiz");
+                  onClose();
+                }}
+                className={`flex min-h-[40px] w-full items-center gap-3 rounded-[10px] px-1 text-left text-[15px] font-semibold transition-all active:scale-[0.98] active:bg-muted ${
+                  isOnQuiz ? "text-primary" : "text-foreground"
+                }`}
+                style={{ WebkitTapHighlightColor: "transparent" }}
+              >
+                <Brain className="h-[18px] w-[18px] shrink-0" strokeWidth={2.2} />
+                <span>Quiz</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  router.push("/notes");
+                  onClose();
+                }}
+                className={`flex min-h-[40px] w-full items-center gap-3 rounded-[10px] px-1 text-left text-[15px] font-semibold transition-all active:scale-[0.98] active:bg-muted ${
+                  isOnNotes ? "text-primary" : "text-foreground"
+                }`}
+                style={{ WebkitTapHighlightColor: "transparent" }}
+              >
+                <NotepadText className="h-[18px] w-[18px] shrink-0" strokeWidth={2.2} />
+                <span>Notes</span>
+              </button>
+            </nav>
+
+            {isOnQuiz && (
+              <section className="pt-6">
+                <div className="flex items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setIsMobileQuizHistoryOpen((previous) => !previous)}
+                    aria-expanded={isMobileQuizHistoryOpen}
+                    className="flex min-h-8 flex-1 items-center gap-2 text-left transition-colors active:text-foreground"
+                    style={{ WebkitTapHighlightColor: "transparent" }}
+                  >
+                    <ChevronDown
+                      className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${
+                        isMobileQuizHistoryOpen ? "rotate-0" : "-rotate-90"
+                      }`}
+                    />
+                    <h2 className="text-[15px] font-semibold text-foreground">Quiz history</h2>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowFilterModal(true)}
+                    title="Filter quiz history"
+                    aria-label="Filter quiz history"
+                    className={`relative flex h-8 w-8 items-center justify-center rounded-[10px] transition-all active:scale-95 active:bg-muted ${
+                      hasActiveFilters ? "bg-primary/10 text-primary" : "text-muted-foreground"
+                    }`}
+                    style={{ WebkitTapHighlightColor: "transparent" }}
+                  >
+                    <SlidersHorizontal className="h-4 w-4" />
+                    {hasActiveFilters && <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-primary" />}
+                  </button>
+                </div>
+                {isMobileQuizHistoryOpen && (
+                  <div className="mt-3 space-y-1">
+                    {quizLoading ? (
+                      <div className="flex min-h-[38px] items-center gap-3 rounded-[10px] text-sm font-medium text-muted-foreground">
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                        <span>Loading quizzes...</span>
+                      </div>
+                    ) : quizResults.length === 0 ? (
+                      <p className="py-3 text-sm font-medium text-muted-foreground">No quizzes yet</p>
+                    ) : (
+                      quizResults.map((item) =>
+                        item.result ? (
+                          <button
+                            key={item.result.id}
+                            type="button"
+                            onClick={() => {
+                              router.push(`/quiz/${item.id}/results?resultId=${item.result?.id}`);
+                              onClose();
+                            }}
+                            className="flex min-h-[38px] w-full items-center justify-between gap-3 rounded-[10px] px-1 text-left text-[14px] font-medium text-foreground transition-all active:scale-[0.98] active:bg-muted"
+                            style={{ WebkitTapHighlightColor: "transparent" }}
+                          >
+                            <span className="line-clamp-1">{item.title}</span>
+                            <span className="shrink-0 text-sm font-bold text-muted-foreground">{item.result.percentage.toFixed(0)}%</span>
+                          </button>
+                        ) : null
+                      )
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
+
+            {showChatHistory && (
+              <section className="pt-6">
+                <div className="flex items-center justify-between gap-3">
+                  <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Recent chats</h2>
+                  <button
+                    type="button"
+                    onClick={() => setIsDateGroupingEnabled((previous) => !previous)}
+                    aria-pressed={isDateGroupingEnabled}
+                    aria-label={isDateGroupingEnabled ? "Disable date grouping" : "Enable date grouping"}
+                    className={`flex h-8 w-8 items-center justify-center rounded-[10px] transition-all active:scale-95 active:bg-muted ${
+                      isDateGroupingEnabled ? "bg-muted text-foreground" : "text-muted-foreground"
+                    }`}
+                    style={{ WebkitTapHighlightColor: "transparent" }}
+                  >
+                    <CalendarDays className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="mt-2 space-y-0">
+                  <SidebarConversationList
+                    activeSessionId={activeSessionId}
+                    handleLoadSession={handleLoadSession}
+                    isDateGroupingEnabled={isDateGroupingEnabled}
+                    isLoadingHistory={isLoadingHistory}
+                    onDeleteRequest={onDeleteRequest}
+                    onRenameRequest={onRenameRequest}
+                    openMenuId={openMenuId}
+                    sessions={sessions}
+                    setOpenMenuId={setOpenMenuId}
+                  />
+                </div>
+              </section>
+            )}
+
+          </div>
+
+          <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[160] h-28 bg-gradient-to-t from-background via-background/90 to-transparent">
+            <div className="pointer-events-auto absolute inset-x-0 bottom-0 flex items-center justify-between gap-3 px-5 pb-5">
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenSettings();
+                }}
+                aria-label="Settings and help"
+                className="flex h-10 w-10 items-center justify-center rounded-[12px] border border-border/70 bg-card/80 text-foreground shadow-lg backdrop-blur-md transition-all active:scale-95 active:bg-muted"
+                style={{ WebkitTapHighlightColor: "transparent" }}
+              >
+                <Settings className="h-[18px] w-[18px]" strokeWidth={2.2} />
+              </button>
+              <div className="flex flex-1 justify-end">
+                <button
+                  type="button"
+                  onClick={handleNewChat}
+                  className="flex min-h-[44px] items-center justify-center gap-2 rounded-full border border-primary/40 bg-primary px-5 text-[15px] font-bold text-primary-foreground shadow-2xl backdrop-blur-md transition-all active:scale-[0.98] active:bg-primary/90"
+                  style={{ WebkitTapHighlightColor: "transparent" }}
+                >
+                  <SquarePen className="h-[18px] w-[18px]" strokeWidth={2.2} />
+                  <span>Chat</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <aside
+        className={`
+          fixed inset-y-0 left-0 z-[100] hidden w-[80vw] max-w-sm transform transition-transform duration-300 bg-card
+          ${isOpen ? "translate-x-0" : "-translate-x-full"}
+          md:relative md:inset-auto md:z-[100] md:block md:max-w-none md:translate-x-0
           md:transition-[width,opacity] md:duration-300 md:ease-in-out md:flex-shrink-0 md:overflow-visible
           ${isOpen ? "md:w-72" : "md:w-[63px] md:translate-x-0"}
         `}
@@ -514,6 +865,7 @@ export default function AppSidebar({
             </button>
           </div>
 
+          {/* COMMENTED OUT: notes sidebar — re-enable by adding quickNotes={quickNotes} onOpenQuickNote={openQuickNoteModal} */}
           {isOnMain && (
             <MainSidebarContent
               activeSessionId={activeSessionId}
@@ -525,8 +877,6 @@ export default function AppSidebar({
               onRenameRequest={onRenameRequest}
               onSearchOpen={onSearchOpen}
               openMenuId={openMenuId}
-              quickNotes={quickNotes}
-              onOpenQuickNote={openQuickNoteModal}
               routerPush={(path) => router.push(path)}
               sessions={sessions}
               setOpenMenuId={setOpenMenuId}
@@ -537,8 +887,6 @@ export default function AppSidebar({
             <StudySidebarContent
               isIconOnly={isIconOnly}
               pathname={pathname}
-              quickNotes={quickNotes}
-              onOpenQuickNote={openQuickNoteModal}
               routerPush={(path) => router.push(path)}
             />
           )}
@@ -548,12 +896,10 @@ export default function AppSidebar({
               hasActiveFilters={hasActiveFilters}
               isIconOnly={isIconOnly}
               pathname={pathname}
-              quickNotes={quickNotes}
               quizLoading={quizLoading}
               quizResults={quizResults}
               routerPush={(path) => router.push(path)}
               showFilters={() => setShowFilterModal(true)}
-              onOpenQuickNote={openQuickNoteModal}
             />
           )}
 
@@ -564,6 +910,20 @@ export default function AppSidebar({
               <SidebarLink icon={Brain} label="Quiz" onClick={() => router.push('/quiz')} isIconOnly={isIconOnly} />
               <SidebarLink icon={NotepadText} label="Notes" onClick={() => router.push('/notes')} isIconOnly={isIconOnly} active />
             </nav>
+          )}
+
+          {(isOnReader || isOnQuiz || isOnNotes) && !isIconOnly && (
+            <SidebarChatHistorySection
+              activeSessionId={activeSessionId}
+              handleLoadSession={handleLoadSession}
+              isLoadingHistory={isLoadingHistory}
+              onDeleteRequest={onDeleteRequest}
+              onRenameRequest={onRenameRequest}
+              onSearchOpen={onSearchOpen}
+              openMenuId={openMenuId}
+              sessions={sessions}
+              setOpenMenuId={setOpenMenuId}
+            />
           )}
 
           <div
@@ -713,7 +1073,8 @@ export default function AppSidebar({
           )
         : null}
 
-      <div className={`fixed inset-0 z-[220] pointer-events-none transition-opacity duration-300 ${isQuickNoteModalOpen ? "opacity-100" : "opacity-0"}`}>
+      {/* COMMENTED OUT: quick-note modal — re-enable when ready */}
+      {/* <div className={`fixed inset-0 z-[220] pointer-events-none transition-opacity duration-300 ${isQuickNoteModalOpen ? "opacity-100" : "opacity-0"}`}>
         <aside
           className={`fixed top-80 z-[221] flex h-[50dvh] w-[min(216px,calc(100vw-24px))] min-w-[216px] max-w-[216px] flex-col rounded-2xl border border-border bg-card shadow-2xl transition-all duration-300 ease-out ${
             isQuickNoteModalOpen
@@ -749,14 +1110,8 @@ export default function AppSidebar({
               />
             </div>
           </div>
-          <style jsx global>{`
-            .bn-suggestion-menu,
-            [data-floating-ui-portal] {
-              z-index: 260 !important;
-            }
-          `}</style>
         </aside>
-      </div>
+      </div> */}
     </>
   );
 }

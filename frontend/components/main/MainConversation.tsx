@@ -28,6 +28,112 @@ const EMPTY_STATE_CHIPS = [
   { label: 'Explain topic', prompt: 'Explain this topic in simple terms.', icon: BookOpen },
 ];
 
+type WelcomeCopy = {
+  greeting: string;
+  mobileGreeting: string;
+  subtexts: string[];
+};
+
+const pickFrom = (items: string[]) => items[Math.floor(Math.random() * items.length)] || items[0];
+
+const buildWelcomeCopy = (firstName: string): WelcomeCopy => {
+  const hour = new Date().getHours();
+  const name = firstName || 'there';
+  const mobileGreeting = pickFrom([
+    `Hi, ${name}`,
+    `Hello, ${name}`,
+    `Welcome, ${name}`,
+    `Hey, ${name}`,
+  ]);
+
+  if (hour >= 23 || hour < 3) {
+    return {
+      greeting: pickFrom([
+        `Hey night owl, ${name}`,
+        `Still studying, Pharm ${name}?`,
+        `Late session, ${name}?`,
+      ]),
+      mobileGreeting,
+      subtexts: [
+        'What are we studying tonight?',
+        'Let us keep it simple and focused.',
+        'Need a quick explanation before you rest?',
+        'Want a short recap before calling it a night?',
+        'Bring the hard part. We will work through it slowly.',
+      ],
+    };
+  }
+
+  if (hour >= 3 && hour < 5) {
+    return {
+      greeting: pickFrom([
+        `Early start, Pharm ${name}`,
+        `Up early, ${name}?`,
+        `Hello Pharm, ${name}`,
+      ]),
+      mobileGreeting,
+      subtexts: [
+        'What should we warm up with?',
+        'Want a quick revision before the day starts?',
+        'Let us make this early session count.',
+        'Which topic needs a calm first pass?',
+      ],
+    };
+  }
+
+  if (hour >= 5 && hour < 12) {
+    return {
+      greeting: pickFrom([
+        `Good morning, Pharm ${name}`,
+        `Hello Pharm, ${name}`,
+        `Ready to study, ${name}?`,
+      ]),
+      mobileGreeting,
+      subtexts: [
+        'What are we studying today?',
+        'Want a quick recap before class?',
+        "Let's make today's lectures easier to follow.",
+        'Which topic should we clear up before the day gets busy?',
+        'Need a simple explanation to start strong?',
+      ],
+    };
+  }
+
+  if (hour >= 12 && hour < 17) {
+    return {
+      greeting: pickFrom([
+        `Good afternoon, Pharm ${name}`,
+        `Hi Pharm, ${name}`,
+        `Welcome back, ${name}`,
+      ]),
+      mobileGreeting,
+      subtexts: [
+        'What topic should we clear up?',
+        "Need help connecting today's notes?",
+        'Let us review it while it is still fresh.',
+        'Which concept from class should we simplify?',
+        'Want to test yourself with a few questions?',
+      ],
+    };
+  }
+
+  return {
+    greeting: pickFrom([
+      `Good evening, Pharm ${name}`,
+      `Welcome back, ${name}`,
+      `Hello Pharm, ${name}`,
+    ]),
+    mobileGreeting,
+    subtexts: [
+      "Want a quick recap of today's lectures?",
+      "Let's turn today's study into something clear.",
+      'What should we revise tonight?',
+      'Need help making sense of a tough topic?',
+      'Ready for a focused revision session?',
+    ],
+  };
+};
+
 const getImages = (imgData: string | undefined): string[] => {
   if (!imgData) {
     return [];
@@ -199,6 +305,57 @@ export function MainConversation({
   const [isSavingBookmark, setIsSavingBookmark] = useState(false);
   const [selectedExistingNoteId, setSelectedExistingNoteId] = useState<string | null>(null);
   const [existingNoteSearch, setExistingNoteSearch] = useState('');
+  const [welcomeCopy, setWelcomeCopy] = useState<WelcomeCopy>(() => ({
+    greeting: `Hello Pharm, ${studentFirstName || 'there'}`,
+    mobileGreeting: `Hi, ${studentFirstName || 'there'}`,
+    subtexts: ['What are we studying today?'],
+  }));
+  const [welcomeSubtextIndex, setWelcomeSubtextIndex] = useState(0);
+  const [typedWelcomeSubtext, setTypedWelcomeSubtext] = useState('What are we studying today?');
+
+  useEffect(() => {
+    setWelcomeCopy(buildWelcomeCopy(studentFirstName));
+    setWelcomeSubtextIndex(0);
+  }, [studentFirstName]);
+
+  useEffect(() => {
+    if (hasMessages || welcomeCopy.subtexts.length <= 1) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      setWelcomeSubtextIndex((current) => (current + 1) % welcomeCopy.subtexts.length);
+    }, 150000);
+
+    return () => window.clearInterval(interval);
+  }, [hasMessages, welcomeCopy.subtexts.length]);
+
+  const currentWelcomeSubtext = welcomeCopy.subtexts[welcomeSubtextIndex] || welcomeCopy.subtexts[0] || '';
+
+  useEffect(() => {
+    if (!currentWelcomeSubtext) {
+      setTypedWelcomeSubtext('');
+      return;
+    }
+
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (prefersReducedMotion) {
+      setTypedWelcomeSubtext(currentWelcomeSubtext);
+      return;
+    }
+
+    setTypedWelcomeSubtext('');
+    let cursor = 0;
+    const interval = window.setInterval(() => {
+      cursor += 1;
+      setTypedWelcomeSubtext(currentWelcomeSubtext.slice(0, cursor));
+      if (cursor >= currentWelcomeSubtext.length) {
+        window.clearInterval(interval);
+      }
+    }, 24);
+
+    return () => window.clearInterval(interval);
+  }, [currentWelcomeSubtext]);
 
   useEffect(() => {
     const savedSize = window.localStorage.getItem(CHAT_TEXT_SIZE_KEY);
@@ -409,7 +566,11 @@ export function MainConversation({
     });
   };
 
-  const chatInput = (
+  const renderChatInput = (
+    compactSpacing = false,
+    variant: 'default' | 'welcome' = 'default',
+    placeholder = 'Ask anything...'
+  ) => (
     <ChatInput
       pendingAttachments={pendingAttachments}
       maxImages={maxImages}
@@ -436,6 +597,9 @@ export function MainConversation({
       queuedMessageCount={queuedMessageCount}
       thinkingMode={thinkingMode}
       onThinkingModeChange={onThinkingModeChange}
+      compactSpacing={compactSpacing}
+      variant={variant}
+      placeholder={placeholder}
     />
   );
 
@@ -473,21 +637,34 @@ export function MainConversation({
           {isLoadingChat ? (
             <ChatSkeleton />
           ) : !hasMessages ? (
-            <div className="flex-1 flex flex-col items-center justify-center pb-8 pt-4 sm:pb-14">
+            <div className="flex-1 flex flex-col items-center justify-center px-4 pb-28 pt-10 text-center sm:px-0 sm:pb-56 sm:pt-4">
               <div className="w-full max-w-4xl">
-                <div className="mb-6 flex items-center justify-center gap-3 text-center sm:mb-7">
-                  <div className="relative hidden h-9 w-9 shrink-0 items-center justify-center sm:flex">
-                    <div className="absolute inset-0 rounded-full bg-primary/20 blur-lg" />
-                    <img src="/avatar.png" alt="PansGPT" className="relative h-7 w-7 object-contain drop-shadow-sm" />
+                <div className="mx-auto max-w-4xl text-center sm:px-4">
+                  <div className="mb-3 flex flex-col items-center justify-center gap-3 sm:flex-row">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center">
+                      <img src="/avatar.png" alt="PansGPT" className="h-7 w-7 object-contain drop-shadow-sm" />
+                    </div>
+                    <h2
+                      className="text-[26px] font-medium leading-tight text-foreground sm:text-4xl"
+                    >
+                      <span className="sm:hidden">{welcomeCopy.mobileGreeting}</span>
+                      <span className="hidden sm:inline">{welcomeCopy.greeting}</span>
+                    </h2>
                   </div>
-                  <h2 className="text-3xl font-medium leading-tight text-foreground sm:text-4xl">
-                    Hello Pharm, {studentFirstName}
-                  </h2>
+                  <p className="mt-2 min-h-[24px] text-base leading-relaxed text-muted-foreground sm:hidden">
+                    {typedWelcomeSubtext}
+                    {typedWelcomeSubtext.length < currentWelcomeSubtext.length && (
+                      <span className="ml-0.5 inline-block h-[1em] w-px translate-y-0.5 animate-pulse bg-muted-foreground" />
+                    )}
+                  </p>
                 </div>
 
-                {chatInput}
+                <div className="mt-6 hidden sm:block">
+                  {renderChatInput(true, 'welcome', typedWelcomeSubtext || currentWelcomeSubtext || 'Ask anything...')}
+                </div>
 
-                <div className="mt-3 flex w-full gap-2 overflow-x-auto px-4 pb-1 sm:mt-4 sm:justify-center sm:overflow-visible sm:px-0">
+                {/* Future idea: academic quick-action chips for the welcome screen.
+                <div className="mt-2 hidden w-full justify-center gap-2 px-4 pb-1 sm:flex">
                   {EMPTY_STATE_CHIPS.map(({ label, prompt, icon: Icon }) => (
                     <button
                       key={label}
@@ -496,13 +673,14 @@ export function MainConversation({
                         setInputMessage(prompt);
                         window.setTimeout(() => textareaRef.current?.focus(), 0);
                       }}
-                      className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-border/60 bg-card px-3 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-muted"
+                      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[6px] border border-border/60 bg-card px-3 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-muted"
                     >
                       <Icon className="h-4 w-4 text-muted-foreground" />
                       <span>{label}</span>
                     </button>
                   ))}
                 </div>
+                */}
               </div>
             </div>
           ) : (
@@ -785,7 +963,7 @@ export function MainConversation({
         </div>
       )}
 
-      {hasMessages && chatInput}
+      {hasMessages ? renderChatInput() : <div className="sm:hidden">{renderChatInput()}</div>}
     </div>
   );
 }

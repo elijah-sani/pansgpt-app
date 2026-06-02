@@ -42,7 +42,7 @@ export default function ThinkingModeToggle({ thinkingMode, onChange }: ThinkingM
         id="thinking-mode-toggle-btn"
         onClick={() => setOpen(!open)}
         title={thinkingMode ? 'Thinking mode active' : 'Fast mode active'}
-        className="flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
+        className="flex items-center gap-1 px-2 py-1 rounded-[6px] text-xs font-medium text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
         aria-haspopup="true"
         aria-expanded={open}
       >
@@ -68,7 +68,7 @@ export default function ThinkingModeToggle({ thinkingMode, onChange }: ThinkingM
         <div
           role="dialog"
           aria-label="Response mode"
-          className="absolute bottom-full mb-2 right-0 z-50 w-64 rounded-2xl border border-border bg-card shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+          className="absolute bottom-full mb-2 right-0 z-50 w-64 rounded-[6px] border border-border bg-card shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
         >
           {/* Fast row */}
           <button

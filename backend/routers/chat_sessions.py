@@ -348,7 +348,8 @@ async def create_session(request: Optional[CreateSessionRequest] = None, current
             "Create chat session",
         )
         # Background summarization is now triggered after AI reply, not at session creation
-        return {"id": new_id, "title": new_title, "created_at": datetime.now()}
+        created_at = datetime.now()
+        return {"id": new_id, "title": new_title, "created_at": created_at, "updated_at": created_at}
     except Exception as e:
         logger.error(f"Create Session Error: {e}")
         raise HTTPException(status_code=500, detail="Unable to create a new chat session. Please try again.")
@@ -415,4 +416,3 @@ async def rename_session(session_id: str, body: RenameSessionRequest, current_us
     except Exception as e:
         logger.error(f"Rename Session Error: {e}")
         raise HTTPException(status_code=500, detail="Unable to rename this session. Please try again.")
-

@@ -102,7 +102,9 @@ export default function MainPage() {
 
   return (
     <div className="h-full min-h-0 flex overflow-hidden bg-background text-foreground">
-      <div className="flex-1 w-full min-w-0 min-h-0 relative flex flex-col bg-background">
+      <div className={`flex-1 w-full min-w-0 min-h-0 relative flex flex-col bg-background transition-transform duration-300 ease-out md:translate-x-0 ${
+        isProfileOpen ? 'max-md:-translate-x-full' : 'max-md:translate-x-0'
+      }`}>
         <MainHeader
           activeSessionId={activeSessionId}
           isProfileOpen={isProfileOpen}

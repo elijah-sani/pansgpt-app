@@ -6,7 +6,7 @@ type StudySidebarContentProps = {
   pathname: string;
   quickNotes?: Array<{ id: string; title: string }>;
   routerPush: (path: string) => void;
-  onOpenQuickNote: () => void;
+  onOpenQuickNote?: () => void;
 };
 
 export function StudySidebarContent({
@@ -14,7 +14,7 @@ export function StudySidebarContent({
   pathname,
   quickNotes = [],
   routerPush,
-  onOpenQuickNote,
+  onOpenQuickNote = () => {},
 }: StudySidebarContentProps) {
   return (
     <>

@@ -1,4 +1,5 @@
-import { BookOpen, Brain, Loader2, MessageSquare, Plus, SlidersHorizontal, NotepadText, ChevronRight } from 'lucide-react';
+import { useState } from 'react';
+import { BookOpen, Brain, ChevronDown, Loader2, MessageSquare, Plus, SlidersHorizontal, NotepadText, ChevronRight } from 'lucide-react';
 import { SidebarLink, scoreColor } from './SidebarPrimitives';
 import type { QuizHistoryItem } from './types';
 
@@ -11,7 +12,7 @@ type QuizSidebarContentProps = {
   quizResults: QuizHistoryItem[];
   routerPush: (path: string) => void;
   showFilters: () => void;
-  onOpenQuickNote: () => void;
+  onOpenQuickNote?: () => void;
 };
 
 export function QuizSidebarContent({
@@ -23,8 +24,10 @@ export function QuizSidebarContent({
   quizResults,
   routerPush,
   showFilters,
-  onOpenQuickNote,
+  onOpenQuickNote = () => {},
 }: QuizSidebarContentProps) {
+  const [isQuizHistoryOpen, setIsQuizHistoryOpen] = useState(true);
+
   return (
     <>
       <nav className={isIconOnly ? 'flex flex-col items-center py-1 gap-0.5' : 'px-2 space-y-0.5'}>
@@ -74,7 +77,19 @@ export function QuizSidebarContent({
           <div className="px-5 pt-4"><div className="border-t border-border" /></div>
           <div className="flex flex-col flex-1 overflow-hidden pt-2 pb-2">
             <div className="flex items-center justify-between px-6 pt-2 pb-3 shrink-0">
-              <h4 className="text-xs font-bold text-foreground/70 tracking-wider uppercase">History</h4>
+              <button
+                onClick={() => setIsQuizHistoryOpen((previous) => !previous)}
+                aria-expanded={isQuizHistoryOpen}
+                className="flex min-h-7 items-center gap-2 text-left transition-colors hover:text-foreground"
+              >
+                <ChevronDown
+                  size={14}
+                  className={`shrink-0 text-muted-foreground transition-transform ${
+                    isQuizHistoryOpen ? 'rotate-0' : '-rotate-90'
+                  }`}
+                />
+                <h4 className="text-xs font-bold text-foreground/70 tracking-wider uppercase">History</h4>
+              </button>
               <button
                 onClick={showFilters}
                 title="Filter quiz history"
@@ -87,6 +102,7 @@ export function QuizSidebarContent({
               </button>
             </div>
 
+            {isQuizHistoryOpen && (
             <div className="flex-1 overflow-y-auto px-3 pb-2">
               {quizLoading ? (
                 <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
@@ -137,6 +153,7 @@ export function QuizSidebarContent({
                 </div>
               )}
             </div>
+            )}
           </div>
         </>
       )}

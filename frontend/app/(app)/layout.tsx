@@ -66,6 +66,7 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
     const [, setIsRestrictionLoading] = useState(true);
     const [restrictionNow, setRestrictionNow] = useState(() => Date.now());
     const hasResolvedInitialShellRef = useRef(false);
+    const sidebarTouchStartRef = useRef<{ x: number; y: number } | null>(null);
 
     const handleConfirmDelete = async () => {
         if (!deleteTargetId) return;
@@ -258,6 +259,24 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
         return () => window.removeEventListener(PROFILE_UPDATED_EVENT, handleProfileUpdated as EventListener);
     }, []);
 
+    useEffect(() => {
+        if (!shellUser || typeof window === "undefined") {
+            return;
+        }
+
+        const currentUrl = new URL(window.location.href);
+        if (currentUrl.searchParams.get("profile") !== "1") {
+            return;
+        }
+
+        setIsPersonalInfoOpen(true);
+
+        currentUrl.searchParams.delete("profile");
+        const nextQuery = currentUrl.searchParams.toString();
+        const nextUrl = `${pathname || "/main"}${nextQuery ? `?${nextQuery}` : ""}`;
+        router.replace(nextUrl);
+    }, [pathname, router, shellUser]);
+
     const handleLogout = async () => {
         if (typeof window !== "undefined" && window.localStorage) {
             localStorage.removeItem("deviceId");
@@ -282,6 +301,46 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
         setActiveSessionId(null);
     };
 
+    const handleShellTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+        if (typeof window === "undefined" || window.innerWidth >= 768 || isQuizTaking) {
+            return;
+        }
+
+        const touch = event.touches[0];
+        if (!touch) {
+            return;
+        }
+
+        sidebarTouchStartRef.current = { x: touch.clientX, y: touch.clientY };
+    };
+
+    const handleShellTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
+        const start = sidebarTouchStartRef.current;
+        sidebarTouchStartRef.current = null;
+        if (!start || typeof window === "undefined" || window.innerWidth >= 768 || isQuizTaking) {
+            return;
+        }
+
+        const touch = event.changedTouches[0];
+        if (!touch) {
+            return;
+        }
+
+        const deltaX = touch.clientX - start.x;
+        const deltaY = touch.clientY - start.y;
+        if (Math.abs(deltaX) < 70 || Math.abs(deltaX) < Math.abs(deltaY) * 1.4) {
+            return;
+        }
+
+        if (!isSidebarOpen && start.x <= 28 && deltaX > 0) {
+            setIsSidebarOpen(true);
+        }
+
+        if (isSidebarOpen && deltaX < 0) {
+            setIsSidebarOpen(false);
+        }
+    };
+
     return (
         <SidebarControlsContext.Provider
             value={{
@@ -295,11 +354,11 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                 <StudentRestrictionBlocker restriction={restriction} now={restrictionNow} />
             ) : (
                 <>
-                    <div className="flex h-[100dvh] w-full overflow-hidden bg-background">
-                        {isSidebarOpen && !isQuizTaking && (
-                            <div className="fixed inset-0 z-40 bg-black/40 md:hidden" onClick={() => setIsSidebarOpen(false)} />
-                        )}
-
+                    <div
+                        className="flex h-[100dvh] w-full overflow-hidden bg-background"
+                        onTouchStart={handleShellTouchStart}
+                        onTouchEnd={handleShellTouchEnd}
+                    >
                         {!isQuizTaking && (
                             <AppSidebar
                                 isOpen={isSidebarOpen}
@@ -313,7 +372,9 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                             />
                         )}
 
-                        <div className={`flex-1 min-w-0 overflow-x-hidden overflow-y-auto ${!pathname?.startsWith("/reader/") ? "overscroll-none" : ""}`}>
+                        <div className={`flex-1 min-w-0 overflow-x-hidden overflow-y-auto transition-transform duration-300 ease-out md:translate-x-0 ${
+                            isSidebarOpen && !isQuizTaking ? "max-md:translate-x-full" : "max-md:translate-x-0"
+                        } ${!pathname?.startsWith("/reader/") ? "overscroll-none" : ""}`}>
                             {children}
                         </div>
                     </div>
@@ -332,7 +393,7 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                     />
 
                     {isDeleteModalOpen && (
-                        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+                        <div className="fixed inset-0 z-[260] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
                             <div className="w-full max-w-sm rounded-2xl bg-card p-6 shadow-sm">
                                 <div className="mb-4 flex items-center gap-3">
                                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-destructive/10">
@@ -362,7 +423,7 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                     )}
 
                     {renamingChatId && (
-                        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+                        <div className="fixed inset-0 z-[260] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
                             <div className="w-full max-w-sm rounded-2xl bg-card p-6 shadow-sm">
                                 <div className="mb-4 flex items-center justify-between">
                                     <div className="flex items-center gap-3">

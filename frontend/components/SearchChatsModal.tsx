@@ -7,6 +7,7 @@ interface ChatSession {
     id: string;
     title: string;
     created_at: string;
+    updated_at?: string | null;
 }
 
 interface SearchChatsModalProps {
@@ -47,8 +48,9 @@ export default function SearchChatsModal({ isOpen, onClose, sessions, onSelectSe
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
         filteredSessions.forEach(session => {
-            if (!session.created_at) return;
-            const date = new Date(session.created_at);
+            const timestamp = session.updated_at || session.created_at;
+            if (!timestamp) return;
+            const date = new Date(timestamp);
             date.setHours(0, 0, 0, 0);
 
             if (date.getTime() === today.getTime()) {

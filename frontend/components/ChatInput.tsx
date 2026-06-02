@@ -2,7 +2,7 @@
 
 import React, { useCallback, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Globe, ImageIcon, Loader2, Mic, Paperclip, Send, Square, X } from 'lucide-react';
+import { ArrowUp, Globe, ImageIcon, Loader2, Mic, Paperclip, Square, X } from 'lucide-react';
 import { InlineWaveform } from '@/components/InlineWaveform';
 import ThinkingModeToggle from '@/components/ThinkingModeToggle';
 
@@ -33,6 +33,9 @@ type ChatInputProps = {
   queuedMessageCount?: number;
   thinkingMode?: boolean;
   onThinkingModeChange?: (value: boolean) => void;
+  compactSpacing?: boolean;
+  variant?: 'default' | 'welcome';
+  placeholder?: string;
 };
 
 export default function ChatInput({
@@ -61,6 +64,9 @@ export default function ChatInput({
   queuedMessageCount = 0,
   thinkingMode = false,
   onThinkingModeChange,
+  compactSpacing = false,
+  variant = 'default',
+  placeholder = 'Ask anything...',
 }: ChatInputProps) {
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const dragCounter = useRef(0);
@@ -113,7 +119,7 @@ export default function ChatInput({
 
   return (
     <div
-      className="relative w-full max-w-4xl mx-auto px-4 pb-6"
+      className={`relative w-full ${variant === 'welcome' ? 'max-w-3xl px-0' : 'max-w-4xl px-4'} mx-auto ${compactSpacing ? 'pb-0' : 'pb-6'}`}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -166,7 +172,7 @@ export default function ChatInput({
               }
             }}
             className="w-full bg-transparent text-foreground placeholder-muted-foreground resize-none outline-none min-h-[52px] max-h-[220px] py-3 px-2 text-[16px]"
-            placeholder="Ask anything..."
+            placeholder={placeholder}
             rows={1}
             autoFocus
           />
@@ -294,7 +300,7 @@ export default function ChatInput({
                   disabled={isOverLimit}
                   className="p-2.5 bg-primary text-primary-foreground rounded-full hover:bg-primary/90 transition-all shadow-md flex items-center justify-center aspect-square animate-in zoom-in duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <Send className="w-4 h-4" />
+                  <ArrowUp className="w-4 h-4" strokeWidth={2.4} />
                 </button>
                 {queuedMessageCount > 0 && (
                   <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 shadow-sm animate-in zoom-in duration-200">

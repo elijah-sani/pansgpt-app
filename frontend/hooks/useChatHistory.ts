@@ -5,6 +5,7 @@ export interface ChatSession {
     id: string;
     title: string;
     created_at: string;
+    updated_at?: string | null;
 }
 
 export interface Message {
@@ -14,6 +15,7 @@ export interface Message {
     image_data?: string;
     images?: string[];
     citations?: Array<{ title?: string; course?: string; lecturer?: string }>;
+    thinking_text?: string;
 }
 
 export const useChatHistory = () => {
