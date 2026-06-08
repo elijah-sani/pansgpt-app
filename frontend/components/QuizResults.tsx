@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { Award, CheckCircle2, Clock3, FileText, RotateCcw, Share2, X, XCircle } from 'lucide-react';
 import QuizShareCard from './QuizShareCard';
 
 interface QuestionResult {
@@ -38,6 +39,47 @@ interface QuizResult {
   };
 }
 
+function formatTime(seconds: number) {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}m ${secs}s`;
+}
+
+function formatDate(value: string) {
+  return new Date(value).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+function formatAnswer(answer?: string) {
+  if (!answer) return 'No answer provided';
+
+  try {
+    const parsed = JSON.parse(answer);
+    if (Array.isArray(parsed)) return parsed.join(', ');
+  } catch {
+    // Plain text answers are expected for non-MCQ questions.
+  }
+
+  return answer;
+}
+
+function getScoreColor(percentage: number) {
+  if (percentage >= 80) return 'text-primary';
+  if (percentage >= 60) return 'text-amber-600 dark:text-amber-400';
+  return 'text-red-600';
+}
+
+function getScoreMessage(percentage: number) {
+  if (percentage >= 90) return 'Excellent performance';
+  if (percentage >= 80) return 'Strong result';
+  if (percentage >= 70) return 'Good progress';
+  if (percentage >= 60) return 'Room to improve';
+  return 'Review the weak areas';
+}
+
 export default function QuizResults({ quizId }: { quizId: string }) {
   void quizId;
   const router = useRouter();
@@ -49,7 +91,6 @@ export default function QuizResults({ quizId }: { quizId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [showExplanations, setShowExplanations] = useState(false);
   const [showShareCard, setShowShareCard] = useState(false);
-  const shareCardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     async function fetchResult() {
@@ -62,141 +103,167 @@ export default function QuizResults({ quizId }: { quizId: string }) {
         if (!response.ok) {
           throw new Error('Result not found');
         }
+
         const data = await response.json();
-        console.log('[QuizResults] API response:', { keys: Object.keys(data), hasQuiz: !!data.quiz, quizKeys: data.quiz ? Object.keys(data.quiz) : 'none' });
-        // API returns { result, quiz } as siblings — merge quiz into result
         setResult({ ...data.result, quiz: data.quiz });
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : 'Failed to load result';
-        setError(message);
+        setError(err instanceof Error ? err.message : 'Failed to load result');
       } finally {
         setLoading(false);
       }
     }
 
-    if (resultId) {
-      fetchResult();
-    }
+    void fetchResult();
   }, [resultId]);
 
   useEffect(() => {
-    if (showShareCard && shareCardRef.current) {
-      shareCardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-  }, [showShareCard]);
+    const toggleShareCard = () => setShowShareCard((current) => !current);
 
-  const getScoreColor = (percentage: number) => {
-    if (percentage >= 80) return 'var(--primary)';
-    if (percentage >= 60) return '#fbbf24';
-    return '#dc2626';
-  };
-
-  const getScoreMessage = (percentage: number) => {
-    if (percentage >= 90) return 'Excellent! Outstanding performance!';
-    if (percentage >= 80) return 'Great job! Well done!';
-    if (percentage >= 70) return 'Good work! Keep it up!';
-    if (percentage >= 60) return 'Not bad! Room for improvement.';
-    if (percentage >= 50) return 'You passed! Study more for better results.';
-    return 'Keep studying! You can do better next time.';
-  };
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}m ${secs}s`;
-  };
-
-  const getCorrectCount = () => {
-    return result?.feedback.filter(q => q.isCorrect).length || 0;
-  };
-
-  const getPartiallyCorrectCount = () => {
-    return result?.feedback.filter(q => q.partiallyCorrect).length || 0;
-  };
-
-  const getIncorrectCount = () => {
-    return result?.feedback.filter(q => !q.isCorrect && !q.partiallyCorrect).length || 0;
-  };
+    window.addEventListener('quiz-results-toggle-share', toggleShareCard);
+    return () => window.removeEventListener('quiz-results-toggle-share', toggleShareCard);
+  }, []);
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-background">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary dark:border-primary/40"></div>
+      <div className="flex min-h-[70vh] items-center justify-center">
+        <div className="h-12 w-12 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
       </div>
     );
   }
 
   if (error || !result) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-background">
-        <div className="text-center">
-          <h2 className="text-2xl font-bold mb-4 text-red-600 dark:text-[#dc2626]">Error</h2>
-          <p className="text-muted-foreground">{error || 'Result not found'}</p>
+      <div className="flex min-h-[70vh] items-center justify-center px-5">
+        <div className="max-w-sm text-center">
+          <h2 className="text-xl font-semibold text-foreground">Unable to load result</h2>
+          <p className="mt-2 text-sm text-muted-foreground">{error || 'Result not found'}</p>
           <button
             onClick={() => router.push('/quiz')}
-            className="mt-4 px-4 py-2 text-white rounded transition-colors bg-primary dark:bg-primary hover:bg-primary/90 dark:hover:bg-primary/90"
+            className="mt-5 rounded-[5px] bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
           >
-            Back to Quiz Selection
+            Back to Quiz
           </button>
         </div>
       </div>
     );
   }
 
+  const correctCount = result.feedback.filter((question) => question.isCorrect).length;
+  const partialCount = result.feedback.filter((question) => question.partiallyCorrect).length;
+  const incorrectCount = result.feedback.filter((question) => !question.isCorrect && !question.partiallyCorrect).length;
+  const scoreColor = getScoreColor(result.percentage);
+
   return (
     <div className="text-foreground">
-      <div className="max-w-4xl mx-auto px-4">
-        {/* Score Summary */}
-        <div className="rounded-lg p-8 mb-6 text-center border bg-card border-border">
-          <h1 className="text-3xl font-bold text-foreground mb-4">Quiz Results</h1>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-            <div className="text-center">
-              <div className="text-4xl font-bold" style={{ color: getScoreColor(result.percentage) }}>
-                {result.percentage.toFixed(1)}%
-              </div>
-              <div className="text-muted-foreground">Score</div>
-            </div>
-
-            <div className="text-center">
-              <div className="text-4xl font-bold text-primary dark:text-primary">
-                {result.score}/{result.max_score}
-              </div>
-              <div className="text-muted-foreground">Points</div>
-            </div>
-          </div>
-
-          <div className="mb-6">
-            <p className="text-lg font-semibold" style={{ color: getScoreColor(result.percentage) }}>
-              {getScoreMessage(result.percentage)}
-            </p>
-          </div>
-
-          {result.time_taken && (
-            <div className="text-muted-foreground">
-              Time taken: {formatTime(result.time_taken)}
-            </div>
-          )}
-
-          <div className="text-sm text-muted-foreground mt-2">
-            Completed on {new Date(result.completed_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
-          </div>
-
-          {/* Share Button */}
-          <div className="mt-6">
-            <button
-              onClick={() => setShowShareCard(!showShareCard)}
-              className="px-6 py-3 text-white rounded-lg font-medium transition-colors bg-primary dark:bg-primary hover:bg-primary/90 dark:hover:bg-primary/90"
-            >
-              {showShareCard ? 'Hide Share Card' : '📱 Share Results'}
-            </button>
-          </div>
+      <header className="hidden items-center justify-between border-b border-border/70 pb-5 md:flex">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">
+            {result.quiz?.course_code || 'Quiz'}
+          </p>
+          <h1 className="mt-2 truncate text-3xl font-bold tracking-tight text-foreground">Quiz Results</h1>
+          <p className="mt-1 truncate text-sm text-muted-foreground">
+            {result.quiz?.title || 'Completed quiz'}
+          </p>
         </div>
+        <div className="flex shrink-0 items-center gap-3">
+          <button
+            onClick={() => setShowShareCard((current) => !current)}
+            className="inline-flex min-h-10 items-center gap-2 rounded-[5px] bg-primary px-4 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
+          >
+            <Share2 className="h-4 w-4" />
+            {showShareCard ? 'Hide share card' : 'Share'}
+          </button>
+        </div>
+      </header>
 
-        {/* Share Card */}
-        {showShareCard && (
-          <div ref={shareCardRef} className="rounded-lg p-8 mb-6 border bg-card border-border">
-            <h2 className="text-xl font-semibold text-foreground mb-4 text-center">Share Your Results</h2>
+      <main className="mt-0 grid gap-4 md:mt-8 md:gap-6 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
+        <section className="min-w-0 space-y-4 md:space-y-6">
+          <div className="rounded-[5px] bg-[#edf4ff] p-4 dark:bg-muted/60 md:p-8">
+            <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between md:gap-6">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Final score</p>
+                <div className={`mt-2 text-4xl font-bold tracking-tight md:mt-3 md:text-5xl ${scoreColor}`}>
+                  {result.percentage.toFixed(1)}%
+                </div>
+                <p className={`mt-1.5 text-sm font-semibold md:mt-2 md:text-base ${scoreColor}`}>{getScoreMessage(result.percentage)}</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-sm md:min-w-72">
+                <Metric label="Points" value={`${result.score}/${result.max_score}`} />
+                <Metric label="Questions" value={`${correctCount}/${result.feedback.length}`} />
+              </div>
+            </div>
+            <div className="mt-4 h-2 overflow-hidden rounded-full bg-background/80 dark:bg-background/40 md:mt-6">
+              <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${Math.min(100, Math.max(0, result.percentage))}%` }} />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2 md:gap-3">
+            <BreakdownCard label="Correct" value={correctCount} tone="primary" icon={<CheckCircle2 className="h-4 w-4" />} />
+            <BreakdownCard label="Partial" value={partialCount} tone="amber" icon={<Award className="h-4 w-4" />} />
+            <BreakdownCard label="Incorrect" value={incorrectCount} tone="red" icon={<XCircle className="h-4 w-4" />} />
+          </div>
+
+          <section className="space-y-3 md:space-y-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-foreground md:text-xl">Question Review</h2>
+                <p className="mt-0.5 text-xs text-muted-foreground md:mt-1 md:text-sm">Check answers, corrections, and explanations.</p>
+              </div>
+              <button
+                onClick={() => setShowExplanations((current) => !current)}
+                className="inline-flex min-h-9 items-center justify-center rounded-[5px] border border-primary px-3 text-xs font-semibold text-primary transition-colors hover:bg-primary/10 md:min-h-10 md:px-4 md:text-sm"
+              >
+                {showExplanations ? 'Hide explanations' : 'Show explanations'}
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {result.feedback.map((question, index) => (
+                <QuestionReviewCard
+                  key={question.questionId}
+                  index={index}
+                  question={question}
+                  showExplanation={showExplanations}
+                />
+              ))}
+            </div>
+          </section>
+        </section>
+
+        <aside className="space-y-5 lg:sticky lg:top-8">
+          <div className="rounded-[5px] bg-[#edf4ff] p-5 dark:bg-muted/60">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Summary</p>
+            <div className="mt-4 space-y-3">
+              <SummaryRow icon={<FileText className="h-4 w-4" />} label="Course" value={result.quiz?.course_title || result.quiz?.course_code || 'Quiz'} />
+              <SummaryRow icon={<Award className="h-4 w-4" />} label="Difficulty" value={result.quiz?.difficulty || 'Practice'} />
+              {result.time_taken !== undefined && (
+                <SummaryRow icon={<Clock3 className="h-4 w-4" />} label="Time" value={formatTime(result.time_taken)} />
+              )}
+              <SummaryRow icon={<CheckCircle2 className="h-4 w-4" />} label="Completed" value={formatDate(result.completed_at)} />
+            </div>
+          </div>
+
+          <button
+            onClick={() => router.push('/quiz?new=1')}
+            className="hidden min-h-11 w-full items-center justify-center gap-2 rounded-[5px] bg-primary px-4 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 lg:inline-flex"
+          >
+            <RotateCcw className="h-4 w-4" />
+            Take another quiz
+          </button>
+        </aside>
+      </main>
+
+      {showShareCard && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className="relative h-[80vh] w-[80vw] max-w-6xl overflow-hidden rounded-[8px] border border-border bg-card shadow-2xl max-md:h-[86vh] max-md:w-[92vw]">
+            <button
+              type="button"
+              onClick={() => setShowShareCard(false)}
+              className="absolute right-3 top-3 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full bg-background/90 text-foreground shadow-sm transition-colors hover:bg-muted"
+              aria-label="Close share card"
+            >
+              <X className="h-4 w-4" />
+            </button>
             <QuizShareCard
               result={{
                 score: result.score,
@@ -209,166 +276,129 @@ export default function QuizResults({ quizId }: { quizId: string }) {
                   courseCode: result.quiz?.course_code || '',
                   courseTitle: result.quiz?.course_title || '',
                   topic: result.quiz?.topic,
-                }
+                },
               }}
             />
           </div>
-        )}
-
-        {/* Performance Breakdown */}
-        <div className="rounded-lg p-6 mb-6 border bg-card border-border">
-          <h2 className="text-xl font-semibold text-foreground mb-4">Performance Breakdown</h2>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="flex items-center justify-between p-4 rounded-lg border bg-primary/10 dark:bg-primary/15 border-primary/30 dark:border-primary/40">
-              <div className="flex items-center">
-                <div className="w-3 h-3 rounded-full mr-3 bg-primary dark:bg-primary"></div>
-                <span className="text-foreground font-medium">Correct</span>
-              </div>
-              <span className="font-semibold text-lg text-foreground">{getCorrectCount()}</span>
-            </div>
-
-            <div className="flex items-center justify-between p-4 rounded-lg border bg-yellow-50 dark:bg-[rgba(251,191,36,0.2)] border-yellow-200 dark:border-[rgba(251,191,36,0.5)]">
-              <div className="flex items-center">
-                <div className="w-3 h-3 rounded-full mr-3 bg-yellow-600 dark:bg-[#fbbf24]"></div>
-                <span className="text-foreground font-medium">Partial</span>
-              </div>
-              <span className="font-semibold text-lg text-foreground">{getPartiallyCorrectCount()}</span>
-            </div>
-
-            <div className="flex items-center justify-between p-4 rounded-lg border bg-red-50 dark:bg-[rgba(220,38,38,0.2)] border-red-200 dark:border-[rgba(220,38,38,0.5)]">
-              <div className="flex items-center">
-                <div className="w-3 h-3 rounded-full mr-3 bg-red-600 dark:bg-[#dc2626]"></div>
-                <span className="text-foreground font-medium">Incorrect</span>
-              </div>
-              <span className="font-semibold text-lg text-foreground">{getIncorrectCount()}</span>
-            </div>
-          </div>
         </div>
+      )}
+    </div>
+  );
+}
 
-        {/* Question Review */}
-        <div className="rounded-lg p-6 mb-6 border bg-card border-border">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-semibold text-foreground">Question Review</h2>
-            <button
-              onClick={() => setShowExplanations(!showExplanations)}
-              className="px-4 py-2 text-sm text-white rounded transition-colors bg-primary dark:bg-primary hover:bg-primary/90 dark:hover:bg-primary/90"
-            >
-              {showExplanations ? 'Hide Explanations' : 'Show Explanations'}
-            </button>
-          </div>
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-[5px] bg-background/80 p-2.5 dark:bg-background/40 md:p-3">
+      <p className="text-[11px] text-muted-foreground md:text-xs">{label}</p>
+      <p className="mt-0.5 text-base font-bold text-foreground md:mt-1 md:text-lg">{value}</p>
+    </div>
+  );
+}
 
-          <div className="space-y-6">
-            {result.feedback.map((question, index) => (
-              <div key={question.questionId} className="border rounded-lg p-4 bg-card border-border/60">
-                <div className="flex items-start justify-between mb-3">
-                  <h3 className="text-lg font-medium text-foreground">
-                    Question {index + 1}
-                  </h3>
-                  <div className="flex items-center">
-                    {question.isCorrect ? (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-foreground bg-primary/10 dark:bg-primary/20 border-[0.5px] border-primary/30 dark:border-primary/40">
-                        ✓ Correct
-                      </span>
-                    ) : question.partiallyCorrect ? (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-foreground bg-yellow-100 dark:bg-[rgba(251,191,36,0.3)] border-[0.5px] border-yellow-300 dark:border-[rgba(251,191,36,0.5)]">
-                        ~ Partially Correct
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-foreground bg-red-100 dark:bg-[rgba(220,38,38,0.3)] border-[0.5px] border-red-300 dark:border-[rgba(220,38,38,0.5)]">
-                        ✗ Incorrect
-                      </span>
-                    )}
-                  </div>
-                </div>
+function BreakdownCard({ label, value, tone, icon }: { label: string; value: number; tone: 'primary' | 'amber' | 'red'; icon: React.ReactNode }) {
+  const classes = {
+    primary: 'bg-primary/10 text-primary border-primary/20',
+    amber: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-400/15 dark:text-amber-300 dark:border-amber-400/30',
+    red: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/15 dark:text-red-300 dark:border-red-500/30',
+  }[tone];
 
-                <p className="text-foreground mb-4">{question.questionText}</p>
+  return (
+    <div className={`flex min-h-20 flex-col items-start justify-between rounded-[5px] border p-2.5 md:min-h-20 md:flex-row md:items-center md:p-4 ${classes}`}>
+      <div className="flex items-center gap-1.5 md:gap-3">
+        {icon}
+        <span className="text-[11px] font-semibold md:text-sm">{label}</span>
+      </div>
+      <span className="text-xl font-bold leading-none md:text-2xl">{value}</span>
+    </div>
+  );
+}
 
-                {/* Per-option breakdown for MCQ */}
-                {Array.isArray(question.optionDetails) && question.optionDetails.length > 0 ? (
-                  <div className="space-y-2 mb-3">
-                    <label className="block text-sm font-medium text-foreground mb-1">Option Breakdown:</label>
-                    <ul className="space-y-2">
-                      {question.optionDetails.map((opt, i) => (
-                        <li
-                          key={i}
-                          className={`flex items-start justify-between p-3 rounded-lg border ${opt.score === 1
-                            ? 'bg-primary/10 dark:bg-primary/15 border-primary/30 dark:border-primary/40'
-                            : 'bg-red-50 dark:bg-[rgba(220,38,38,0.2)] border-red-200 dark:border-[rgba(220,38,38,0.5)]'
-                            }`}
-                        >
-                          <div className="flex-1 pr-3">
-                            <div className="text-sm text-foreground font-medium">{opt.option}</div>
-                            <div className="text-xs text-foreground/90 mt-1">
-                              {opt.userSelected ? 'You selected this' : 'You did not select this'} · {opt.isCorrect ? 'True option' : 'False option'}
-                            </div>
-                          </div>
-                          <div className="ml-3 text-sm font-semibold text-foreground">
-                            {opt.score === 1 ? '+1' : '-1'}
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
-                    <div>
-                      <label className="block text-sm font-medium text-foreground mb-1">
-                        Your Answer:
-                      </label>
-                      <div
-                        className={`p-3 rounded-lg border text-foreground ${question.isCorrect
-                          ? 'bg-primary/10 dark:bg-primary/15 border-primary/30 dark:border-primary/40'
-                          : question.partiallyCorrect
-                            ? 'bg-yellow-50 dark:bg-[rgba(251,191,36,0.2)] border-yellow-200 dark:border-[rgba(251,191,36,0.5)]'
-                            : 'bg-red-50 dark:bg-[rgba(220,38,38,0.2)] border-red-200 dark:border-[rgba(220,38,38,0.5)]'
-                          }`}
-                      >
-                        {question.selectedAnswer || 'No answer provided'}
-                      </div>
-                    </div>
-
-                    {!question.isCorrect && (
-                      <div>
-                        <label className="block text-sm font-medium text-foreground mb-1">
-                          Correct Answer:
-                        </label>
-                        <div className="p-3 rounded-lg border text-foreground bg-primary/10 dark:bg-primary/15 border-primary/30 dark:border-primary/40">
-                          {question.correctAnswer}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Show AI feedback only when explanations are toggled */}
-                {showExplanations && question.explanation && (
-                  <div className="mt-3 p-3 border rounded-lg bg-primary/10 dark:bg-primary/10 border-primary/30 dark:border-primary/30">
-                    <label className="block text-sm font-medium mb-1 text-primary dark:text-primary">
-                      Feedback:
-                    </label>
-                    <p className="text-foreground/90">{question.explanation}</p>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Action Buttons */}
-        <div className="flex justify-center pb-8">
-          <button
-            onClick={() => router.push('/quiz')}
-            className="px-6 py-3 text-white rounded-lg font-medium transition-colors bg-primary dark:bg-primary hover:bg-primary/90 dark:hover:bg-primary/90"
-          >
-            Take Another Quiz
-          </button>
-        </div>
+function SummaryRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+  return (
+    <div className="flex items-start gap-2.5 rounded-[5px] bg-background/70 p-2.5 dark:bg-background/40 md:gap-3 md:p-3">
+      <span className="mt-0.5 text-primary">{icon}</span>
+      <div className="min-w-0">
+        <p className="text-[11px] text-muted-foreground md:text-xs">{label}</p>
+        <p className="mt-0.5 break-words text-xs font-semibold text-foreground md:text-sm">{value}</p>
       </div>
     </div>
   );
-} 
+}
 
+function QuestionReviewCard({ question, index, showExplanation }: { question: QuestionResult; index: number; showExplanation: boolean }) {
+  const status = question.isCorrect ? 'correct' : question.partiallyCorrect ? 'partial' : 'incorrect';
+  const statusLabel = question.isCorrect ? 'Correct' : question.partiallyCorrect ? 'Partial' : 'Incorrect';
+  const statusClasses = {
+    correct: 'border-primary/30 bg-primary/10 text-primary',
+    partial: 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-400/40 dark:bg-amber-400/15 dark:text-amber-300',
+    incorrect: 'border-red-300 bg-red-50 text-red-700 dark:border-red-500/40 dark:bg-red-500/15 dark:text-red-300',
+  }[status];
 
+  return (
+    <article className="rounded-[5px] border border-border bg-card p-3.5 md:p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground md:text-xs">Question {index + 1}</p>
+          <h3 className="mt-1.5 text-sm font-semibold leading-6 text-foreground md:mt-2 md:text-base md:leading-7">{question.questionText}</h3>
+        </div>
+        <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold md:px-2.5 md:py-1 md:text-xs ${statusClasses}`}>
+          {statusLabel}
+        </span>
+      </div>
 
+      {Array.isArray(question.optionDetails) && question.optionDetails.length > 0 ? (
+        <div className="mt-3 space-y-2 md:mt-4">
+          {question.optionDetails.map((option, index) => (
+            <div
+              key={`${option.option}-${index}`}
+              className={`rounded-[5px] border p-2.5 md:p-3 ${
+                option.isCorrect
+                  ? 'border-primary/30 bg-primary/10'
+                  : option.userSelected
+                    ? 'border-red-200 bg-red-50 dark:border-red-500/40 dark:bg-red-500/15'
+                    : 'border-border bg-background/60'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-xs font-medium text-foreground md:text-sm">{option.option}</p>
+                <span className="shrink-0 text-[11px] font-semibold text-muted-foreground md:text-xs">{option.score > 0 ? `+${option.score}` : option.score}</span>
+              </div>
+              <p className="mt-1 text-[11px] text-muted-foreground md:text-xs">
+                {option.userSelected ? 'Selected' : 'Not selected'} - {option.isCorrect ? 'Correct option' : 'Incorrect option'}
+              </p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-3 grid gap-3 md:mt-4 md:grid-cols-2">
+          <AnswerBlock label="Your answer" value={formatAnswer(question.selectedAnswer)} tone={status} />
+          {!question.isCorrect && <AnswerBlock label="Correct answer" value={formatAnswer(question.correctAnswer)} tone="correct" />}
+        </div>
+      )}
 
+      {showExplanation && question.explanation && (
+        <div className="mt-3 rounded-[5px] border border-primary/20 bg-primary/10 p-3 md:mt-4">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-primary md:text-xs">Explanation</p>
+          <p className="mt-1.5 text-xs leading-5 text-foreground/90 md:mt-2 md:text-sm md:leading-6">{question.explanation}</p>
+        </div>
+      )}
+    </article>
+  );
+}
+
+function AnswerBlock({ label, value, tone }: { label: string; value: string; tone: 'correct' | 'partial' | 'incorrect' }) {
+  const classes = {
+    correct: 'border-primary/30 bg-primary/10',
+    partial: 'border-amber-200 bg-amber-50 dark:border-amber-400/40 dark:bg-amber-400/15',
+    incorrect: 'border-red-200 bg-red-50 dark:border-red-500/40 dark:bg-red-500/15',
+  }[tone];
+
+  return (
+    <div>
+      <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground md:text-xs">{label}</p>
+      <div className={`min-h-10 rounded-[5px] border p-2.5 text-xs text-foreground md:min-h-12 md:p-3 md:text-sm ${classes}`}>
+        {value}
+      </div>
+    </div>
+  );
+}

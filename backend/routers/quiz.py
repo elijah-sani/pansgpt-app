@@ -1,24 +1,32 @@
 """
 Quiz router – Generate, submit, and retrieve quizzes.
 """
-from fastapi import APIRouter, HTTPException, Request, Depends, Header
+from fastapi import APIRouter, HTTPException, Request, Depends, Header, BackgroundTasks
 from fastapi.responses import JSONResponse
 from dependencies import get_current_user, User
-from pydantic import BaseModel
-from typing import Optional, List, Union
+from pydantic import BaseModel, field_validator
+from typing import Optional, List, Union, Any
 import json
 import logging
 import re
 import uuid
 import os
 import asyncio
+from datetime import datetime, timezone
 from restrictions import build_restriction_block_payload, get_applicable_user_restriction
+from .shared import get_current_academic_context, merge_system_into_user, resolve_student_university_context
+from utils.thinking_token_utils import strip_thinking_tokens
 
 from services import llm_engine
 
 logger = logging.getLogger("PansGPT")
 
 router = APIRouter(prefix="/api/quiz", tags=["quiz"])
+
+QUIZ_GENERATION_TEMPERATURE = 0.25
+QUIZ_GENERATION_MAX_TOKENS = 2048
+QUIZ_GRADING_TEMPERATURE = 0.1
+QUIZ_GRADING_MAX_TOKENS = 2048
 
 _supabase = None
 _supabase_service = None
@@ -70,11 +78,41 @@ class QuizGenerateRequest(BaseModel):
     courseCode: str
     courseTitle: str
     topic: Optional[str] = None
-    level: str
+    level: Optional[str] = None
     difficulty: str = "medium"
     numQuestions: int = 10
     timeLimit: Optional[int] = None
     questionType: str = "OBJECTIVE"
+    academic_session: Optional[str] = None
+    semester: Optional[str] = None
+
+    @field_validator("semester", mode="before")
+    @classmethod
+    def normalize_semester_field(cls, value: Optional[str]) -> Optional[str]:
+        return normalize_semester(value)
+
+
+def normalize_semester(value: Optional[str]) -> Optional[str]:
+    raw = (value or "").strip().lower()
+    if not raw:
+        return None
+    compact = re.sub(r"[\s_-]+", " ", raw).strip()
+    aliases = {
+        "first": "first",
+        "first semester": "first",
+        "1st": "first",
+        "1st semester": "first",
+        "one": "first",
+        "second": "second",
+        "second semester": "second",
+        "2nd": "second",
+        "2nd semester": "second",
+        "two": "second",
+    }
+    normalized = aliases.get(compact)
+    if not normalized:
+        raise ValueError("semester must be first or second")
+    return normalized
 
 
 class AnswerItem(BaseModel):
@@ -432,6 +470,13 @@ def _prepare_embedding_client() -> bool:
         return False
 
 
+def _is_ai_retrievable_doc(doc: dict) -> bool:
+    return (
+        (doc.get("embedding_status") or "").strip().lower() == "completed"
+        and (doc.get("material_status") or "").strip().lower() == "active"
+    )
+
+
 def _is_chunk_novel(content: str, selected_contents: list[str], threshold: float = 0.78) -> bool:
     for existing in selected_contents:
         if _question_similarity(content, existing) >= threshold:
@@ -439,7 +484,7 @@ def _is_chunk_novel(content: str, selected_contents: list[str], threshold: float
     return True
 
 
-async def _build_quiz_context_from_embeddings(sb, body: QuizGenerateRequest) -> str:
+async def _build_quiz_context_from_embeddings(sb, body: QuizGenerateRequest, *, student_university_id: str) -> str:
     """
     Retrieval layer for quiz generation:
     - filters documents by course/topic/level
@@ -451,24 +496,63 @@ async def _build_quiz_context_from_embeddings(sb, body: QuizGenerateRequest) -> 
 
     try:
         docs_res = sb.table("pans_library").select(
-            "id,file_name,course_code,topic,target_levels,embedding_status"
-        ).eq("course_code", body.courseCode).execute()
+            "id,file_name,course_code,topic,target_levels,embedding_status,material_status,university_id,academic_session,semester"
+        ).eq("course_code", body.courseCode).eq("university_id", student_university_id).eq("embedding_status", "completed").eq("material_status", "active").execute()
         docs = docs_res.data or []
     except Exception as exc:
         logger.warning(f"Quiz retrieval document lookup failed: {exc}")
         return ""
     if not docs:
+        logger.info(
+            "No quiz source documents found for university_id=%s course_code=%s",
+            student_university_id,
+            body.courseCode,
+        )
         return ""
 
-    filtered_docs = []
-    for doc in docs:
-        if (doc.get("embedding_status") or "").lower() != "completed":
-            continue
-        if not _doc_matches_level(doc.get("target_levels") or [], body.level):
-            continue
-        filtered_docs.append(doc)
+    requested_academic_session = (body.academic_session or "").strip()
+    requested_semester = normalize_semester(body.semester)
+    context_filter_source = "request" if (requested_academic_session or requested_semester) else None
+    if not requested_academic_session and not requested_semester:
+        academic_context = await get_current_academic_context(student_university_id)
+        if academic_context:
+            requested_academic_session = (academic_context.get("current_academic_session") or "").strip()
+            requested_semester = normalize_semester(academic_context.get("current_semester"))
+            context_filter_source = "current_academic_context"
+
+    def _filter_docs(*, apply_academic_context: bool) -> list[dict]:
+        next_docs = []
+        for doc in docs:
+            if not _is_ai_retrievable_doc(doc):
+                continue
+            if apply_academic_context:
+                if requested_academic_session and (doc.get("academic_session") or "").strip() != requested_academic_session:
+                    continue
+                if requested_semester and normalize_semester(doc.get("semester")) != requested_semester:
+                    continue
+            if not _doc_matches_level(doc.get("target_levels") or [], body.level):
+                continue
+            next_docs.append(doc)
+        return next_docs
+
+    filtered_docs = _filter_docs(apply_academic_context=bool(requested_academic_session or requested_semester))
+    if not filtered_docs and context_filter_source == "current_academic_context":
+        logger.info(
+            "No quiz documents matched current academic context for university_id=%s course_code=%s session=%s semester=%s; falling back to active course/level documents",
+            student_university_id,
+            body.courseCode,
+            requested_academic_session,
+            requested_semester,
+        )
+        filtered_docs = _filter_docs(apply_academic_context=False)
 
     if not filtered_docs:
+        logger.info(
+            "No AI-retrievable quiz documents found for university_id=%s course_code=%s level=%s",
+            student_university_id,
+            body.courseCode,
+            body.level,
+        )
         return ""
 
     if body.topic:
@@ -588,16 +672,134 @@ async def _build_quiz_context_from_embeddings(sb, body: QuizGenerateRequest) -> 
     )
 
 
-# ---------- Routes ----------
+def _serialize_http_detail(detail: Any) -> str:
+    if isinstance(detail, str):
+        return detail
+    try:
+        return json.dumps(detail)
+    except Exception:
+        return str(detail)
 
-@router.post("/generate", dependencies=[Depends(_verify_api_key)])
-async def generate_quiz(body: QuizGenerateRequest, current_user: User = Depends(get_current_user)):
+
+def _update_quiz_generation_job(
+    sb,
+    job_id: Optional[str],
+    *,
+    status: str,
+    progress: int,
+    current_step: str,
+    error_message: Optional[str] = None,
+    quiz_id: Optional[str] = None,
+) -> None:
+    if not job_id:
+        return
+
+    payload = {
+        "status": status,
+        "progress": max(0, min(100, int(progress))),
+        "current_step": current_step,
+        "error_message": error_message,
+    }
+    if quiz_id is not None:
+        payload["quiz_id"] = quiz_id
+    if status in {"completed", "failed", "cancelled"}:
+        payload["completed_at"] = datetime.now(timezone.utc).isoformat()
+
+    try:
+        sb.table("quiz_generation_jobs").update(payload).eq("id", job_id).execute()
+    except Exception as exc:
+        logger.warning("Failed to update quiz generation job %s: %s", job_id, exc)
+
+
+async def _generate_quiz_json_response(system_prompt: str, user_prompt: str) -> str:
+    messages = merge_system_into_user([
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ])
+    response = await llm_engine.generate_completion_with_failover(
+        messages=messages,
+        temperature=QUIZ_GENERATION_TEMPERATURE,
+        max_tokens=QUIZ_GENERATION_MAX_TOKENS,
+        has_images=False,
+        stream=False,
+        force_google=False,
+    )
+    if response is None:
+        raise RuntimeError("LLM generation failed on all available clients")
+
+    content = response.choices[0].message.content
+    if isinstance(content, list):
+        content = "\n".join(
+            str(part.get("text", "")) if isinstance(part, dict) else str(part)
+            for part in content
+        )
+
+    visible_text, _thinking_text = strip_thinking_tokens(str(content or ""))
+    return str(visible_text).strip()
+
+
+async def _generate_quiz_grading_response(system_prompt: str, user_prompt: str) -> str:
+    messages = merge_system_into_user([
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ])
+    response = await llm_engine.generate_completion_with_failover(
+        messages=messages,
+        temperature=QUIZ_GRADING_TEMPERATURE,
+        max_tokens=QUIZ_GRADING_MAX_TOKENS,
+        has_images=False,
+        stream=False,
+        force_google=False,
+    )
+    if response is None:
+        raise RuntimeError("LLM grading failed on all available clients")
+
+    content = response.choices[0].message.content
+    if isinstance(content, list):
+        content = "\n".join(
+            str(part.get("text", "")) if isinstance(part, dict) else str(part)
+            for part in content
+        )
+
+    visible_text, _thinking_text = strip_thinking_tokens(str(content or ""))
+    return str(visible_text).strip()
+
+
+# ---------- Internal generation ----------
+
+async def _generate_quiz_now(
+    body: QuizGenerateRequest,
+    current_user: User,
+    *,
+    job_id: Optional[str] = None,
+):
     """Generate quiz questions using LLM and save to database."""
     restriction = await _get_quiz_restriction_if_any(current_user)
     if restriction:
         return JSONResponse(status_code=423, content=build_restriction_block_payload(restriction))
 
     sb = _get_supabase()
+    _update_quiz_generation_job(
+        sb,
+        job_id,
+        status="retrieving",
+        progress=12,
+        current_step="Finding course materials",
+    )
+    student_context = await resolve_student_university_context(current_user)
+    student_university_id = student_context.get("university_id")
+    if not student_university_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Complete your profile with your university before generating document-based quizzes.",
+        )
+    student_level = (student_context.get("level") or "").strip()
+    if not student_level:
+        raise HTTPException(
+            status_code=400,
+            detail="Complete your profile with your academic level before generating quizzes.",
+        )
+    body.level = student_level
 
     q_type = getattr(body, "questionType", "OBJECTIVE") or "OBJECTIVE"
     if q_type in ("OBJECTIVE", "multiple_choice", "MCQ"):
@@ -641,10 +843,28 @@ async def generate_quiz(body: QuizGenerateRequest, current_user: User = Depends(
         recent_question_block = ""
 
     try:
-        retrieved_context_block = await _build_quiz_context_from_embeddings(sb, body)
+        retrieved_context_block = await _build_quiz_context_from_embeddings(
+            sb,
+            body,
+            student_university_id=student_university_id,
+        )
     except Exception as exc:
         logger.warning(f"Could not build embedding context block: {exc}")
         retrieved_context_block = ""
+
+    if not (retrieved_context_block or "").strip():
+        raise HTTPException(
+            status_code=404,
+            detail="No active processed materials were found for this course in your university.",
+        )
+
+    _update_quiz_generation_job(
+        sb,
+        job_id,
+        status="generating",
+        progress=42,
+        current_step="Generating questions",
+    )
 
     # Keep prompt size bounded for high question counts.
     recent_lines = _extract_recent_question_lines(recent_question_block, limit=20)
@@ -653,7 +873,7 @@ async def generate_quiz(body: QuizGenerateRequest, current_user: User = Depends(
         + "\n".join([f"- {q}" for q in recent_lines])
         + "\n"
     ) if recent_lines else ""
-    context_block_small = _truncate_block(retrieved_context_block, max_chars=9000)
+    context_block_small = _truncate_block(retrieved_context_block, max_chars=6000)
 
     def _parse_json_array(raw: str) -> list:
         cleaned = (raw or "").strip()
@@ -674,7 +894,7 @@ async def generate_quiz(body: QuizGenerateRequest, current_user: User = Depends(
             raise ValueError("LLM did not return a JSON array")
         return parsed
 
-    def _build_prompt(batch_count: int, already_used: list[str], compact: bool = False) -> str:
+    def _build_generation_prompts(batch_count: int, already_used: list[str], compact: bool = False) -> tuple[str, str]:
         nonce = str(uuid.uuid4())[:8]
         used_block = ""
         if already_used:
@@ -684,43 +904,50 @@ async def generate_quiz(body: QuizGenerateRequest, current_user: User = Depends(
                 f"{used_lines}\n"
             )
 
-        prompt = f"""Generate {batch_count} {type_desc} quiz questions about {body.courseTitle} ({body.courseCode}).
-Topic: {body.topic or 'General'}
-Difficulty: {body.difficulty}
-Level: {body.level}
-Generation nonce: {nonce}
+        system_prompt = f"""You are PANSGPT's quiz generation engine for pharmacy students.
 
-DIVERSITY REQUIREMENTS:
+You must return only machine-parseable JSON. Do not include markdown, code fences, prose, comments, headings, or thinking tags.
+
+Output contract:
+- Return a JSON array only.
+- The array must contain exactly {batch_count} question objects.
+- Each object must include:
+  - "questionText": the question string
+{format_reqs}
+  - "explanation": a brief explanation of the correct answer
+
+Diversity rules:
 - Avoid repeating any previously asked questions or close paraphrases.
 - Spread questions across different concepts/sections of the material.
 - Avoid clustering on a single subsection.
 - Vary question phrasing and scenario framing.
 
-Return ONLY a valid JSON array of question objects. Each object must have:
-- "questionText": the question string
-{format_reqs}
-- "explanation": a brief explanation of the correct answer
+Grounding rules:
+- Build questions from the retrieved curriculum context when provided.
+- Cover multiple different excerpts/sources in the context, not just one narrow subsection.
+- Do not invent facts outside the retrieved context unless needed for wording clarity."""
 
-{context_block_small if not compact else ""}
+        user_prompt = f"""Generate {batch_count} {type_desc} quiz questions.
+
+Course title: {body.courseTitle}
+Course code: {body.courseCode}
+Topic: {body.topic or 'General'}
+Difficulty: {body.difficulty}
+Academic level: {body.level}
+Generation nonce: {nonce}
+
+{context_block_small if not compact else "CURRICULUM CONTEXT: Use the same course/topic constraints, but keep the prompt compact for this retry."}
 
 {recent_block_small}
 {used_block}
 
-Do NOT include any markdown, code fences, or extra text. Return ONLY the JSON array."""
+Return only the JSON array."""
 
-        if context_block_small and not compact:
-            prompt += """
-
-GROUNDING RULES:
-- Build questions from the retrieved curriculum context above.
-- Cover multiple different excerpts/sources in the context, not just one narrow subsection.
-- Do not invent facts outside the retrieved context unless needed for wording clarity.
-"""
-        return prompt
+        return system_prompt, user_prompt
 
     try:
         target_count = max(1, int(body.numQuestions or 10))
-        batch_size = 10 if target_count > 12 else target_count
+        batch_size = 5
         questions: list[dict] = []
 
         while len(questions) < target_count:
@@ -731,8 +958,8 @@ GROUNDING RULES:
             already_used = [str(q.get("questionText", "")).strip() for q in questions if str(q.get("questionText", "")).strip()]
             for attempt in range(1, 4):
                 compact_mode = attempt >= 2 and target_count >= 15
-                prompt = _build_prompt(current_batch, already_used, compact=compact_mode)
-                raw = await llm_engine.generate_response_async(prompt, [], force_google=True)
+                system_prompt, user_prompt = _build_generation_prompts(current_batch, already_used, compact=compact_mode)
+                raw = await _generate_quiz_json_response(system_prompt, user_prompt)
 
                 try:
                     parsed = _parse_json_array(raw)
@@ -776,6 +1003,14 @@ GROUNDING RULES:
             questions.extend(generated_this_batch)
 
         questions = questions[:target_count]
+
+        _update_quiz_generation_job(
+            sb,
+            job_id,
+            status="saving",
+            progress=86,
+            current_step="Saving quiz",
+        )
 
         try:
             # Save quiz to database
@@ -873,6 +1108,15 @@ GROUNDING RULES:
             logger.error(f"[ERROR] Quiz DB Insertion Failed: {db_err}")
             raise HTTPException(status_code=500, detail="Quiz was generated but could not be saved. Please try again.")
 
+        _update_quiz_generation_job(
+            sb,
+            job_id,
+            status="completed",
+            progress=100,
+            current_step="Quiz ready",
+            quiz_id=quiz_id,
+        )
+
         # Return the created quiz
         return await get_quiz(quiz_id, current_user)
 
@@ -884,6 +1128,116 @@ GROUNDING RULES:
     except Exception as e:
         logger.error(f"Quiz generation error: {e}")
         raise HTTPException(status_code=500, detail="Unable to generate quiz. Please try again.")
+
+
+async def _process_quiz_generation_job(job_id: str, body_payload: dict, user_payload: dict) -> None:
+    sb = _get_supabase()
+    try:
+        body = QuizGenerateRequest.model_validate(body_payload)
+        current_user = User.model_validate(user_payload)
+        await _generate_quiz_now(body, current_user, job_id=job_id)
+    except HTTPException as exc:
+        _update_quiz_generation_job(
+            sb,
+            job_id,
+            status="failed",
+            progress=100,
+            current_step="Could not generate quiz",
+            error_message=_serialize_http_detail(exc.detail),
+        )
+    except Exception as exc:
+        logger.error("Quiz generation job %s failed: %s", job_id, exc)
+        _update_quiz_generation_job(
+            sb,
+            job_id,
+            status="failed",
+            progress=100,
+            current_step="Could not generate quiz",
+            error_message="Unable to generate quiz. Please try again.",
+        )
+
+
+def _normalize_quiz_generation_job(row: dict) -> dict:
+    return {
+        "id": row.get("id"),
+        "status": row.get("status"),
+        "progress": row.get("progress") or 0,
+        "current_step": row.get("current_step") or "Preparing quiz",
+        "error_message": row.get("error_message"),
+        "quiz_id": row.get("quiz_id"),
+        "request_payload": row.get("request_payload") or {},
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+        "completed_at": row.get("completed_at"),
+    }
+
+
+@router.post("/generate", dependencies=[Depends(_verify_api_key)])
+async def generate_quiz(body: QuizGenerateRequest, current_user: User = Depends(get_current_user)):
+    return await _generate_quiz_now(body, current_user)
+
+
+@router.post("/jobs", dependencies=[Depends(_verify_api_key)])
+async def create_quiz_generation_job(
+    body: QuizGenerateRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+):
+    """Create a background quiz generation job and return immediately."""
+    restriction = await _get_quiz_restriction_if_any(current_user)
+    if restriction:
+        return JSONResponse(status_code=423, content=build_restriction_block_payload(restriction))
+
+    sb = _get_supabase()
+    job_payload = {
+        "user_id": current_user.id,
+        "request_payload": body.model_dump(),
+        "status": "queued",
+        "progress": 3,
+        "current_step": "Queued",
+    }
+
+    try:
+        job_res = sb.table("quiz_generation_jobs").insert(job_payload).execute()
+        job_rows = job_res.data or []
+        if not job_rows:
+            raise RuntimeError("No quiz job row returned")
+        job = job_rows[0]
+    except Exception as exc:
+        logger.error("Could not create quiz generation job: %s", exc)
+        raise HTTPException(status_code=500, detail="Could not start quiz generation. Please try again.")
+
+    background_tasks.add_task(
+        _process_quiz_generation_job,
+        job["id"],
+        body.model_dump(),
+        current_user.model_dump(),
+    )
+
+    return {"job": _normalize_quiz_generation_job(job)}
+
+
+@router.get("/jobs/{job_id}", dependencies=[Depends(_verify_api_key)])
+async def get_quiz_generation_job(job_id: str, current_user: User = Depends(get_current_user)):
+    sb = _get_supabase()
+    try:
+        res = (
+            sb.table("quiz_generation_jobs")
+            .select("id,status,progress,current_step,error_message,quiz_id,request_payload,created_at,updated_at,completed_at")
+            .eq("id", job_id)
+            .eq("user_id", current_user.id)
+            .limit(1)
+            .execute()
+        )
+        rows = res.data or []
+    except Exception as exc:
+        logger.error("Could not load quiz generation job %s: %s", job_id, exc)
+        raise HTTPException(status_code=500, detail="Unable to load quiz generation status.")
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="Quiz generation job not found.")
+
+    return {"job": _normalize_quiz_generation_job(rows[0])}
 
 
 @router.get("/history", dependencies=[Depends(_verify_api_key)])
@@ -1074,8 +1428,6 @@ async def submit_quiz(body: QuizSubmitRequest, current_user: User = Depends(get_
         # ── AI grading for short-answer questions ──
         if short_answer_items:
             try:
-                from services.llm_engine import generate_response_async
-
                 # Build the grading prompt with all short-answer questions
                 grading_entries = []
                 for idx, (fb_index, answer, question) in enumerate(short_answer_items):
@@ -1086,21 +1438,26 @@ async def submit_quiz(body: QuizSubmitRequest, current_user: User = Depends(get_
                         f"  Student Answer: {answer.selectedAnswer}"
                     )
 
-                grading_prompt = (
-                    "You are a university exam grader. Grade the following short-answer questions.\n"
-                    "For each question, compare the student's answer to the reference answer CONTEXTUALLY.\n"
-                    "The student does NOT need to use the exact same words. As long as the meaning is correct or substantially correct, award marks.\n\n"
-                    "For each question, respond with a JSON object on a separate line:\n"
+                grading_system_prompt = (
+                    "You are PANSGPT's short-answer quiz grading engine for university pharmacy students.\n"
+                    "Grade answers contextually against the reference answer.\n"
+                    "The student does not need exact wording if the meaning is correct.\n\n"
+                    "Return only JSON lines. Do not include markdown, prose, headings, comments, or thinking tags.\n"
+                    "Each line must be one JSON object with this shape:\n"
                     '{"q": <question_number>, "score": <0 or 0.5 or 1>, "feedback": "<brief explanation>"}\n\n'
                     "Score guide:\n"
-                    "- 1.0 = Correct or substantially correct (meaning matches even if wording differs)\n"
-                    "- 0.5 = Partially correct (captures some key points but misses others)\n"
-                    "- 0.0 = Incorrect or irrelevant\n\n"
-                    "Questions:\n" + "\n\n".join(grading_entries) + "\n\n"
-                    "Respond ONLY with the JSON lines, one per question. No other text."
+                    "- 1.0 = Correct or substantially correct.\n"
+                    "- 0.5 = Partially correct; captures some key points but misses others.\n"
+                    "- 0.0 = Incorrect, unsafe, or irrelevant."
+                )
+                grading_user_prompt = (
+                    "Grade these short-answer quiz responses.\n\n"
+                    "Questions:\n"
+                    + "\n\n".join(grading_entries)
+                    + "\n\nReturn only the JSON lines, one per question."
                 )
 
-                ai_response = await generate_response_async(grading_prompt, force_google=True)
+                ai_response = await _generate_quiz_grading_response(grading_system_prompt, grading_user_prompt)
                 logger.info(f"AI grading response: {ai_response}")
 
                 # Parse AI response

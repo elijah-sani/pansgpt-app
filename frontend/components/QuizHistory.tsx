@@ -1,45 +1,15 @@
-'use client';
+"use client";
 
-import React, { useEffect, useMemo, useState } from 'react';
-import type { Session } from '@supabase/supabase-js';
-import { supabase } from '@/lib/supabase';
-import { useRouter } from 'next/navigation';
-import { RefreshCw } from 'lucide-react';
-import { useQuizCache } from '@/lib/QuizCacheContext';
-
-interface Analytics {
-  averageScore: number;
-  totalQuizzes: number;
-  totalPoints: number;
-  coursePerformance: Array<{
-    courseCode: string;
-    courseTitle: string;
-    level: string;
-    averageScore: number;
-    quizCount: number;
-  }>;
-  recentTrend: Array<{
-    percentage: number;
-    completedAt: string;
-    courseCode: string;
-    title: string;
-  }>;
-  recentTrendAverage: number;
-}
-
-interface Pagination {
-  page: number;
-  limit: number;
-  total: number;
-  totalPages: number;
-}
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, Eye, Filter, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useQuizCache } from "@/lib/QuizCacheContext";
 
 interface QuizHistoryEntryResult {
   id: string;
   percentage: number;
   score: number;
   max_score: number;
-  time_taken?: number;
   created_at?: string;
   completed_at?: string;
 }
@@ -47,417 +17,285 @@ interface QuizHistoryEntryResult {
 interface QuizHistoryEntry {
   id: string;
   title: string;
-  course_code: string;
-  course_title: string;
+  course_code?: string;
+  course_title?: string;
   topic?: string;
-  level: string;
-  difficulty: string;
-  num_questions: number;
+  level?: string;
+  difficulty?: string;
+  num_questions?: number;
   result?: QuizHistoryEntryResult;
 }
 
+function formatDate(date?: string) {
+  if (!date) return "Recently";
+  const parsed = new Date(date);
+  if (Number.isNaN(parsed.getTime())) return "Recently";
+  return parsed.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function formatDifficulty(value?: string) {
+  if (!value) return "Practice";
+  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+}
+
+function scoreColor(percentage: number) {
+  if (percentage >= 80) return "text-primary";
+  if (percentage >= 60) return "text-amber-500";
+  return "text-red-500";
+}
+
 export default function QuizHistory() {
-  const [session, setSession] = useState<Session | null>(null);
-  useEffect(() => { supabase.auth.getSession().then(({ data: { session: s } }) => setSession(s)); }, []);
   const router = useRouter();
   const { quizHistory, quizHistoryLoaded, quizHistoryLoading, fetchQuizHistory } = useQuizCache();
-  const [error, setError] = useState<string | null>(null);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [filters, setFilters] = useState({
-    courseCode: '',
-    level: ''
-  });
-  const loading = quizHistoryLoading && !quizHistoryLoaded;
+  const [courseCode, setCourseCode] = useState("");
+  const [level, setLevel] = useState("");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const filtersRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!session?.user?.id) return;
-    if (quizHistoryLoaded || quizHistory.results.length > 0) {
-      return;
-    }
-    void fetchQuizHistory().catch((err: Error) => setError(err.message));
-  }, [fetchQuizHistory, quizHistory.results.length, quizHistoryLoaded, session]);
+    if (quizHistoryLoaded || quizHistory.results.length > 0) return;
+    void fetchQuizHistory().catch(() => {});
+  }, [fetchQuizHistory, quizHistory.results.length, quizHistoryLoaded]);
+
+  useEffect(() => {
+    if (!filtersOpen) return;
+
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!filtersRef.current?.contains(target)) {
+        setFiltersOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [filtersOpen]);
 
   const results = useMemo(() => {
-    let filteredResults = [...(quizHistory.results as QuizHistoryEntry[])];
+    const entries = (quizHistory.results || []).filter((entry): entry is QuizHistoryEntry => Boolean(entry?.result));
+    return entries.filter((entry) => {
+      const matchesCourse = courseCode.trim()
+        ? (entry.course_code || "").toLowerCase().includes(courseCode.trim().toLowerCase())
+        : true;
+      const matchesLevel = level ? String(entry.level || "") === level : true;
+      return matchesCourse && matchesLevel;
+    });
+  }, [courseCode, level, quizHistory.results]);
 
-    if (filters.courseCode) {
-      const courseCodeFilter = filters.courseCode.toLowerCase();
-      filteredResults = filteredResults.filter((item) =>
-        item.course_code?.toLowerCase().includes(courseCodeFilter)
-      );
-    }
+  const hasActiveFilters = Boolean(courseCode.trim() || level);
+  const loading = quizHistoryLoading && !quizHistoryLoaded;
 
-    if (filters.level) {
-      filteredResults = filteredResults.filter((item) => item.level === filters.level);
-    }
-
-    return filteredResults;
-  }, [filters, quizHistory.results]);
-
-  const analytics = quizHistory.analytics as Analytics | null;
-  const pagination = quizHistory.pagination as Pagination | null;
-
-  const handleFilterChange = (key: string, value: string) => {
-    setFilters(prev => ({ ...prev, [key]: value }));
-    setCurrentPage(1);
+  const clearFilters = () => {
+    setCourseCode("");
+    setLevel("");
   };
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}m ${secs}s`;
-  };
-
-  const getScoreColor = (percentage: number) => {
-    if (percentage >= 80) return 'var(--primary)';
-    if (percentage >= 60) return '#fbbf24';
-    return '#dc2626';
-  };
-
-  const getScoreBadge = (percentage: number) => {
-    if (percentage >= 90) return { text: 'Excellent', bgClass: 'bg-primary/10 dark:bg-primary/20', borderClass: 'border-primary/30 dark:border-primary/40' };
-    if (percentage >= 80) return { text: 'Great', bgClass: 'bg-primary/10 dark:bg-primary/20', borderClass: 'border-primary/30 dark:border-primary/40' };
-    if (percentage >= 70) return { text: 'Good', bgClass: 'bg-yellow-100 dark:bg-[rgba(251,191,36,0.3)]', borderClass: 'border-yellow-300 dark:border-[rgba(251,191,36,0.5)]' };
-    if (percentage >= 60) return { text: 'Fair', bgClass: 'bg-yellow-100 dark:bg-[rgba(251,191,36,0.3)]', borderClass: 'border-yellow-300 dark:border-[rgba(251,191,36,0.5)]' };
-    if (percentage >= 50) return { text: 'Pass', bgClass: 'bg-yellow-100 dark:bg-[rgba(251,191,36,0.3)]', borderClass: 'border-yellow-300 dark:border-[rgba(251,191,36,0.5)]' };
-    return { text: 'Needs Work', bgClass: 'bg-red-100 dark:bg-[rgba(220,38,38,0.3)]', borderClass: 'border-red-300 dark:border-[rgba(220,38,38,0.5)]' };
-  };
-
-  if (!session) {
-    return (
-      <div className="text-center">
-        <div className="rounded-lg p-6 border bg-card border-border">
-          <h2 className="text-2xl font-bold text-foreground mb-4">Quiz History</h2>
-          <p className="text-muted-foreground">Please sign in to view your quiz history</p>
-        </div>
-      </div>
-    );
-  }
 
   return (
-    <div className="max-w-6xl mx-auto px-4">
-      {/* Header */}
-      <div className="mb-8 flex flex-col md:flex-row md:items-center md:justify-between">
+    <div className="space-y-6">
+      <header className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-foreground mb-2">Quiz History</h1>
-          <p className="text-muted-foreground">Track your performance and progress over time</p>
-        </div>
-        <div className="flex gap-3 mt-4 md:mt-0">
           <button
-            onClick={() => {
-              setError(null);
-              void fetchQuizHistory(true).catch((err: Error) => setError(err.message));
-            }}
-            className="inline-flex items-center gap-2 px-4 py-2 border text-sm font-medium rounded-lg text-foreground transition-all bg-card border-border hover:bg-accent"
+            type="button"
+            onClick={() => router.push("/quiz")}
+            className="mb-3 hidden items-center gap-1.5 text-sm font-semibold text-primary transition-colors hover:text-primary/80 md:inline-flex"
           >
-            <RefreshCw className={`h-4 w-4 ${quizHistoryLoading ? 'animate-spin' : ''}`} />
-            Refresh
+            <ArrowLeft className="h-4 w-4" />
+            Back to Quiz
           </button>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground md:text-4xl">Quiz History</h1>
+          <p className="mt-2 text-sm text-muted-foreground md:text-base">Review all completed quiz attempts.</p>
+        </div>
+
+        <div className="relative" ref={filtersRef}>
           <button
-            onClick={() => router.push('/main')}
-            className="inline-flex items-center px-4 py-2 border text-sm font-medium rounded-lg text-foreground transition-all bg-card border-border hover:bg-accent"
+            type="button"
+            onClick={() => setFiltersOpen((value) => !value)}
+            className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-border bg-card px-4 text-sm font-semibold text-foreground transition-colors hover:bg-muted md:w-auto"
+            aria-expanded={filtersOpen}
           >
-            Back to AI Chat
+            <Filter className="h-4 w-4 text-muted-foreground" />
+            Filters
+            {hasActiveFilters ? <span className="h-2 w-2 rounded-full bg-primary" /> : null}
           </button>
-          <button
-            onClick={() => router.push('/quiz')}
-            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white transition-all bg-primary dark:bg-primary hover:bg-primary/90 dark:hover:bg-primary/90"
-          >
-            Take New Quiz
-          </button>
-        </div>
-      </div>
 
-      {error && (
-        <div className="mb-6 p-4 border rounded-lg bg-red-50 dark:bg-[rgba(220,38,38,0.1)] border-red-200 dark:border-[rgba(220,38,38,0.3)]">
-          <p className="text-red-600 dark:text-[#dc2626]">{error}</p>
-        </div>
-      )}
-
-      {/* Analytics Overview */}
-      {analytics && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-          <div className="rounded-lg p-6 border bg-card border-border">
-            <div className="flex items-center">
-              <div className="w-12 h-12 rounded-lg flex items-center justify-center mr-4 bg-primary/10 dark:bg-primary/15">
-                <svg className="w-6 h-6 text-primary dark:text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                </svg>
-              </div>
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Average Score</p>
-                <p className="text-2xl font-bold text-foreground">{analytics.averageScore.toFixed(1)}%</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-lg p-6 border bg-card border-border">
-            <div className="flex items-center">
-              <div className="w-12 h-12 rounded-lg flex items-center justify-center mr-4 bg-primary/10 dark:bg-primary/15">
-                <svg className="w-6 h-6 text-primary dark:text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                </svg>
-              </div>
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Total Quizzes</p>
-                <p className="text-2xl font-bold text-foreground">{analytics.totalQuizzes}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-lg p-6 border bg-card border-border">
-            <div className="flex items-center">
-              <div className="w-12 h-12 rounded-lg flex items-center justify-center mr-4 bg-primary/10 dark:bg-primary/15">
-                <svg className="w-6 h-6 text-primary dark:text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" />
-                </svg>
-              </div>
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Total Points</p>
-                <p className="text-2xl font-bold text-foreground">{analytics.totalPoints}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-lg p-6 border bg-card border-border">
-            <div className="flex items-center">
-              <div className="w-12 h-12 rounded-lg flex items-center justify-center mr-4 bg-primary/10 dark:bg-primary/15">
-                <svg className="w-6 h-6 text-primary dark:text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                </svg>
-              </div>
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Recent Trend</p>
-                <p className="text-2xl font-bold text-foreground">
-                  {analytics.recentTrendAverage > 0
-                    ? analytics.recentTrendAverage.toFixed(1) + '%'
-                    : 'N/A'
-                  }
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Filters */}
-      <div className="rounded-lg p-6 mb-6 border bg-card border-border">
-        <h2 className="text-lg font-semibold text-foreground mb-4">Filters</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-foreground mb-1">
-              Course Code
-            </label>
-            <input
-              type="text"
-              value={filters.courseCode}
-              onChange={(e) => handleFilterChange('courseCode', e.target.value)}
-              placeholder="Filter by course code"
-              className="w-full px-3 py-2 border rounded-md text-base md:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary dark:focus:ring-primary bg-input-background border-border"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-foreground mb-1">
-              Level
-            </label>
-            <select
-              value={filters.level}
-              onChange={(e) => handleFilterChange('level', e.target.value)}
-              className="w-full px-3 py-2 border rounded-md text-base md:text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary dark:focus:ring-primary bg-input-background border-border"
-            >
-              <option value="" className="bg-card text-foreground">All Levels</option>
-              <option value="100" className="bg-card text-foreground">100</option>
-              <option value="200" className="bg-card text-foreground">200</option>
-              <option value="300" className="bg-card text-foreground">300</option>
-              <option value="400" className="bg-card text-foreground">400</option>
-              <option value="500" className="bg-card text-foreground">500</option>
-              <option value="600" className="bg-card text-foreground">600</option>
-            </select>
-          </div>
-          <div className="flex items-end">
-            <button
-              onClick={() => {
-                setFilters({ courseCode: '', level: '' });
-                setCurrentPage(1);
-              }}
-              className="w-full px-4 py-2 text-foreground rounded-lg transition-all border border-border bg-card hover:bg-accent"
-            >
-              Clear Filters
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Quiz Results */}
-      <div className="rounded-lg border bg-card border-border">
-        <div className="px-6 py-4 border-b border-border">
-          <h2 className="text-lg font-semibold text-foreground">Recent Quizzes</h2>
-        </div>
-
-        {loading ? (
-          <div className="p-8 text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 mx-auto border-primary dark:border-primary/40"></div>
-            <p className="mt-2 text-muted-foreground">Loading quiz history...</p>
-          </div>
-        ) : results.length === 0 ? (
-          <div className="p-8 text-center">
-            <svg className="mx-auto h-12 w-12 text-primary dark:text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-            </svg>
-            <h3 className="mt-2 text-sm font-medium text-foreground">No quizzes found</h3>
-            <p className="mt-1 text-sm text-muted-foreground">Start by taking your first quiz!</p>
-            <div className="mt-6">
-              <button
-                onClick={() => router.push('/quiz')}
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white transition-all bg-primary dark:bg-primary hover:bg-primary/90 dark:hover:bg-primary/90"
-              >
-                Take a Quiz
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="divide-y divide-border">
-            {results.map((item) => {
-              // The backend returns a list of quizzes, each with a nested `result` object
-              const quizData = item;
-              const resultData = item.result;
-
-              if (!resultData) return null;
-
-              const scoreBadge = getScoreBadge(resultData.percentage);
-              const scoreColor = getScoreColor(resultData.percentage);
-              return (
-                <div
-                  key={resultData.id}
-                  className="p-6 cursor-pointer transition hover:bg-accent"
-                  onClick={() => router.push(`/quiz/${quizData.id}/results?resultId=${resultData.id}`)}
+          {filtersOpen ? (
+            <div className="absolute right-0 top-[calc(100%+0.75rem)] z-30 w-[min(22rem,calc(100vw-2.5rem))] rounded-2xl border border-border bg-card p-4 shadow-[0_18px_48px_rgba(0,0,0,0.22)]">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-sm font-semibold text-foreground">Filter history</h2>
+                <button
+                  type="button"
+                  onClick={() => setFiltersOpen(false)}
+                  className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  aria-label="Close filters"
                 >
-                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                    <div className="flex-1 w-full">
-                      <div className="flex items-center justify-between">
-                        <h3 className="text-lg font-medium text-foreground">
-                          {quizData.title}
-                        </h3>
-                      </div>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        {quizData.course_code} - {quizData.course_title}
-                      </p>
-                      {quizData.topic && (
-                        <p className="text-sm text-muted-foreground mt-1">Topic: {quizData.topic}</p>
-                      )}
-                      <div className="flex flex-wrap items-center mt-2 space-x-4 text-sm text-muted-foreground">
-                        <span>Level {quizData.level}</span>
-                        <span>•</span>
-                        <span>{quizData.difficulty}</span>
-                        <span>•</span>
-                        <span>{quizData.num_questions} questions</span>
-                        {resultData.time_taken && (
-                          <>
-                            <span>•</span>
-                            <span>{formatTime(resultData.time_taken)}</span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    <div className="text-right flex flex-col items-end w-full md:w-auto md:ml-6 mt-4 md:mt-0">
-                      <div className="flex items-center space-x-2">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-foreground border-[0.5px] ${scoreBadge.bgClass} ${scoreBadge.borderClass}`}>
-                          {scoreBadge.text}
-                        </span>
-                        <div className="text-2xl font-bold" style={{ color: scoreColor }}>
-                          {resultData.percentage.toFixed(1)}%
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-4">
+                <div className="space-y-1.5">
+                  <label htmlFor="quiz-history-course" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Course code
+                  </label>
+                  <input
+                    id="quiz-history-course"
+                    type="text"
+                    value={courseCode}
+                    onChange={(event) => setCourseCode(event.target.value)}
+                    placeholder="PHA 421"
+                    className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/40"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label htmlFor="quiz-history-level" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Level
+                  </label>
+                  <select
+                    id="quiz-history-level"
+                    value={level}
+                    onChange={(event) => setLevel(event.target.value)}
+                    className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none transition-colors focus:border-primary/40"
+                  >
+                    <option value="">All levels</option>
+                    {["100", "200", "300", "400", "500", "600"].map((item) => (
+                      <option key={item} value={item}>{item}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="mt-5 flex items-center justify-end gap-2">
+                <button type="button" onClick={clearFilters} className="rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted">
+                  Clear
+                </button>
+                <button type="button" onClick={() => setFiltersOpen(false)} className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground">
+                  Apply
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </header>
+
+      {hasActiveFilters ? (
+        <div className="flex flex-wrap items-center gap-2">
+          {courseCode.trim() ? <FilterChip label={`Course: ${courseCode.trim()}`} onClear={() => setCourseCode("")} /> : null}
+          {level ? <FilterChip label={`Level: ${level}`} onClear={() => setLevel("")} /> : null}
+          <button type="button" onClick={clearFilters} className="text-xs text-muted-foreground underline-offset-2 hover:underline">
+            Clear all
+          </button>
+        </div>
+      ) : null}
+
+      {loading ? (
+        <div className="py-12 text-center text-sm text-muted-foreground">Loading quiz history...</div>
+      ) : results.length === 0 ? (
+        <div className="rounded-2xl border border-border bg-card px-6 py-10 text-center">
+          <h2 className="text-sm font-semibold text-foreground">No quizzes found</h2>
+          <p className="mt-2 text-sm text-muted-foreground">Completed quizzes will appear here.</p>
+        </div>
+      ) : (
+        <>
+          <div className="hidden overflow-x-auto md:block">
+            <table className="min-w-full text-left">
+              <thead className="bg-muted/30">
+                <tr className="text-xs uppercase tracking-wide text-muted-foreground">
+                  <th className="px-6 py-3 font-medium">Quiz</th>
+                  <th className="px-6 py-3 font-medium">Course</th>
+                  <th className="px-6 py-3 text-right font-medium">Questions</th>
+                  <th className="px-6 py-3 text-right font-medium">Score</th>
+                  <th className="px-6 py-3 font-medium">Completed</th>
+                  <th className="px-6 py-3 text-right font-medium">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {results.map((entry) => {
+                  const result = entry.result;
+                  if (!result) return null;
+
+                  return (
+                    <tr
+                      key={result.id}
+                      onClick={() => router.push(`/quiz/${entry.id}/results?resultId=${result.id}`)}
+                      className="cursor-pointer border-t border-border align-top transition-colors first:border-t-0 hover:bg-muted/35"
+                    >
+                      <td className="px-6 py-4">
+                        <div className="font-medium text-foreground">{entry.title}</div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {entry.level ? `${entry.level} Level` : "Practice"} - {formatDifficulty(entry.difficulty)}
                         </div>
-                      </div>
-                      <div className="text-sm text-muted-foreground">
-                        {resultData.score}/{resultData.max_score} points
-                      </div>
-                      <div className="text-xs text-foreground/60 mt-1">
-                        {new Date(resultData.created_at || resultData.completed_at || Date.now()).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="font-medium text-foreground">{entry.course_code || "Course"}</div>
+                        <div className="mt-1 max-w-[220px] truncate text-xs text-muted-foreground">{entry.course_title || entry.topic || "General practice"}</div>
+                      </td>
+                      <td className="px-6 py-4 text-right text-sm text-foreground">{entry.num_questions || "-"}</td>
+                      <td className="px-6 py-4 text-right">
+                        <span className={`inline-flex min-w-12 justify-center rounded-full bg-background px-2.5 py-1 text-xs font-bold ${scoreColor(result.percentage)}`}>
+                          {result.percentage.toFixed(0)}%
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-muted-foreground">{formatDate(result.completed_at || result.created_at)}</td>
+                      <td className="px-6 py-4 text-right">
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            router.push(`/quiz/${entry.id}/results?resultId=${result.id}`);
+                          }}
+                          className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/10"
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                          View result
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-        )}
 
-        {/* Pagination */}
-        {pagination && pagination.totalPages > 1 && (
-          <div className="px-6 py-4 border-t border-border">
-            <div className="flex items-center justify-between">
-              <div className="text-sm text-muted-foreground">
-                Showing {((pagination.page - 1) * pagination.limit) + 1} to{' '}
-                {Math.min(pagination.page * pagination.limit, pagination.total)} of{' '}
-                {pagination.total} results
-              </div>
-              <div className="flex space-x-2">
-                <button
-                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                  disabled={currentPage === 1}
-                  className={`px-3 py-2 text-sm font-medium rounded-lg transition-all ${currentPage === 1
-                    ? 'text-muted-foreground/50 cursor-not-allowed'
-                    : 'text-foreground hover:bg-accent cursor-pointer'
-                    }`}
-                >
-                  Previous
-                </button>
-                <span className="px-3 py-2 text-sm text-muted-foreground">
-                  Page {currentPage} of {pagination.totalPages}
-                </span>
-                <button
-                  onClick={() => setCurrentPage(prev => Math.min(pagination.totalPages, prev + 1))}
-                  disabled={currentPage === pagination.totalPages}
-                  className={`px-3 py-2 text-sm font-medium rounded-lg transition-all ${currentPage === pagination.totalPages
-                    ? 'text-muted-foreground/50 cursor-not-allowed'
-                    : 'text-foreground hover:bg-accent cursor-pointer'
-                    }`}
-                >
-                  Next
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
+          <div className="space-y-2.5 md:hidden">
+            {results.map((entry) => {
+              const result = entry.result;
+              if (!result) return null;
 
-      {/* Course Performance */}
-      {analytics && analytics.coursePerformance.length > 0 && (
-        <div className="mt-8 rounded-lg border bg-card border-border">
-          <div className="px-6 py-4 border-b border-border">
-            <h2 className="text-lg font-semibold text-foreground">Performance by Course</h2>
-          </div>
-          <div className="divide-y divide-border">
-            {analytics.coursePerformance.map((course, index) => {
-              const courseScoreColor = getScoreColor(course.averageScore);
               return (
-                <div key={index} className="p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-lg font-medium text-foreground">
-                        {course.courseCode} - {course.courseTitle}
-                      </h3>
-                      <p className="text-sm text-muted-foreground">Level {course.level}</p>
+                <article
+                  key={result.id}
+                  onClick={() => router.push(`/quiz/${entry.id}/results?resultId=${result.id}`)}
+                  className="cursor-pointer rounded-2xl border border-border bg-background/90 p-4 transition-colors hover:border-primary/30 hover:bg-muted/40"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <h3 className="truncate text-sm font-medium text-foreground">{entry.title}</h3>
+                      <p className="mt-1 truncate text-xs leading-5 text-muted-foreground">
+                        {entry.course_code || "Course"} - {formatDate(result.completed_at || result.created_at)}
+                      </p>
                     </div>
-                    <div className="text-right">
-                      <div className="text-xl font-bold" style={{ color: courseScoreColor }}>
-                        {course.averageScore.toFixed(1)}%
-                      </div>
-                      <div className="text-sm text-muted-foreground">
-                        {course.quizCount} quiz{course.quizCount !== 1 ? 'zes' : ''}
-                      </div>
-                    </div>
+                    <span className={`shrink-0 rounded-full border border-border bg-card px-2 py-1 text-[11px] font-semibold ${scoreColor(result.percentage)}`}>
+                      {result.percentage.toFixed(0)}%
+                    </span>
                   </div>
-                </div>
+                </article>
               );
             })}
           </div>
-        </div>
+        </>
       )}
     </div>
   );
-} 
+}
 
-
-
-
+function FilterChip({ label, onClear }: { label: string; onClear: () => void }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+      {label}
+      <button type="button" onClick={onClear} className="rounded-full p-0.5 hover:bg-primary/10" aria-label={`Clear ${label}`}>
+        <X className="h-3 w-3" />
+      </button>
+    </span>
+  );
+}

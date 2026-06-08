@@ -8,6 +8,9 @@ export interface QuizDocument {
   title?: string;
   topic?: string;
   level?: string;
+  material_status?: 'active' | 'archived' | string;
+  academic_session?: string;
+  semester?: string;
 }
 
 export interface QuizCourse {
@@ -58,6 +61,9 @@ export function QuizCacheProvider({ children }: { children: React.ReactNode }) {
     const nextCourses: QuizCourse[] = [];
 
     for (const doc of documents) {
+      if (String(doc.material_status || 'active').toLowerCase() !== 'active') {
+        continue;
+      }
       if (!doc.course_code || seen.has(doc.course_code)) {
         continue;
       }

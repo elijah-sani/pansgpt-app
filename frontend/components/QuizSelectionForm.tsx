@@ -95,9 +95,10 @@ export default function QuizSelectionForm() {
     if (!documentsLoaded && documents.length === 0) {
       return;
     }
+    const activeDocuments = documents.filter((doc) => String(doc.material_status || 'active').toLowerCase() === 'active');
     const relevantDocuments = formData.courseCode
-      ? documents.filter((doc) => doc.course_code === formData.courseCode)
-      : documents;
+      ? activeDocuments.filter((doc) => doc.course_code === formData.courseCode)
+      : activeDocuments;
 
     const topics = [
       ...new Set(

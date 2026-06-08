@@ -11,11 +11,11 @@ interface QuizResultsPageProps {
 export default async function QuizResultsPage({ params }: QuizResultsPageProps) {
     const { id } = await params;
     return (
-        <div className="h-full overflow-y-auto text-foreground bg-background">
+        <div className="h-full overflow-y-auto bg-background text-foreground">
             {/* Mobile header — same style as quiz creation page */}
             <QuizResultsHeader />
 
-            <div className="max-w-4xl mx-auto px-4 py-8">
+            <div className="mx-auto w-full max-w-7xl px-4 py-6 md:px-8 md:py-8">
                 <Suspense fallback={<div>Loading results...</div>}>
                     <QuizResults quizId={id} />
                 </Suspense>

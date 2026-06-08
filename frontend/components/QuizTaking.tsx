@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
+import { ArrowLeft, ChevronLeft, ChevronRight, Clock3, X } from 'lucide-react';
 
 interface Question {
   id: string;
@@ -40,7 +41,6 @@ function getQuestionStem(questionText: string, options?: string[]): string {
   if (!raw) return raw;
 
   let cutIndex = raw.length;
-
   const markerPatterns = [
     /\bselect\s+one\s+or\s+more\b/i,
     /\bselect\s+all\s+that\s+apply\b/i,
@@ -69,6 +69,16 @@ function getQuestionStem(questionText: string, options?: string[]): string {
   return raw.slice(0, cutIndex).trim();
 }
 
+function isAnswered(answer: string | string[]) {
+  if (Array.isArray(answer)) return answer.length > 0;
+  return answer.trim().length > 0;
+}
+
+function formatDifficulty(value?: string) {
+  if (!value) return 'Practice';
+  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+}
+
 export default function QuizTaking({ quizId }: { quizId: string }) {
   const router = useRouter();
   const [quiz, setQuiz] = useState<Quiz | null>(null);
@@ -80,6 +90,7 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [startTime, setStartTime] = useState<Date | null>(null);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const [showIncompleteSubmitDialog, setShowIncompleteSubmitDialog] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -95,40 +106,32 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
         if (!response.ok) {
           throw new Error('Quiz not found');
         }
+
         const data = await response.json();
         setQuiz(data.quiz);
+        setUserAnswers(data.quiz.questions.map((question: Question) => ({
+          questionId: question.id,
+          answer: '',
+        })));
 
-        // Initialize user answers
-        const initialAnswers = data.quiz.questions.map((q: Question) => ({
-          questionId: q.id,
-          answer: ''
-        }));
-        setUserAnswers(initialAnswers);
-
-        // Set time limit if exists
         if (data.quiz.time_limit) {
-          setTimeRemaining(data.quiz.time_limit * 60); // Convert to seconds
+          setTimeRemaining(data.quiz.time_limit * 60);
         }
 
         setStartTime(new Date());
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : 'Quiz not found';
-        setError(message);
+        setError(err instanceof Error ? err.message : 'Quiz not found');
       } finally {
         setLoading(false);
       }
     }
 
-    if (quizId) {
-      fetchQuiz();
-    }
+    if (quizId) void fetchQuiz();
   }, [quizId]);
 
   const handleAnswerChange = (questionId: string, answer: string | string[]) => {
-    setUserAnswers(prev =>
-      prev.map(a =>
-        a.questionId === questionId ? { ...a, answer } : a
-      )
+    setUserAnswers((prev) =>
+      prev.map((item) => item.questionId === questionId ? { ...item, answer } : item)
     );
   };
 
@@ -145,37 +148,30 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
 
     try {
       const timeTaken = Math.floor((new Date().getTime() - startTime.getTime()) / 1000);
-
       const response = await api.post('/api/quiz/submit', {
         quizId: quiz.id,
-        userId: userId || "",
-        answers: userAnswers.map(a => ({
-          questionId: a.questionId,
-          selectedAnswer: Array.isArray(a.answer) ? JSON.stringify(a.answer) : a.answer
+        userId: userId || '',
+        answers: userAnswers.map((answer) => ({
+          questionId: answer.questionId,
+          selectedAnswer: Array.isArray(answer.answer) ? JSON.stringify(answer.answer) : answer.answer,
         })),
-        timeTaken
+        timeTaken,
       });
 
       const data = await response.json();
-
       if (!response.ok) {
         throw new Error(data.error || 'Failed to submit quiz');
       }
 
-      // Navigate to results page
       router.push(`/quiz/${quizId}/results?resultId=${data.result.id}`);
-
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to submit quiz';
-      setError(message);
+      setError(err instanceof Error ? err.message : 'Failed to submit quiz');
       setIsSubmitting(false);
     }
-  }, [quiz, startTime, userId, userAnswers, quizId, router]);
+  }, [quiz, quizId, router, startTime, userAnswers, userId]);
 
   useEffect(() => {
-    if (timeRemaining === null || timeRemaining <= 0) {
-      return;
-    }
+    if (timeRemaining === null || timeRemaining <= 0) return;
 
     const timer = setInterval(() => {
       setTimeRemaining((prev) => {
@@ -188,78 +184,27 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [timeRemaining, handleSubmit]);
-
-  const handleNext = () => {
-    if (currentQuestionIndex < (quiz?.questions.length || 0) - 1) {
-      setCurrentQuestionIndex(prev => prev + 1);
-    }
-  };
-
-  const handlePrevious = () => {
-    if (currentQuestionIndex > 0) {
-      setCurrentQuestionIndex(prev => prev - 1);
-    }
-  };
-
-  const getProgressPercentage = () => {
-    if (!quiz) return 0;
-    return ((currentQuestionIndex + 1) / quiz.questions.length) * 100;
-  };
-
-  const getAnsweredCount = () => {
-    return userAnswers.filter(a => {
-      if (typeof a.answer === 'string') {
-        return a.answer.trim() !== '';
-      } else if (Array.isArray(a.answer)) {
-        return a.answer.length > 0;
-      }
-      return false;
-    }).length;
-  };
-
-  const handleCancelQuiz = () => {
-    setShowCancelDialog(true);
-  };
-
-  const confirmCancel = () => {
-    router.replace('/quiz');
-  };
-
-  const cancelCancel = () => {
-    setShowCancelDialog(false);
-  };
-
-  const canProceed = () => {
-    if (currentQuestion.question_type === 'MCQ') {
-      // Allow proceeding with any number of selections (including 0)
-      return true;
-    }
-    if (currentQuestion.question_type === 'SHORT_ANSWER' || currentQuestion.question_type === 'OBJECTIVE' || currentQuestion.question_type === 'multiple_choice') {
-      return typeof currentAnswer === 'string' && currentAnswer.trim().length > 0;
-    }
-    return true;
-  };
+  }, [handleSubmit, timeRemaining]);
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-background">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2" style={{ borderColor: 'var(--primary)' }}></div>
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="h-12 w-12 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
       </div>
     );
   }
 
   if (error || !quiz) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-background">
-        <div className="text-center">
-          <h2 className="text-2xl font-bold mb-4" style={{ color: '#dc2626' }}>Error</h2>
-          <p className="text-muted-foreground">{error || 'Quiz not found'}</p>
+      <div className="flex min-h-screen items-center justify-center bg-background px-5">
+        <div className="max-w-sm text-center">
+          <h2 className="text-xl font-semibold text-foreground">Unable to open quiz</h2>
+          <p className="mt-2 text-sm text-muted-foreground">{error || 'Quiz not found'}</p>
           <button
-            onClick={() => router.push('/quiz')}
-            className="mt-4 px-4 py-2 text-white rounded transition-colors bg-primary dark:bg-primary hover:bg-primary/90 dark:hover:bg-primary/90"
+            onClick={() => router.push('/quiz?new=1')}
+            className="mt-5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
           >
-            Back to Quiz Selection
+            Back to Quiz
           </button>
         </div>
       </div>
@@ -267,298 +212,365 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
   }
 
   const currentQuestion = quiz.questions[currentQuestionIndex];
-  const currentAnswer = userAnswers.find(a => a.questionId === currentQuestion.id)?.answer || '';
+  const currentAnswer = userAnswers.find((answer) => answer.questionId === currentQuestion.id)?.answer || '';
   const currentQuestionStem = getQuestionStem(currentQuestion.question_text, currentQuestion.options);
+  const currentAnswered = isAnswered(currentAnswer);
+  const answeredCount = userAnswers.filter((answer) => isAnswered(answer.answer)).length;
+  const progressPercentage = ((currentQuestionIndex + 1) / quiz.questions.length) * 100;
+  const isFinalQuestion = currentQuestionIndex === quiz.questions.length - 1;
+  const goPrevious = () => setCurrentQuestionIndex((current) => Math.max(0, current - 1));
+  const goNext = () => setCurrentQuestionIndex((current) => Math.min(quiz.questions.length - 1, current + 1));
+  const optionClass = (selected: boolean) =>
+    `flex min-h-[2.85rem] cursor-pointer items-center rounded-[5px] border px-3 py-1.5 text-[0.9rem] leading-snug transition-all md:min-h-[3.7rem] md:px-5 md:py-3 md:text-sm ${
+      selected
+        ? 'border-primary bg-primary/10 text-foreground shadow-sm'
+        : 'border-border bg-card text-foreground hover:border-primary/30 hover:bg-accent'
+    }`;
+  const optionDotClass = (selected: boolean) =>
+    `mr-2.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border md:h-5 md:w-5 ${
+      selected
+        ? 'border-primary bg-primary'
+        : 'border-muted-foreground bg-transparent'
+    }`;
+  const mobileCanGoNext = !isFinalQuestion;
+  const handleSubmitAttempt = () => {
+    if (answeredCount < quiz.questions.length) {
+      setShowIncompleteSubmitDialog(true);
+      return;
+    }
+
+    void handleSubmit();
+  };
 
   return (
-    <div className="min-h-screen overflow-y-auto text-foreground py-8 bg-background">
-      <div className="max-w-4xl mx-auto px-4">
-        {/* Header with Close Button */}
-        <div className="flex justify-end items-center mb-4">
-          <button
-            onClick={handleCancelQuiz}
-            className="flex items-center gap-2 px-4 py-2 border rounded-lg transition-colors"
-            style={{
-              color: '#dc2626',
-              borderColor: 'rgba(220, 38, 38, 0.3)',
-              backgroundColor: 'rgba(220, 38, 38, 0.1)'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = 'rgba(220, 38, 38, 0.2)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'rgba(220, 38, 38, 0.1)';
-            }}
-            title="Cancel Quiz"
-          >
-            <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-              <path d="M6 18L18 6M6 6l12 12" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            Cancel Quiz
-          </button>
-        </div>
-
-        {/* Header */}
-        <div className="rounded-lg p-6 mb-6 border bg-card border-border">
-          <div className="flex justify-between items-start mb-4">
-            <div>
-              <h1 className="text-2xl font-bold text-foreground">{quiz.title}</h1>
-              <p className="text-foreground font-medium">{quiz.course_code} - {quiz.course_title}</p>
-              {quiz.topic && <p className="text-muted-foreground">Topic: {quiz.topic}</p>}
+    <div className="min-h-[100dvh] overflow-y-auto bg-background text-foreground">
+      <div className="mx-auto flex min-h-[100dvh] w-full max-w-7xl flex-col px-0 pb-20 pt-0 md:px-8 md:py-8">
+        <header className="hidden items-center justify-between border-b border-border/70 pb-5 md:flex">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">{quiz.course_code}</p>
+            <h1 className="mt-2 truncate text-2xl font-bold tracking-tight text-foreground md:text-3xl">{quiz.title}</h1>
+          </div>
+          <div className="ml-4 flex shrink-0 items-center gap-3">
+            <div className="inline-flex min-h-10 items-center gap-2 rounded-[5px] bg-[#edf4ff] px-3 text-sm font-semibold text-foreground dark:bg-muted/60">
+              <Clock3 className="h-4 w-4 text-primary" />
+              <span className={timeRemaining !== null && timeRemaining < 300 ? 'text-red-600' : ''}>
+                {timeRemaining !== null ? formatTime(timeRemaining) : '--:--'}
+              </span>
             </div>
-            <div className="text-right">
-              {timeRemaining !== null && (
-                <div className="text-lg font-semibold" style={{ color: timeRemaining < 300 ? '#dc2626' : 'white' }}>
-                  {formatTime(timeRemaining)}
-                </div>
-              )}
-              <div className="text-sm text-muted-foreground">
-                Level {quiz.level} • {quiz.difficulty}
+            <button
+              onClick={() => setShowCancelDialog(true)}
+              className="shrink-0 rounded-[5px] border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-600 transition-colors hover:bg-red-100 dark:border-red-600/30 dark:bg-red-900/10"
+            >
+              Exit
+            </button>
+          </div>
+        </header>
+
+        <header className="sticky top-0 z-30 border-b border-border bg-background pt-[env(safe-area-inset-top)] md:hidden">
+          <div className="flex h-16 items-center gap-2.5 px-4">
+            <button
+              type="button"
+              onClick={() => setShowCancelDialog(true)}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-foreground transition-colors active:bg-accent"
+              aria-label="Exit quiz"
+            >
+              <ArrowLeft className="h-4.5 w-4.5" />
+            </button>
+            <div className="h-6 w-px bg-border" />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[0.82rem] font-semibold text-foreground">{quiz.title}</p>
+              <p className="mt-0.5 truncate text-[0.72rem] text-muted-foreground">
+                {quiz.course_code}{quiz.topic ? ` - ${quiz.topic}` : ''}
+              </p>
+            </div>
+            <div className="flex min-h-9 shrink-0 items-center gap-1 rounded-[5px] bg-[#edf4ff] px-2.5 text-xs font-semibold text-foreground dark:bg-muted/60">
+              <Clock3 className="h-4 w-4 text-primary" />
+              <span>{timeRemaining !== null ? formatTime(timeRemaining) : '--:--'}</span>
+            </div>
+          </div>
+        </header>
+
+        <main className="grid flex-1 gap-8 px-6 py-6 md:px-0 lg:grid-cols-[minmax(0,1fr)_260px] lg:items-start">
+          <section className="min-w-0">
+            <div className="mb-8 hidden max-w-3xl md:block">
+              <div className="mb-2 flex items-center justify-between text-xs font-medium text-muted-foreground">
+                <span>Question {currentQuestionIndex + 1}/{quiz.questions.length}</span>
+                <span>{Math.round(progressPercentage)}%</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-muted">
+                <div className="h-full rounded-full bg-primary transition-all duration-300" style={{ width: `${progressPercentage}%` }} />
               </div>
             </div>
-          </div>
 
-          {/* Progress Bar */}
-          <div className="mb-4">
-            <div className="flex justify-between text-sm text-muted-foreground mb-2">
-              <span>Question {currentQuestionIndex + 1} of {quiz.questions.length}</span>
-              <span>{getAnsweredCount()} answered</span>
-            </div>
-            <div className="w-full rounded-full h-2 bg-muted/70">
-              <div
-                className="h-2 rounded-full transition-all duration-300 bg-primary dark:bg-primary"
-                style={{ width: `${getProgressPercentage()}%` }}
-              ></div>
-            </div>
-          </div>
-        </div>
+            <div className="max-w-3xl">
+              <p className="text-xs font-medium text-muted-foreground md:hidden">Question {currentQuestionIndex + 1}</p>
+              <p className="mt-3 text-base leading-7 text-foreground md:mt-4 md:text-lg md:leading-8">{currentQuestionStem}</p>
 
-        {/* Question */}
-        <div className="rounded-lg p-6 mb-6 border bg-card border-border">
-          <div className="mb-6">
-            <h2 className="text-xl font-semibold text-foreground mb-4">
-              Question {currentQuestion.question_order}
-            </h2>
-            <p className="text-lg text-foreground mb-6">{currentQuestionStem}</p>
-
-            {/* Answer Options */}
-            {currentQuestion.question_type === 'MCQ' && currentQuestion.options && (
-              <div className="space-y-3">
-                {currentQuestion.options.map((option, index) => {
+              <div className="mt-5 space-y-3 md:mt-7">
+                {currentQuestion.question_type === 'MCQ' && currentQuestion.options?.map((option, index) => {
                   const selected = Array.isArray(currentAnswer) ? currentAnswer.includes(option) : false;
                   return (
-                    <label
-                      key={index}
-                      className={`flex items-center p-3 border rounded-lg cursor-pointer transition-all ${selected
-                        ? 'bg-primary/10 dark:bg-primary/15 border-primary dark:border-primary/40'
-                        : 'bg-input-background border-border hover:bg-accent'
-                        }`}
-                    >
+                    <label key={index} className={optionClass(selected)}>
                       <input
                         type="checkbox"
                         name={`question-${currentQuestion.id}`}
                         value={option}
                         checked={selected}
-                        onChange={e => {
-                          let newAnswers = Array.isArray(currentAnswer) ? [...currentAnswer] : [];
-                          if (e.target.checked) {
-                            newAnswers.push(option);
+                        onChange={(event) => {
+                          let nextAnswers = Array.isArray(currentAnswer) ? [...currentAnswer] : [];
+                          if (event.target.checked) {
+                            nextAnswers.push(option);
                           } else {
-                            newAnswers = newAnswers.filter(ans => ans !== option);
+                            nextAnswers = nextAnswers.filter((answer) => answer !== option);
                           }
-                          handleAnswerChange(currentQuestion.id, newAnswers);
+                          handleAnswerChange(currentQuestion.id, nextAnswers);
                         }}
-                        className="h-4 w-4"
-                        style={{ accentColor: 'var(--primary)' }}
+                        className="sr-only"
                       />
-                      <span className="ml-3 text-foreground">{option}</span>
+                      <span className={optionDotClass(selected)} />
+                      <span className="mr-2 shrink-0 font-bold">{String.fromCharCode(65 + index)}.</span>
+                      <span>{stripOptionLabel(option)}</span>
                     </label>
+                  );
+                })}
+
+                {currentQuestion.question_type === 'TRUE_FALSE' && ['True', 'False'].map((option, index) => (
+                  <label key={option} className={optionClass(currentAnswer === option)}>
+                    <input
+                      type="radio"
+                      name={`question-${currentQuestion.id}`}
+                      value={option}
+                      checked={currentAnswer === option}
+                      onChange={(event) => handleAnswerChange(currentQuestion.id, event.target.value)}
+                      className="sr-only"
+                    />
+                    <span className={optionDotClass(currentAnswer === option)} />
+                    <span className="mr-2 shrink-0 font-bold">{String.fromCharCode(65 + index)}.</span>
+                    <span>{option}</span>
+                  </label>
+                ))}
+
+                {(currentQuestion.question_type === 'OBJECTIVE' || currentQuestion.question_type === 'multiple_choice') && currentQuestion.options?.map((option, index) => (
+                  <label key={index} className={optionClass(currentAnswer === option)}>
+                    <input
+                      type="radio"
+                      name={`question-${currentQuestion.id}`}
+                      value={option}
+                      checked={currentAnswer === option}
+                      onChange={(event) => handleAnswerChange(currentQuestion.id, event.target.value)}
+                      className="sr-only"
+                    />
+                    <span className={optionDotClass(currentAnswer === option)} />
+                    <span className="mr-2 shrink-0 font-bold">{String.fromCharCode(65 + index)}.</span>
+                    <span>{stripOptionLabel(option)}</span>
+                  </label>
+                ))}
+
+                {currentQuestion.question_type === 'SHORT_ANSWER' && (
+                  <textarea
+                    value={currentAnswer}
+                    onChange={(event) => handleAnswerChange(currentQuestion.id, event.target.value)}
+                    placeholder="Write your answer..."
+                    className="min-h-24 w-full resize-none rounded-[5px] border border-border bg-card px-3 py-2 text-[0.9rem] text-foreground outline-none transition-all placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 md:min-h-40 md:bg-[#edf4ff] md:px-4 md:py-3 md:text-sm md:dark:bg-muted/60"
+                  />
+                )}
+              </div>
+
+              {error && (
+                <div className="mt-5 rounded-lg border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-600 dark:border-red-600/30 dark:bg-red-900/10">
+                  {error}
+                </div>
+              )}
+
+              <div className="mt-8 hidden items-center justify-end gap-3 md:flex">
+                <button
+                  onClick={goPrevious}
+                  disabled={currentQuestionIndex === 0}
+                  className="inline-flex min-h-11 items-center justify-center rounded-[5px] border border-primary px-6 text-sm font-semibold text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:border-border disabled:text-muted-foreground disabled:hover:bg-transparent"
+                >
+                  Previous
+                </button>
+                {!isFinalQuestion ? (
+                  <button
+                    onClick={goNext}
+                    className="inline-flex min-h-11 items-center justify-center rounded-[5px] bg-primary px-8 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
+                  >
+                    {currentAnswered ? 'Next' : 'Skip'}
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleSubmitAttempt}
+                    disabled={isSubmitting}
+                    className="inline-flex min-h-11 items-center justify-center rounded-[5px] bg-primary px-8 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isSubmitting ? 'Submitting...' : 'Submit Quiz'}
+                  </button>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <aside className="hidden space-y-5 lg:sticky lg:top-8 lg:block">
+            <div className="rounded-[5px] bg-[#edf4ff] p-5 text-center dark:bg-muted/60">
+              <p className="text-3xl font-bold text-foreground">{answeredCount}/{quiz.questions.length}</p>
+              <p className="mt-1 text-xs text-muted-foreground">answered questions</p>
+            </div>
+
+            {quiz.questions.length > 15 ? (
+              <div className="hidden rounded-[5px] bg-[#edf4ff] p-4 dark:bg-muted/60 lg:block">
+                <div className="grid grid-cols-6 gap-2">
+                  {quiz.questions.map((question, index) => {
+                    const answer = userAnswers.find((item) => item.questionId === question.id)?.answer || '';
+                    const answered = isAnswered(answer);
+                    const current = index === currentQuestionIndex;
+                    return (
+                      <button
+                        key={question.id}
+                        type="button"
+                        onClick={() => setCurrentQuestionIndex(index)}
+                        className={`flex aspect-square min-h-0 items-center justify-center rounded-[5px] border text-[11px] font-bold transition-colors ${
+                          current
+                            ? 'border-primary bg-primary text-primary-foreground shadow-sm'
+                            : answered
+                              ? 'border-primary/20 bg-primary/80 text-primary-foreground hover:bg-primary'
+                              : 'border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground'
+                        }`}
+                        aria-label={`Question ${index + 1}${answered ? ', answered' : ''}`}
+                      >
+                        {index + 1}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="hidden space-y-2 lg:block">
+                {quiz.questions.map((question, index) => {
+                  const answer = userAnswers.find((item) => item.questionId === question.id)?.answer || '';
+                  const answered = isAnswered(answer);
+                  const current = index === currentQuestionIndex;
+                  return (
+                    <button
+                      key={question.id}
+                      type="button"
+                      onClick={() => setCurrentQuestionIndex(index)}
+                      className={`flex min-h-11 w-full items-center gap-3 rounded-[5px] border px-3 text-left text-xs font-medium transition-colors ${
+                        current
+                          ? 'border-primary bg-[#edf4ff] text-foreground shadow-sm dark:bg-muted/60'
+                          : 'border-transparent bg-[#edf4ff]/70 text-muted-foreground hover:border-primary/30 dark:bg-muted/40'
+                      }`}
+                    >
+                      <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] ${
+                        answered ? 'bg-emerald-500 text-white' : 'bg-background text-transparent'
+                      }`}>
+                        {answered ? '' : ''}
+                      </span>
+                      Question {index + 1}
+                    </button>
                   );
                 })}
               </div>
             )}
+          </aside>
+        </main>
 
-            {currentQuestion.question_type === 'TRUE_FALSE' && (
-              <div className="space-y-3">
-                {['True', 'False'].map((option) => (
-                  <label
-                    key={option}
-                    className={`flex items-center p-3 border rounded-lg cursor-pointer transition-all ${currentAnswer === option
-                      ? 'bg-primary/10 dark:bg-primary/15 border-primary dark:border-primary/40'
-                      : 'bg-input-background border-border hover:bg-accent'
-                      }`}
-                  >
-                    <input
-                      type="radio"
-                      name={`question-${currentQuestion.id}`}
-                      value={option}
-                      checked={currentAnswer === option}
-                      onChange={(e) => handleAnswerChange(currentQuestion.id, e.target.value)}
-                      className="h-4 w-4"
-                      style={{ accentColor: 'var(--primary)' }}
-                    />
-                    <span className="ml-3 text-foreground">{option}</span>
-                  </label>
-                ))}
-              </div>
-            )}
-
-            {(currentQuestion.question_type === 'OBJECTIVE' || currentQuestion.question_type === 'multiple_choice') && currentQuestion.options && (
-              <div className="space-y-3">
-                {currentQuestion.options.map((option, index) => (
-                  <label
-                    key={index}
-                    className={`flex items-center p-3 border rounded-lg cursor-pointer transition-all ${currentAnswer === option
-                      ? 'bg-primary/10 dark:bg-primary/15 border-primary dark:border-primary/40'
-                      : 'bg-input-background border-border hover:bg-accent'
-                      }`}
-                  >
-                    <input
-                      type="radio"
-                      name={`question-${currentQuestion.id}`}
-                      value={option}
-                      checked={currentAnswer === option}
-                      onChange={e => handleAnswerChange(currentQuestion.id, e.target.value)}
-                      className="h-4 w-4"
-                      style={{ accentColor: 'var(--primary)' }}
-                    />
-                    <span className="ml-3 text-foreground">{option}</span>
-                  </label>
-                ))}
-              </div>
-            )}
-
-            {currentQuestion.question_type === 'SHORT_ANSWER' && (
-              <div className="space-y-3">
-                <div className="flex items-start gap-2">
-                  <textarea
-                    value={currentAnswer}
-                    onChange={(e) => handleAnswerChange(currentQuestion.id, e.target.value)}
-                    placeholder={'Write your answer...'}
-                    className="flex-1 p-3 border rounded-lg focus:ring-2 focus:ring-primary dark:focus:ring-primary focus:border-transparent resize-none text-foreground placeholder:text-muted-foreground bg-input-background border-border"
-                    rows={4}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Navigation */}
-        <div className="flex justify-between items-center">
-          <button
-            onClick={handlePrevious}
-            disabled={currentQuestionIndex === 0}
-            className="px-6 py-2 border rounded-md transition-all"
-            style={
-              currentQuestionIndex === 0
-                ? {
-                  color: 'rgba(255, 255, 255, 0.3)',
-                  borderColor: 'rgba(255, 255, 255, 0.1)',
-                  cursor: 'not-allowed',
-                  backgroundColor: 'transparent'
-                }
-                : {
-                  color: 'white',
-                  borderColor: 'rgba(255, 255, 255, 0.2)',
-                  backgroundColor: 'transparent'
-                }
-            }
-            onMouseEnter={(e) => {
-              if (currentQuestionIndex !== 0) {
-                e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (currentQuestionIndex !== 0) {
-                e.currentTarget.style.backgroundColor = 'transparent';
-              }
-            }}
-          >
-            Previous
-          </button>
-
-          <div className="flex space-x-4">
-            {currentQuestionIndex < quiz.questions.length - 1 ? (
+        <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/95 px-2 pb-[calc(env(safe-area-inset-bottom)+0.7rem)] pt-2.5 backdrop-blur md:hidden">
+          <div className="flex items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={goPrevious}
+              disabled={currentQuestionIndex === 0}
+              className="inline-flex h-9 w-24 items-center justify-center gap-1 rounded-[5px] bg-accent px-2 text-xs font-medium text-muted-foreground transition-colors active:bg-muted disabled:opacity-45"
+            >
+              <ChevronLeft className="h-4 w-4" />
+              Previous
+            </button>
+            <span className="flex-1 text-center text-xs font-medium text-muted-foreground">
+              {currentQuestionIndex + 1}/{quiz.questions.length}
+            </span>
+            {!isFinalQuestion ? (
               <button
-                onClick={handleNext}
-                disabled={!canProceed()}
-                className={`px-6 py-2 text-white rounded-md transition-all ${!canProceed()
-                  ? 'bg-primary/40 dark:bg-primary/50 cursor-not-allowed'
-                  : 'bg-primary dark:bg-primary hover:bg-primary/90 dark:hover:bg-primary/90 cursor-pointer'
-                  }`}
+                type="button"
+                onClick={goNext}
+                disabled={!mobileCanGoNext}
+                className="inline-flex h-9 w-24 items-center justify-center gap-1 rounded-[5px] bg-primary px-2 text-xs font-semibold text-primary-foreground transition-colors active:bg-primary/90 disabled:opacity-45"
               >
-                Next
+                {currentAnswered ? 'Next' : 'Skip'}
+                <ChevronRight className="h-4 w-4" />
               </button>
             ) : (
               <button
-                onClick={handleSubmit}
-                disabled={!canProceed() || isSubmitting}
-                className="px-6 py-2 text-foreground rounded-md transition-all"
-                style={{
-                  backgroundColor: (!canProceed() || isSubmitting) ? 'color-mix(in srgb, var(--primary), transparent 50%)' : 'var(--primary)',
-                  cursor: (!canProceed() || isSubmitting) ? 'not-allowed' : 'pointer'
-                }}
-                onMouseEnter={(e) => {
-                  if (!canProceed() || isSubmitting) return;
-                  e.currentTarget.style.backgroundColor = 'color-mix(in srgb, var(--primary), black 20%)';
-                }}
-                onMouseLeave={(e) => {
-                  if (!canProceed() || isSubmitting) return;
-                  e.currentTarget.style.backgroundColor = 'var(--primary)';
-                }}
+                type="button"
+                onClick={handleSubmitAttempt}
+                disabled={isSubmitting}
+                className="inline-flex h-9 w-24 items-center justify-center rounded-[5px] bg-primary px-2 text-xs font-semibold text-primary-foreground transition-colors active:bg-primary/90 disabled:opacity-45"
               >
-                {isSubmitting ? 'Submitting...' : 'Submit Quiz'}
+                {isSubmitting ? 'Submitting...' : 'Submit'}
               </button>
             )}
           </div>
-        </div>
+        </nav>
 
-        {/* Error Message */}
-        {error && (
-          <div className="mt-4 p-4 border rounded-lg" style={{ backgroundColor: 'rgba(220, 38, 38, 0.1)', borderColor: 'rgba(220, 38, 38, 0.3)', color: '#dc2626' }}>
-            {error}
+        {showCancelDialog && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-5">
+            <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-2xl">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-lg font-semibold text-foreground">Exit quiz?</h3>
+                <button
+                  type="button"
+                  onClick={() => setShowCancelDialog(false)}
+                  className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted"
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Your current answers will not be submitted if you leave now.
+              </p>
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  onClick={() => setShowCancelDialog(false)}
+                  className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-foreground transition-colors hover:bg-muted"
+                >
+                  Continue
+                </button>
+                <button
+                  onClick={() => router.replace('/quiz')}
+                  className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-700"
+                >
+                  Exit quiz
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
-        {/* Cancel Confirmation Dialog */}
-        {showCancelDialog && (
-          <div className="fixed inset-0 flex items-center justify-center z-50" style={{ backgroundColor: 'rgba(0, 0, 0, 0.8)' }}>
-            <div className="rounded-lg p-6 max-w-md mx-4 border bg-card border-border">
-              <div className="flex items-center mb-4">
-                <div className="flex-shrink-0 w-10 h-10 mx-auto rounded-full flex items-center justify-center" style={{ backgroundColor: 'rgba(220, 38, 38, 0.2)' }}>
-                  <svg className="w-6 h-6" style={{ color: '#dc2626' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
-                  </svg>
-                </div>
-              </div>
-              <div className="text-center">
-                <h3 className="text-lg font-medium text-foreground mb-2">
-                  Cancel Quiz?
-                </h3>
-                <p className="text-sm text-muted-foreground mb-6">
-                  Are you sure you want to cancel this quiz? Your progress will be lost and you&apos;ll need to start over.
-                </p>
-                <div className="flex space-x-3 justify-center">
-                  <button
-                    onClick={cancelCancel}
-                    className="px-4 py-2 text-sm font-medium text-foreground rounded-md transition-colors"
-                    style={{ backgroundColor: 'var(--surface-secondary)', border: '1px solid rgba(255, 255, 255, 0.1)' }}
-                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)'}
-                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--surface-secondary)'}
-                  >
-                    Continue Quiz
-                  </button>
-                  <button
-                    onClick={confirmCancel}
-                    className="px-4 py-2 text-sm font-medium text-foreground rounded-md transition-colors"
-                    style={{ backgroundColor: '#dc2626' }}
-                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#b91c1c'}
-                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#dc2626'}
-                  >
-                    Cancel Quiz
-                  </button>
-                </div>
+        {showIncompleteSubmitDialog && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-5">
+            <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-2xl">
+              <h3 className="text-lg font-semibold leading-7 text-foreground">
+                You haven&apos;t answered all questions yet ({answeredCount}/{quiz.questions.length}). Are you sure you want to finish now?
+              </h3>
+              <div className="mt-6 space-y-3">
+                <button
+                  type="button"
+                  onClick={() => setShowIncompleteSubmitDialog(false)}
+                  className="min-h-11 w-full rounded-[5px] bg-muted px-4 text-sm font-semibold text-foreground transition-colors hover:bg-muted/80"
+                >
+                  Keep practicing
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowIncompleteSubmitDialog(false);
+                    void handleSubmit();
+                  }}
+                  disabled={isSubmitting}
+                  className="min-h-11 w-full rounded-[5px] bg-primary px-4 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                >
+                  {isSubmitting ? 'Submitting...' : 'Yes, finish now'}
+                </button>
               </div>
             </div>
           </div>
@@ -566,8 +578,4 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
       </div>
     </div>
   );
-} 
-
-
-
-
+}

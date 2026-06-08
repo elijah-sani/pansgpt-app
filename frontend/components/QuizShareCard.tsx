@@ -1,7 +1,8 @@
 ﻿'use client';
 
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import html2canvas from 'html2canvas';
+import { Clipboard, Download, MessageCircle, Share2 } from 'lucide-react';
 
 interface QuizShareCardProps {
   result: {
@@ -118,7 +119,6 @@ function ShareCardCanvas({ result }: { result: QuizShareCardProps['result'] }) {
 
 // ── Main component: generates image and shows it as preview ──
 export default function QuizShareCard({ result, onShare }: QuizShareCardProps) {
-  const canvasRef = useRef<HTMLDivElement>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -242,86 +242,85 @@ export default function QuizShareCard({ result, onShare }: QuizShareCardProps) {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* Image Preview */}
-      <div style={{
-        width: '100%',
-        aspectRatio: '1 / 1',
-        borderRadius: 16,
-        overflow: 'hidden',
-        background: '#000',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}>
-        {isGenerating || !imageUrl ? (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
-            <div style={{
-              width: 40, height: 40,
-              border: '3px solid rgba(34, 197, 94, 0.3)',
-              borderTopColor: '#22c55e',
-              borderRadius: '50%',
-              animation: 'spin 1s linear infinite',
-            }} />
-            <span style={{ color: '#9ca3af', fontSize: 14 }}>Generating share card...</span>
+    <div className="grid h-full grid-rows-[minmax(0,1fr)_auto] md:grid-cols-2 md:grid-rows-1">
+      <div className="flex min-h-0 items-center justify-center bg-black p-4 md:h-full md:p-6">
+        <div className="flex h-full max-h-full w-full max-w-full items-center justify-center overflow-hidden rounded-[5px] bg-black">
+          {isGenerating || !imageUrl ? (
+            <div className="flex flex-col items-center gap-3">
+              <div className="h-10 w-10 animate-spin rounded-full border-2 border-primary/25 border-t-primary" />
+              <span className="text-sm text-white/70">Generating share card...</span>
+            </div>
+          ) : (
+            <img
+              src={imageUrl}
+              alt="Quiz Results Share Card"
+              className="h-full w-full object-contain"
+            />
+          )}
+        </div>
+      </div>
+
+      <div className="flex min-h-0 flex-col overflow-y-auto p-5 md:p-8">
+        <div className="pr-10">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Share result</p>
+          <h2 className="mt-2 text-2xl font-bold tracking-tight text-foreground md:text-3xl">
+            {result.score}/{result.maxScore} points
+          </h2>
+          <p className="mt-1 text-lg font-semibold text-primary">{result.percentage.toFixed(1)}%</p>
+          <p className="mt-4 text-sm leading-6 text-muted-foreground">
+            Share this generated result card, download it as an image, or copy the caption for posting elsewhere.
+          </p>
+        </div>
+
+        <div className="mt-6 space-y-3 rounded-[5px] bg-[#edf4ff] p-4 dark:bg-muted/60">
+          <div>
+            <p className="text-xs text-muted-foreground">Quiz</p>
+            <p className="mt-0.5 text-sm font-semibold text-foreground">{result.quiz.title}</p>
           </div>
-        ) : (
-          <img
-            src={imageUrl}
-            alt="Quiz Results Share Card"
-            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-          />
-        )}
-      </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Course</p>
+            <p className="mt-0.5 text-sm font-semibold text-foreground">
+              {result.quiz.courseCode}{result.quiz.courseTitle ? ` - ${result.quiz.courseTitle}` : ''}
+            </p>
+          </div>
+        </div>
 
-      {/* Buttons */}
-      <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: 12, justifyContent: 'center' }}>
-        <button
-          onClick={downloadImage}
-          disabled={!imageUrl}
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            padding: '12px 24px',
-            background: !imageUrl ? '#166534' : '#16a34a',
-            color: '#ffffff', borderRadius: 8, fontWeight: 500,
-            border: 'none', cursor: !imageUrl ? 'not-allowed' : 'pointer',
-            opacity: !imageUrl ? 0.5 : 1, fontSize: 14,
-          }}
-        >
-          📷 Download Image
-        </button>
-
-        <button
-          onClick={shareToWhatsApp}
-          disabled={!imageUrl}
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            padding: '12px 24px',
-            background: !imageUrl ? '#166534' : '#22c55e',
-            color: '#ffffff', borderRadius: 8, fontWeight: 500,
-            border: 'none', cursor: !imageUrl ? 'not-allowed' : 'pointer',
-            opacity: !imageUrl ? 0.5 : 1, fontSize: 14,
-          }}
-        >
-          📱 Share to WhatsApp
-        </button>
-
-        <button
-          onClick={copyShareText}
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            padding: '12px 24px',
-            background: '#2563eb',
-            color: '#ffffff', borderRadius: 8, fontWeight: 500,
-            border: 'none', cursor: 'pointer', fontSize: 14,
-          }}
-        >
-          {copied ? '✅ Copied!' : '📋 Copy Text'}
-        </button>
-      </div>
-
-      <div style={{ textAlign: 'center', fontSize: 14, color: '#9ca3af', marginTop: 8 }}>
-        💡 Tip: Download or share your results card!
+        <div className="mt-auto pt-6">
+          <div className="grid gap-3">
+            <button
+              onClick={downloadImage}
+              disabled={!imageUrl}
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[5px] bg-primary px-4 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Download className="h-4 w-4" />
+              Download image
+            </button>
+            <button
+              onClick={shareToWhatsApp}
+              disabled={!imageUrl}
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[5px] border border-primary px-4 text-sm font-semibold text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <MessageCircle className="h-4 w-4" />
+              Share to WhatsApp
+            </button>
+            <button
+              onClick={copyShareText}
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[5px] border border-border px-4 text-sm font-semibold text-foreground transition-colors hover:bg-muted"
+            >
+              <Clipboard className="h-4 w-4" />
+              {copied ? 'Copied' : 'Copy caption'}
+            </button>
+            {onShare && imageUrl && (
+              <button
+                onClick={() => onShare(imageUrl)}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[5px] border border-border px-4 text-sm font-semibold text-foreground transition-colors hover:bg-muted"
+              >
+                <Share2 className="h-4 w-4" />
+                Share image
+              </button>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* CSS animation for spinner */}
