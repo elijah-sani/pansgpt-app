@@ -14,7 +14,6 @@ import os
 import asyncio
 from datetime import datetime, timezone
 from restrictions import build_restriction_block_payload, get_applicable_user_restriction
-from .shared import get_current_academic_context, merge_system_into_user, resolve_student_university_context
 from utils.thinking_token_utils import strip_thinking_tokens
 
 from services import llm_engine
@@ -71,6 +70,156 @@ async def _get_quiz_restriction_if_any(current_user: User):
         current_user,
         execute_fn=_execute_quiz_query,
     )
+
+
+def _normalize_optional_text(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
+
+
+def merge_system_into_user(messages: List[dict]) -> List[dict]:
+    system_parts: list[str] = []
+    next_messages: list[dict] = []
+
+    for message in messages:
+        if message.get("role") == "system":
+            content = message.get("content")
+            if content:
+                system_parts.append(str(content))
+        else:
+            next_messages.append(message)
+
+    if not system_parts:
+        return next_messages
+
+    merged_system = "\n\n".join(system_parts).strip()
+    for message in next_messages:
+        if message.get("role") == "user":
+            user_content = str(message.get("content") or "")
+            message["content"] = f"{merged_system}\n\n{user_content}".strip()
+            return next_messages
+
+    return [{"role": "user", "content": merged_system}, *next_messages]
+
+
+async def get_current_academic_context(university_id: Optional[str]) -> Optional[dict]:
+    normalized_university_id = _normalize_optional_text(university_id)
+    if not normalized_university_id:
+        return None
+
+    sb = _get_supabase()
+    try:
+        res = await _execute_quiz_query(
+            lambda: sb.table("academic_contexts")
+            .select("id,university_id,current_academic_session,current_semester,updated_at,updated_by")
+            .eq("university_id", normalized_university_id)
+            .limit(1)
+            .execute(),
+            "Fetch quiz academic context",
+        )
+        row = (res.data or [None])[0]
+        if not row:
+            return None
+        return {
+            "id": row.get("id"),
+            "university_id": row.get("university_id"),
+            "current_academic_session": row.get("current_academic_session"),
+            "current_semester": normalize_semester(row.get("current_semester")),
+            "updated_at": row.get("updated_at"),
+            "updated_by": row.get("updated_by"),
+        }
+    except Exception as exc:
+        logger.warning("Could not fetch quiz academic context for university_id=%s: %s", normalized_university_id, exc)
+        return None
+
+
+async def _resolve_active_university_by_text(sb, university_name: Optional[str]) -> Optional[dict]:
+    normalized_name = _normalize_optional_text(university_name)
+    if not normalized_name:
+        return None
+
+    try:
+        res = await _execute_quiz_query(
+            lambda: sb.table("universities")
+            .select("id,name,status")
+            .eq("status", "active")
+            .ilike("name", normalized_name)
+            .limit(1)
+            .execute(),
+            "Resolve quiz university by name",
+        )
+        rows = res.data or []
+        if rows:
+            return rows[0]
+
+        fallback = await _execute_quiz_query(
+            lambda: sb.table("universities")
+            .select("id,name,status")
+            .eq("status", "active")
+            .ilike("name", f"%{normalized_name}%")
+            .limit(1)
+            .execute(),
+            "Resolve quiz university by partial name",
+        )
+        fallback_rows = fallback.data or []
+        return fallback_rows[0] if fallback_rows else None
+    except Exception as exc:
+        logger.warning("Could not resolve quiz university by name=%s: %s", normalized_name, exc)
+        return None
+
+
+async def resolve_student_university_context(current_user: User) -> dict:
+    sb = _get_supabase()
+    try:
+        profile_res = await _execute_quiz_query(
+            lambda: sb.table("profiles")
+            .select("id,first_name,other_names,level,university,university_id")
+            .eq("id", current_user.id)
+            .limit(1)
+            .execute(),
+            "Fetch quiz student context",
+        )
+    except Exception as exc:
+        logger.warning("Could not fetch quiz student context for user_id=%s: %s", current_user.id, exc)
+        return {"profile": None, "university_id": None, "university_name": None, "level": ""}
+
+    profile = (profile_res.data or [None])[0] or {}
+    explicit_university_id = _normalize_optional_text(profile.get("university_id"))
+    university_name = _normalize_optional_text(profile.get("university"))
+    resolved_university_id = explicit_university_id
+
+    if explicit_university_id:
+        try:
+            university_res = await _execute_quiz_query(
+                lambda: sb.table("universities")
+                .select("id,name,status")
+                .eq("id", explicit_university_id)
+                .limit(1)
+                .execute(),
+                "Validate quiz student university",
+            )
+            university_row = (university_res.data or [None])[0]
+            if university_row and (university_row.get("status") or "").strip().lower() == "active":
+                university_name = _normalize_optional_text(university_row.get("name")) or university_name
+            else:
+                resolved_university_id = None
+        except Exception as exc:
+            logger.warning("Could not validate quiz student university_id=%s: %s", explicit_university_id, exc)
+            resolved_university_id = None
+    elif university_name:
+        matched_university = await _resolve_active_university_by_text(sb, university_name)
+        if matched_university:
+            resolved_university_id = _normalize_optional_text(matched_university.get("id"))
+            university_name = _normalize_optional_text(matched_university.get("name")) or university_name
+
+    return {
+        "profile": profile or None,
+        "university_id": resolved_university_id,
+        "university_name": university_name,
+        "level": _normalize_optional_text(profile.get("level")) or "",
+    }
 
 
 # ---------- Models ----------
