@@ -91,6 +91,7 @@ export default function QuizResults({ quizId }: { quizId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [showExplanations, setShowExplanations] = useState(false);
   const [showShareCard, setShowShareCard] = useState(false);
+  const [shareCardClosing, setShareCardClosing] = useState(false);
 
   useEffect(() => {
     async function fetchResult() {
@@ -117,11 +118,25 @@ export default function QuizResults({ quizId }: { quizId: string }) {
   }, [resultId]);
 
   useEffect(() => {
-    const toggleShareCard = () => setShowShareCard((current) => !current);
+    const toggleShareCard = () => {
+      if (showShareCard) {
+        closeShareCard();
+      } else {
+        setShowShareCard(true);
+      }
+    };
 
     window.addEventListener('quiz-results-toggle-share', toggleShareCard);
     return () => window.removeEventListener('quiz-results-toggle-share', toggleShareCard);
-  }, []);
+  }, [showShareCard]);
+
+  const closeShareCard = () => {
+    setShareCardClosing(true);
+    window.setTimeout(() => {
+      setShowShareCard(false);
+      setShareCardClosing(false);
+    }, 220);
+  };
 
   if (loading) {
     return (
@@ -167,7 +182,13 @@ export default function QuizResults({ quizId }: { quizId: string }) {
         </div>
         <div className="flex shrink-0 items-center gap-3">
           <button
-            onClick={() => setShowShareCard((current) => !current)}
+            onClick={() => {
+              if (showShareCard) {
+                closeShareCard();
+              } else {
+                setShowShareCard(true);
+              }
+            }}
             className="inline-flex min-h-10 items-center gap-2 rounded-[5px] bg-primary px-4 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
           >
             <Share2 className="h-4 w-4" />
@@ -263,11 +284,15 @@ export default function QuizResults({ quizId }: { quizId: string }) {
       </main>
 
       {showShareCard && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 backdrop-blur-sm md:items-center md:p-4">
-          <div className="relative h-[92vh] w-full overflow-hidden rounded-t-[24px] border-t border-border bg-background shadow-2xl md:h-[80vh] md:w-[80vw] md:max-w-6xl md:rounded-[8px] md:border md:border-border md:bg-card">
+        <div className={`fixed inset-0 z-50 flex items-end justify-center bg-black/70 backdrop-blur-sm transition-opacity duration-200 md:items-center md:p-4 ${
+          shareCardClosing ? 'opacity-0' : 'opacity-100'
+        }`}>
+          <div className={`relative h-[92vh] w-full overflow-hidden rounded-t-[24px] border-t border-border bg-background shadow-2xl transition-transform duration-300 ease-out md:h-[80vh] md:w-[80vw] md:max-w-6xl md:rounded-[8px] md:border md:border-border md:bg-card ${
+            shareCardClosing ? 'translate-y-full md:translate-y-4 md:scale-[0.98]' : 'translate-y-0 md:translate-y-0 md:scale-100'
+          }`}>
             <button
               type="button"
-              onClick={() => setShowShareCard(false)}
+              onClick={closeShareCard}
               className="absolute right-3 top-3 z-10 hidden h-9 w-9 items-center justify-center rounded-full bg-background/90 text-foreground shadow-sm transition-colors hover:bg-muted md:inline-flex"
               aria-label="Close share card"
             >
@@ -287,7 +312,7 @@ export default function QuizResults({ quizId }: { quizId: string }) {
                   topic: result.quiz?.topic,
                 },
               }}
-              onClose={() => setShowShareCard(false)}
+              onClose={closeShareCard}
             />
           </div>
         </div>

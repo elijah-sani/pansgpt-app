@@ -267,12 +267,12 @@ export default function QuizShareCard({ result, onShare, onClose }: QuizShareCar
   return (
     <div className="flex h-full min-h-0 flex-col md:grid md:grid-cols-2">
       <div
-        className="flex min-h-0 flex-1 flex-col items-center justify-center px-5 pb-5 pt-12 md:h-full md:p-6"
+        className="flex min-h-0 flex-1 flex-col items-center justify-center px-5 pb-5 pt-3 md:h-full md:p-6"
         style={{ background: SHARE_THEME.background }}
       >
         <button
           type="button"
-          className="mb-6 h-8 w-24 touch-none rounded-full md:hidden"
+          className="mb-4 h-7 w-24 touch-none rounded-full md:hidden"
           onPointerDown={(event) => {
             event.currentTarget.setPointerCapture(event.pointerId);
             startDrag(event.clientY);

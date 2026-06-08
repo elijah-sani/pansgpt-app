@@ -6,25 +6,25 @@ import type { QuizHistoryItem } from './types';
 type QuizSidebarContentProps = {
   hasActiveFilters?: boolean;
   isIconOnly: boolean;
-  notes: SidebarNoteItem[];
+  notes?: SidebarNoteItem[];
   pathname: string;
   quizLoading?: boolean;
   quizResults?: QuizHistoryItem[];
   routerPush: (path: string) => void;
   showFilters?: () => void;
-  totalNotes: number;
+  totalNotes?: number;
 };
 
 export function QuizSidebarContent({
   hasActiveFilters = false,
   isIconOnly,
-  notes,
+  notes = [],
   pathname,
   quizLoading = false,
   quizResults = [],
   routerPush,
   showFilters,
-  totalNotes,
+  totalNotes = 0,
 }: QuizSidebarContentProps) {
   return (
     <>
