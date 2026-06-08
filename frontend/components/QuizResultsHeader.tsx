@@ -1,10 +1,10 @@
 "use client";
 import React from "react";
-import { PanelLeft, Share2 } from "lucide-react";
-import { useSidebarTrigger } from "@/lib/sidebar-controls";
+import { ArrowLeft, Share2 } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 export default function QuizResultsHeader() {
-    const openSidebar = useSidebarTrigger();
+    const router = useRouter();
     const toggleShareCard = () => {
         window.dispatchEvent(new Event('quiz-results-toggle-share'));
     };
@@ -12,11 +12,11 @@ export default function QuizResultsHeader() {
     return (
         <div className="md:hidden flex items-center px-4 py-3 border-b border-border bg-card/95 backdrop-blur-sm sticky top-0 z-10">
             <button
-                onClick={openSidebar}
+                onClick={() => router.push('/quiz')}
                 className="p-2 text-foreground hover:bg-accent rounded-lg transition-colors mr-2"
-                aria-label="Open sidebar"
+                aria-label="Back to Quiz"
             >
-                <PanelLeft size={20} />
+                <ArrowLeft size={20} />
             </button>
             <span className="min-w-0 flex-1 truncate text-sm font-semibold">Quiz Results</span>
             <button

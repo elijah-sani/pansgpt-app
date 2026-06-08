@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Award, CheckCircle2, Clock3, FileText, RotateCcw, Share2, X, XCircle } from 'lucide-react';
+import { ArrowLeft, Award, CheckCircle2, Clock3, FileText, RotateCcw, Share2, X, XCircle } from 'lucide-react';
 import QuizShareCard from './QuizShareCard';
 
 interface QuestionResult {
@@ -178,6 +178,15 @@ export default function QuizResults({ quizId }: { quizId: string }) {
 
       <main className="mt-0 grid gap-4 md:mt-8 md:gap-6 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
         <section className="min-w-0 space-y-4 md:space-y-6">
+          <button
+            type="button"
+            onClick={() => router.push('/quiz')}
+            className="hidden items-center gap-2 text-sm font-semibold text-primary transition-colors hover:text-primary/80 md:inline-flex"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to Quiz
+          </button>
+
           <div className="rounded-[5px] bg-[#edf4ff] p-4 dark:bg-muted/60 md:p-8">
             <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between md:gap-6">
               <div>
@@ -254,12 +263,12 @@ export default function QuizResults({ quizId }: { quizId: string }) {
       </main>
 
       {showShareCard && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-          <div className="relative h-[80vh] w-[80vw] max-w-6xl overflow-hidden rounded-[8px] border border-border bg-card shadow-2xl max-md:h-[86vh] max-md:w-[92vw]">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 backdrop-blur-sm md:items-center md:p-4">
+          <div className="relative h-[92vh] w-full overflow-hidden rounded-t-[24px] border-t border-border bg-background shadow-2xl md:h-[80vh] md:w-[80vw] md:max-w-6xl md:rounded-[8px] md:border md:border-border md:bg-card">
             <button
               type="button"
               onClick={() => setShowShareCard(false)}
-              className="absolute right-3 top-3 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full bg-background/90 text-foreground shadow-sm transition-colors hover:bg-muted"
+              className="absolute right-3 top-3 z-10 hidden h-9 w-9 items-center justify-center rounded-full bg-background/90 text-foreground shadow-sm transition-colors hover:bg-muted md:inline-flex"
               aria-label="Close share card"
             >
               <X className="h-4 w-4" />
@@ -278,6 +287,7 @@ export default function QuizResults({ quizId }: { quizId: string }) {
                   topic: result.quiz?.topic,
                 },
               }}
+              onClose={() => setShowShareCard(false)}
             />
           </div>
         </div>

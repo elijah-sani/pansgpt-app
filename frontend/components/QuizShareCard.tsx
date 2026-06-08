@@ -1,8 +1,8 @@
 ﻿'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import html2canvas from 'html2canvas';
-import { Clipboard, Download, MessageCircle, Share2 } from 'lucide-react';
+import { Clipboard, Download, Link, MessageCircle, Share2 } from 'lucide-react';
 
 interface QuizShareCardProps {
   result: {
@@ -19,7 +19,16 @@ interface QuizShareCardProps {
     };
   };
   onShare?: (imageUrl: string) => void;
+  onClose?: () => void;
 }
+
+const SHARE_THEME = {
+  swatch: '#16a34a',
+  background: 'linear-gradient(135deg, #14532d 0%, #000000 50%, #111827 100%)',
+  panel: 'rgba(20, 83, 45, 0.78)',
+  accent: '#86efac',
+  accentStrong: '#4ade80',
+};
 
 // ── The actual card layout (only rendered off-screen for capture) ──
 function ShareCardCanvas({ result }: { result: QuizShareCardProps['result'] }) {
@@ -49,7 +58,7 @@ function ShareCardCanvas({ result }: { result: QuizShareCardProps['result'] }) {
   return (
     <div style={{
       width: 1000, height: 1000,
-      background: 'linear-gradient(135deg, #14532d 0%, #000000 50%, #111827 100%)',
+      background: SHARE_THEME.background,
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between',
       position: 'relative', overflow: 'hidden',
       fontFamily: 'system-ui, -apple-system, sans-serif',
@@ -66,7 +75,7 @@ function ShareCardCanvas({ result }: { result: QuizShareCardProps['result'] }) {
         <div style={{ width: 160, height: 160, marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <img src="/uploads/Logo.png" alt="PANSGPT Logo" width={160} height={160} style={{ objectFit: 'contain' }} />
         </div>
-        <p style={{ color: '#86efac', fontSize: 24, fontWeight: 600, margin: 0 }}>Quiz Results</p>
+        <p style={{ color: SHARE_THEME.accent, fontSize: 24, fontWeight: 600, margin: 0 }}>Quiz Results</p>
       </div>
 
       {/* Score */}
@@ -74,21 +83,21 @@ function ShareCardCanvas({ result }: { result: QuizShareCardProps['result'] }) {
         <div style={{ fontSize: 72, fontWeight: 800, color: '#ffffff', marginBottom: 8 }}>
           {result.score}/{result.maxScore}
         </div>
-        <div style={{ fontSize: 40, fontWeight: 700, color: '#4ade80', marginBottom: 8 }}>
+        <div style={{ fontSize: 40, fontWeight: 700, color: SHARE_THEME.accentStrong, marginBottom: 8 }}>
           {result.percentage.toFixed(1)}%
         </div>
-        <div style={{ fontSize: 24, fontWeight: 600, color: '#86efac' }}>
+        <div style={{ fontSize: 24, fontWeight: 600, color: SHARE_THEME.accent }}>
           {getScoreMessage(result.percentage)}
         </div>
       </div>
 
       {/* Quiz Info */}
       <div style={{ position: 'relative', zIndex: 10, width: '80%', margin: '0 auto', marginBottom: 32 }}>
-        <div style={{ background: 'rgba(20, 83, 45, 0.3)', borderRadius: 12, padding: 32, border: '1px solid rgba(34, 197, 94, 0.2)' }}>
+        <div style={{ background: SHARE_THEME.panel, borderRadius: 12, padding: 32, border: `1px solid ${SHARE_THEME.accent}55` }}>
           <h3 style={{ fontSize: 24, fontWeight: 700, color: '#ffffff', marginBottom: 8, marginTop: 0 }}>
             {result.quiz.title}
           </h3>
-          <p style={{ color: '#86efac', fontSize: 18, margin: 0 }}>
+          <p style={{ color: SHARE_THEME.accent, fontSize: 18, margin: 0 }}>
             {result.quiz.courseCode} - {result.quiz.courseTitle}
           </p>
           {result.quiz.topic && (
@@ -106,7 +115,7 @@ function ShareCardCanvas({ result }: { result: QuizShareCardProps['result'] }) {
       {/* Footer */}
       <div style={{ position: 'relative', zIndex: 10, textAlign: 'center', marginBottom: 48, width: '100%' }}>
         <div style={{ fontSize: 18, color: '#9ca3af', marginBottom: 8 }}>Powered by PANSGPT</div>
-        <div style={{ fontSize: 18, color: '#4ade80', fontWeight: 600 }}>Your AI Study Partner</div>
+        <div style={{ fontSize: 18, color: SHARE_THEME.accentStrong, fontWeight: 600 }}>Your AI Study Partner</div>
       </div>
 
       {/* Decorative */}
@@ -118,10 +127,11 @@ function ShareCardCanvas({ result }: { result: QuizShareCardProps['result'] }) {
 
 
 // ── Main component: generates image and shows it as preview ──
-export default function QuizShareCard({ result, onShare }: QuizShareCardProps) {
+export default function QuizShareCard({ result, onShare, onClose }: QuizShareCardProps) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [copied, setCopied] = useState(false);
+  const dragStartYRef = useRef<number | null>(null);
 
   const getShareText = () => {
     const getMsg = (p: number) => {
@@ -137,7 +147,7 @@ export default function QuizShareCard({ result, onShare }: QuizShareCardProps) {
 
   // Generate the image on mount
   useEffect(() => {
-    generateImage();
+    void generateImage();
   }, []);
 
   const generateImage = async () => {
@@ -241,26 +251,66 @@ export default function QuizShareCard({ result, onShare }: QuizShareCardProps) {
     }
   };
 
+  const startDrag = (clientY: number) => {
+    dragStartYRef.current = clientY;
+  };
+
+  const endDrag = (clientY: number) => {
+    const startY = dragStartYRef.current;
+    dragStartYRef.current = null;
+    if (startY === null) return;
+    if (clientY - startY > 70) {
+      onClose?.();
+    }
+  };
+
   return (
-    <div className="grid h-full grid-rows-[minmax(0,1fr)_auto] md:grid-cols-2 md:grid-rows-1">
-      <div className="flex min-h-0 items-center justify-center bg-black p-4 md:h-full md:p-6">
-        <div className="flex h-full max-h-full w-full max-w-full items-center justify-center overflow-hidden rounded-[5px] bg-black">
+    <div className="flex h-full min-h-0 flex-col md:grid md:grid-cols-2">
+      <div
+        className="flex min-h-0 flex-1 flex-col items-center justify-center px-5 pb-5 pt-12 md:h-full md:p-6"
+        style={{ background: SHARE_THEME.background }}
+      >
+        <button
+          type="button"
+          className="mb-6 h-8 w-24 touch-none rounded-full md:hidden"
+          onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            startDrag(event.clientY);
+          }}
+          onPointerUp={(event) => {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+            endDrag(event.clientY);
+          }}
+          onPointerCancel={() => {
+            dragStartYRef.current = null;
+          }}
+          aria-label="Drag down to close"
+        >
+          <span className="mx-auto block h-1.5 w-16 rounded-full bg-white/70" />
+        </button>
+        <div className="flex min-h-0 w-full flex-1 items-center justify-center">
           {isGenerating || !imageUrl ? (
             <div className="flex flex-col items-center gap-3">
-              <div className="h-10 w-10 animate-spin rounded-full border-2 border-primary/25 border-t-primary" />
+              <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/25 border-t-white" />
               <span className="text-sm text-white/70">Generating share card...</span>
             </div>
           ) : (
-            <img
-              src={imageUrl}
-              alt="Quiz Results Share Card"
-              className="h-full w-full object-contain"
-            />
+            <div
+              className="flex h-full max-h-[58vh] w-full max-w-[min(70vw,360px)] items-center justify-center rounded-[28px] p-4 shadow-2xl md:max-h-full md:max-w-full md:rounded-[5px] md:p-0"
+              style={{ background: SHARE_THEME.swatch }}
+            >
+              <img
+                src={imageUrl}
+                alt="Quiz Results Share Card"
+                className="max-h-full w-full rounded-[18px] object-contain md:h-full md:rounded-[5px]"
+              />
+            </div>
           )}
         </div>
+
       </div>
 
-      <div className="flex min-h-0 flex-col overflow-y-auto p-5 md:p-8">
+      <div className="hidden min-h-0 flex-col overflow-y-auto p-5 md:flex md:p-8">
         <div className="pr-10">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Share result</p>
           <h2 className="mt-2 text-2xl font-bold tracking-tight text-foreground md:text-3xl">
@@ -305,10 +355,11 @@ export default function QuizShareCard({ result, onShare }: QuizShareCardProps) {
             </button>
             <button
               onClick={copyShareText}
-              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[5px] border border-border px-4 text-sm font-semibold text-foreground transition-colors hover:bg-muted"
+              title={copied ? 'Copied' : 'Copy caption'}
+              aria-label={copied ? 'Copied' : 'Copy caption'}
+              className="inline-flex min-h-11 items-center justify-center rounded-[5px] border border-border px-4 text-sm font-semibold text-foreground transition-colors hover:bg-muted"
             >
               <Clipboard className="h-4 w-4" />
-              {copied ? 'Copied' : 'Copy caption'}
             </button>
             {onShare && imageUrl && (
               <button
@@ -323,8 +374,65 @@ export default function QuizShareCard({ result, onShare }: QuizShareCardProps) {
         </div>
       </div>
 
+      <div className="border-t border-border bg-background px-4 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-4 md:hidden">
+        <div className="flex justify-center gap-6 pb-1">
+          <MobileShareAction
+            icon={<Link className="h-5 w-5" />}
+            label={copied ? 'Copied' : 'Copy text'}
+            onClick={copyShareText}
+          />
+          <MobileShareAction
+            icon={<Download className="h-5 w-5" />}
+            label="Download"
+            onClick={downloadImage}
+            disabled={!imageUrl}
+          />
+          <MobileShareAction
+            icon={<MessageCircle className="h-5 w-5" />}
+            label="WhatsApp"
+            onClick={shareToWhatsApp}
+            disabled={!imageUrl}
+            tone="green"
+          />
+        </div>
+      </div>
+
       {/* CSS animation for spinner */}
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
+  );
+}
+
+function MobileShareAction({
+  icon,
+  label,
+  onClick,
+  disabled = false,
+  tone = 'neutral',
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  tone?: 'neutral' | 'green' | 'blue';
+}) {
+  const toneClass = {
+    neutral: 'bg-muted text-foreground',
+    green: 'bg-[#22c55e] text-white',
+    blue: 'bg-primary text-primary-foreground',
+  }[tone];
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="flex w-16 shrink-0 flex-col items-center gap-1.5 text-center disabled:opacity-45"
+    >
+      <span className={`flex h-12 w-12 items-center justify-center rounded-full ${toneClass}`}>
+        {icon}
+      </span>
+      <span className="text-[11px] font-semibold leading-tight text-foreground">{label}</span>
+    </button>
   );
 }
