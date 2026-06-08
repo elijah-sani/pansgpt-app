@@ -1,13 +1,15 @@
 export type BootstrapRouteResponse = {
   is_admin?: boolean;
   is_super_admin?: boolean;
+  is_global_admin?: boolean;
+  is_university_admin?: boolean;
   is_lecturer?: boolean;
   lecturer_status?: 'pending' | 'active' | 'rejected' | 'suspended' | 'revoked' | null;
 };
 
 export function resolveDestinationFromBootstrap(bootstrap: BootstrapRouteResponse | null | undefined): string {
-  if (bootstrap?.is_admin || bootstrap?.is_super_admin) {
-    return '/admin';
+  if (bootstrap?.is_super_admin || bootstrap?.is_global_admin) {
+    return '/super-admin';
   }
 
   if (bootstrap?.is_lecturer) {

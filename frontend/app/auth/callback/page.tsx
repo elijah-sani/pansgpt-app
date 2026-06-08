@@ -2,6 +2,9 @@
 
 import { useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { api } from '@/lib/api';
+import { resolveDestinationFromBootstrap } from '@/lib/bootstrap-routing';
+import { fetchBootstrap } from '@/lib/bootstrap-cache';
 import { supabase } from '@/lib/supabase';
 
 export default function AuthCallbackPage() {
@@ -20,7 +23,6 @@ export default function AuthCallbackPage() {
 
             try {
                 if (token_hash && type) {
-                    // OTP flow — runs client-side so session goes into localStorage
                     const { error } = await supabase.auth.verifyOtp({
                         token_hash,
                         type: type as 'signup' | 'email' | 'recovery' | 'invite',
@@ -31,7 +33,6 @@ export default function AuthCallbackPage() {
                         return;
                     }
                 } else if (code) {
-                    // PKCE flow
                     const { error } = await supabase.auth.exchangeCodeForSession(code);
                     if (error) {
                         console.error('[auth/callback] exchangeCodeForSession failed:', error.message);
@@ -51,9 +52,35 @@ export default function AuthCallbackPage() {
                     return;
                 }
 
-                // Profile is created automatically by the on_auth_user_created
-                // database trigger — no client-side upsert needed.
-                router.replace('/main?welcome=true');
+                let shouldForceProfileCompletion = false;
+
+                try {
+                    const syncResponse = await api.post('/me/profile/sync', {});
+                    if (!syncResponse.ok) {
+                        console.error('[auth/callback] profile sync failed with status:', syncResponse.status);
+                        shouldForceProfileCompletion = true;
+                    } else {
+                        const syncPayload = await syncResponse.json().catch(() => null);
+                        if (!syncPayload?.data?.university_id) {
+                            shouldForceProfileCompletion = true;
+                        }
+                    }
+                } catch (syncError) {
+                    console.error('[auth/callback] profile sync request failed:', syncError);
+                    shouldForceProfileCompletion = true;
+                }
+
+                let callbackDestination = shouldForceProfileCompletion ? '/main?welcome=true&profile=1' : '/main?welcome=true';
+                try {
+                    const bootstrap = await fetchBootstrap({ force: true });
+                    if (bootstrap?.is_lecturer) {
+                        callbackDestination = resolveDestinationFromBootstrap(bootstrap);
+                    }
+                } catch (bootstrapError) {
+                    console.warn('[auth/callback] bootstrap routing failed:', bootstrapError);
+                }
+
+                router.replace(callbackDestination);
             } catch (err) {
                 console.error('[auth/callback] Unexpected error:', err);
                 router.replace('/login?error=callback_failed');
