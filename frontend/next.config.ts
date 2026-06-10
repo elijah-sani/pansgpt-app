@@ -40,11 +40,14 @@ const nextConfig: NextConfig = {
     "react-pdf",
     "pdfjs-dist",
   ],
-  webpack: (config) => {
+  webpack: (config, { dev }) => {
     config.resolve.alias = {
       ...config.resolve.alias,
-      "pdfjs-dist$": path.resolve(process.cwd(), "node_modules/pdfjs-dist/webpack.mjs"),
+      canvas: false,
     };
+    if (dev) {
+      config.devtool = "cheap-module-source-map";
+    }
     return config;
   },
   turbopack: {
