@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Eye, Filter, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useQuizCache } from "@/lib/QuizCacheContext";
+import { useChatSession } from "@/lib/ChatSessionContext";
 
 interface QuizHistoryEntryResult {
   id: string;
@@ -46,6 +47,7 @@ function scoreColor(percentage: number) {
 
 export default function QuizHistory() {
   const router = useRouter();
+  const { setPendingPath } = useChatSession();
   const { quizHistory, quizHistoryLoaded, quizHistoryLoading, fetchQuizHistory } = useQuizCache();
   const [courseCode, setCourseCode] = useState("");
   const [level, setLevel] = useState("");
@@ -96,7 +98,7 @@ export default function QuizHistory() {
         <div>
           <button
             type="button"
-            onClick={() => router.push("/quiz")}
+            onClick={() => { setPendingPath("/quiz"); router.push("/quiz"); }}
             className="mb-3 hidden items-center gap-1.5 text-sm font-semibold text-primary transition-colors hover:text-primary/80 md:inline-flex"
           >
             <ArrowLeft className="h-4 w-4" />

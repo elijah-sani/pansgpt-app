@@ -25,12 +25,23 @@
   padding-left: 0 !important;
 }
 
-.bn-editor .ProseMirror {
-  padding: 0 0 5rem 0 !important;
+.bn-editor, .ProseMirror, .bn-editor.ProseMirror, .bn-editor .ProseMirror {
+  padding-bottom: 40vh !important;
 }
 
 @keyframes material-toast-progress {
   from { transform: scaleX(1); }
   to { transform: scaleX(0); }
+}
+
+/* Keep native select/option popups dark-friendly in dark mode */
+.dark select {
+  color-scheme: dark;
+}
+
+.dark select,
+.dark option {
+  background-color: var(--surface-secondary);
+  color: var(--foreground);
 }
 

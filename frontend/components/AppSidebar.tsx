@@ -1,23 +1,17 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import dynamic from "next/dynamic";
 import { usePathname, useRouter } from "next/navigation";
-import { Bug, CalendarDays, ChevronDown, ChevronRight, CircleHelp, FileText, Mail, MoreVertical, PanelLeft, Pencil, Search, Settings, SlidersHorizontal, NotepadText, MessageSquare, BookOpen, Brain, Trash2, X, Loader2, SquarePen } from "lucide-react";
+import { Bug, CalendarDays, ChevronDown, ChevronRight, CircleHelp, FileText, Mail, MoreVertical, PanelLeft, Pencil, Search, Settings, NotepadText, MessageSquare, BookOpen, Brain, Trash2, X, SquarePen } from "lucide-react";
 import Logo from "@/components/Logo";
 import { useChatSession } from "@/lib/ChatSessionContext";
 import { MainSidebarContent } from "@/components/sidebar/MainSidebarContent";
 import { StudySidebarContent } from "@/components/sidebar/StudySidebarContent";
 import { QuizSidebarContent } from "@/components/sidebar/QuizSidebarContent";
-import { QuizFilterModal } from "@/components/sidebar/QuizFilterModal";
 import { SidebarConversationList } from "@/components/sidebar/SidebarConversationList";
 import { SidebarLink } from "@/components/sidebar/SidebarPrimitives";
-import { useSidebarQuizHistory } from "@/hooks/useSidebarQuizHistory";
+import { SidebarNotesSection, type SidebarNoteItem } from "@/components/sidebar/SidebarNotesSection";
 import { api } from "@/lib/api";
-import { toast } from "sonner";
-import type { BlockNoteContent } from "@/types/types";
-
-const RichNoteEditor = dynamic(() => import("@/components/notes/RichNoteEditor"), { ssr: false });
 
 interface AppSidebarProps {
   isOpen: boolean;
@@ -31,16 +25,8 @@ interface AppSidebarProps {
 }
 
 const HELP_SUBMENU_HEIGHT = 196;
-const NOTES_SWITCH_THRESHOLD = 3;
-const QUICK_NOTES_LIMIT = 2;
-const QUICK_NOTE_TAG_PREFIX = "quick:v1";
-const QUICK_NOTE_TITLE = "Quick notes";
-const QUICK_NOTE_STORAGE_KEY = "pansgpt_quick_note_persistent";
-
-type SidebarNoteItem = {
-  id: string;
-  title: string;
-};
+const SIDEBAR_NOTES_LIMIT = 2;
+const LEGACY_QUICK_NOTE_TAG_PREFIX = "quick:v1";
 
 type SidebarChatSession = {
   id: string;
@@ -48,6 +34,10 @@ type SidebarChatSession = {
   created_at?: string | null;
   updated_at?: string | null;
 };
+
+function isLegacyQuickNote(note: { tags?: string[] | null }) {
+  return Array.isArray(note.tags) && note.tags.some((tag) => typeof tag === "string" && tag.startsWith(LEGACY_QUICK_NOTE_TAG_PREFIX));
+}
 
 function getChatDateGroup(timestamp?: string | null) {
   if (!timestamp) {
@@ -94,7 +84,6 @@ type SidebarChatHistorySectionProps = {
   isLoadingHistory: boolean;
   onDeleteRequest?: (id: string) => void;
   onRenameRequest?: (id: string, title: string) => void;
-  onSearchOpen?: () => void;
   openMenuId: string | null;
   sessions: SidebarChatSession[];
   setOpenMenuId: (id: string | null) => void;
@@ -106,19 +95,32 @@ function SidebarChatHistorySection({
   isLoadingHistory,
   onDeleteRequest,
   onRenameRequest,
-  onSearchOpen,
   openMenuId,
   sessions,
   setOpenMenuId,
 }: SidebarChatHistorySectionProps) {
   const [isDateGroupingEnabled, setIsDateGroupingEnabled] = useState(false);
+  const [isChatHistoryOpen, setIsChatHistoryOpen] = useState(true);
 
   return (
     <>
-      <div className="px-5 pt-4"><div className="border-t border-border" /></div>
       <div className="flex flex-col flex-1 overflow-hidden pt-2 pb-2">
-        <div className="flex items-center justify-between px-6 pt-2 pb-3 shrink-0">
-          <h4 className="text-xs font-bold text-foreground/70 tracking-wider uppercase">Chat history</h4>
+        <div className="flex min-h-8 items-center justify-between px-5 pt-2 pb-3 shrink-0">
+          <div className="flex items-center">
+            <span className="text-xs font-medium text-muted-foreground">Recent chats</span>
+            <button
+              type="button"
+              onClick={() => setIsChatHistoryOpen((previous) => !previous)}
+              aria-expanded={isChatHistoryOpen}
+              title={isChatHistoryOpen ? "Collapse recent chats" : "Expand recent chats"}
+              className="ml-1 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+            >
+              <ChevronDown
+                size={16}
+                className={`transition-transform ${isChatHistoryOpen ? "rotate-0" : "-rotate-90"}`}
+              />
+            </button>
+          </div>
           <div className="flex items-center gap-1">
             <button
               onClick={() => setIsDateGroupingEnabled((previous) => !previous)}
@@ -130,50 +132,28 @@ function SidebarChatHistorySection({
             >
               <CalendarDays size={14} />
             </button>
-            {onSearchOpen && (
-              <button onClick={onSearchOpen} className="p-1.5 text-foreground hover:bg-muted rounded-md transition-colors">
-                <Search size={14} />
-              </button>
-            )}
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto px-3 pb-2">
-          <SidebarConversationList
-            activeSessionId={activeSessionId}
-            emptyText="No chats yet"
-            handleLoadSession={handleLoadSession}
-            isDateGroupingEnabled={isDateGroupingEnabled}
-            isLoadingHistory={isLoadingHistory}
-            loadingText="Loading..."
-            onDeleteRequest={onDeleteRequest}
-            onRenameRequest={onRenameRequest}
-            openMenuId={openMenuId}
-            sessions={sessions}
-            setOpenMenuId={setOpenMenuId}
-          />
-        </div>
+        {isChatHistoryOpen ? (
+          <div className="flex-1 overflow-y-auto px-3 pb-2">
+            <SidebarConversationList
+              activeSessionId={activeSessionId}
+              emptyText="No chats yet"
+              handleLoadSession={handleLoadSession}
+              isDateGroupingEnabled={isDateGroupingEnabled}
+              isLoadingHistory={isLoadingHistory}
+              loadingText="Loading..."
+              onDeleteRequest={onDeleteRequest}
+              onRenameRequest={onRenameRequest}
+              openMenuId={openMenuId}
+              sessions={sessions}
+              setOpenMenuId={setOpenMenuId}
+            />
+          </div>
+        ) : null}
       </div>
     </>
   );
-}
-
-function isQuickNote(note: { tags?: string[] | null }) {
-  return Array.isArray(note.tags) && note.tags.some((tag) => typeof tag === "string" && tag.startsWith(QUICK_NOTE_TAG_PREFIX));
-}
-
-function hasMeaningfulContent(content?: BlockNoteContent) {
-  if (!Array.isArray(content)) return false;
-  return content.some((block) => {
-    if (!block || typeof block !== "object") return false;
-    const entry = block as Record<string, unknown>;
-    if (entry.type === "image") return true;
-    if (!Array.isArray(entry.content)) return false;
-    return entry.content.some((item) => {
-      if (!item || typeof item !== "object") return false;
-      const text = (item as Record<string, unknown>).text;
-      return typeof text === "string" && text.trim().length > 0;
-    });
-  });
 }
 
 export default function AppSidebar({
@@ -189,9 +169,9 @@ export default function AppSidebar({
   const router = useRouter();
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [isDateGroupingEnabled, setIsDateGroupingEnabled] = useState(false);
-  const [isMobileQuizHistoryOpen, setIsMobileQuizHistoryOpen] = useState(true);
-  const [notesList, setNotesList] = useState<SidebarNoteItem[]>([]);
-  const [notesCount, setNotesCount] = useState(0);
+  const [isMobileChatHistoryOpen, setIsMobileChatHistoryOpen] = useState(true);
+  const [sidebarNotes, setSidebarNotes] = useState<SidebarNoteItem[]>([]);
+  const [sidebarNotesCount, setSidebarNotesCount] = useState(0);
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
   const [isHelpSubmenuOpen, setIsHelpSubmenuOpen] = useState(false);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
@@ -199,20 +179,14 @@ export default function AppSidebar({
   const helpSubmenuRef = useRef<HTMLDivElement | null>(null);
   const hideHelpTimeoutRef = useRef<number | null>(null);
   const [desktopHelpMenuPosition, setDesktopHelpMenuPosition] = useState<{ top: number; left: number } | null>(null);
-  const [isQuickNoteModalOpen, setIsQuickNoteModalOpen] = useState(false);
-  const [quickNoteContent, setQuickNoteContent] = useState<BlockNoteContent>([]);
-  const [quickNoteId, setQuickNoteId] = useState<string | null>(null);
-  const [quickNoteEditorRevision, setQuickNoteEditorRevision] = useState(0);
-  const [isSavingQuickNote, setIsSavingQuickNote] = useState(false);
-  const [isQuickNoteHydrating, setIsQuickNoteHydrating] = useState(false);
-  const [isQuickNoteReady, setIsQuickNoteReady] = useState(false);
-  const [mounted, setMounted] = useState(false);
-  const quickNoteSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const {
     sessions,
     isLoadingHistory,
+    hasLoadedHistory,
+    fetchHistory,
     activeSessionId,
     setActiveSessionId,
+    setPendingPath,
   } = useChatSession();
 
   const isOnMain = pathname === "/main";
@@ -221,197 +195,73 @@ export default function AppSidebar({
   const isOnNotes = pathname.startsWith("/notes");
   const showChatHistory = isOnMain || isOnReader || isOnQuiz || isOnNotes;
   const isIconOnly = !isOpen;
-  const useCompactNotesList = notesCount > NOTES_SWITCH_THRESHOLD;
-  const quickNotes = useCompactNotesList ? notesList.slice(0, QUICK_NOTES_LIMIT) : [];
-  const quickNoteStorageKey = QUICK_NOTE_STORAGE_KEY;
-
-  const {
-    applyFilters,
-    clearFilters,
-    draftFilters,
-    hasActiveFilters,
-    quizLoading,
-    quizResults,
-    setDraftFilters,
-    setShowFilterModal,
-    showFilterModal,
-  } = useSidebarQuizHistory(isOnQuiz);
 
   useEffect(() => {
-    if (!isOnQuiz && showFilterModal) {
-      setShowFilterModal(false);
-    }
-  }, [isOnQuiz, setShowFilterModal, showFilterModal]);
-
-  useEffect(() => {
-    if (!(isOnMain || isOnQuiz) || isIconOnly) return;
+    if (isIconOnly || !(isOnMain || isOnReader || isOnQuiz || isOnNotes)) return;
 
     let isCancelled = false;
-    const loadNotes = async () => {
+    const loadSidebarNotes = async () => {
       try {
         const response = await api.get("/notes");
         if (!response.ok) return;
 
-        const payload = (await response.json()) as { notes?: Array<{ id: string | number; title?: string | null; created_at?: string; last_edited_at?: string | null; tags?: string[] | null }> };
-        const raw = Array.isArray(payload.notes) ? payload.notes : [];
-        const regularNotes = raw.filter((note) => !isQuickNote(note));
-        if (!isCancelled) {
-          setNotesCount(regularNotes.length);
-        }
-        const mapped = regularNotes
+        const payload = (await response.json()) as {
+          notes?: Array<{
+            id: string | number;
+            title?: string | null;
+            created_at?: string;
+            last_edited_at?: string | null;
+            tags?: string[] | null;
+          }>;
+        };
+        const regularNotes = (Array.isArray(payload.notes) ? payload.notes : []).filter((note) => !isLegacyQuickNote(note));
+        const recentNotes = regularNotes
           .map((note, index) => {
-            const id = String(note.id);
             const normalizedTitle = typeof note.title === "string" ? note.title.trim() : "";
             return {
-              id,
+              id: String(note.id),
               title: normalizedTitle || `Untitled note ${index + 1}`,
               timestamp: new Date(note.last_edited_at || note.created_at || 0).getTime(),
             };
           })
           .sort((a, b) => b.timestamp - a.timestamp)
-          .slice(0, QUICK_NOTES_LIMIT)
+          .slice(0, SIDEBAR_NOTES_LIMIT)
           .map(({ id, title }) => ({ id, title }));
 
         if (!isCancelled) {
-          setNotesList(mapped);
+          setSidebarNotesCount(regularNotes.length);
+          setSidebarNotes(recentNotes);
         }
       } catch {
         if (!isCancelled) {
-          setNotesCount(0);
-          setNotesList([]);
+          setSidebarNotesCount(0);
+          setSidebarNotes([]);
         }
       }
     };
 
-    void loadNotes();
+    void loadSidebarNotes();
 
-    const handleRefresh = () => {
-      void loadNotes();
+    const refreshSidebarNotes = () => {
+      void loadSidebarNotes();
     };
 
-    const handleFocus = () => {
-      void loadNotes();
-    };
-
-    const handleNotesUpdated = () => {
-      void loadNotes();
-    };
-
-    window.addEventListener("focus", handleFocus);
-    window.addEventListener("storage", handleRefresh);
-    window.addEventListener("pansgpt-notes-updated", handleNotesUpdated);
+    window.addEventListener("focus", refreshSidebarNotes);
+    window.addEventListener("storage", refreshSidebarNotes);
+    window.addEventListener("pansgpt-notes-updated", refreshSidebarNotes);
 
     return () => {
       isCancelled = true;
-      window.removeEventListener("focus", handleFocus);
-      window.removeEventListener("storage", handleRefresh);
-      window.removeEventListener("pansgpt-notes-updated", handleNotesUpdated);
+      window.removeEventListener("focus", refreshSidebarNotes);
+      window.removeEventListener("storage", refreshSidebarNotes);
+      window.removeEventListener("pansgpt-notes-updated", refreshSidebarNotes);
     };
-  }, [isIconOnly, isOnMain, isOnQuiz]);
+  }, [isIconOnly, isOnMain, isOnNotes, isOnQuiz, isOnReader]);
 
   useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  useEffect(() => {
-    if (!isQuickNoteModalOpen || isQuickNoteReady) return;
-    let isCancelled = false;
-    setIsQuickNoteHydrating(true);
-
-    const hydrateQuickNote = async () => {
-      let cached: { noteId: string | null; content: BlockNoteContent } = {
-        noteId: null,
-        content: [],
-      };
-
-      try {
-        const raw = localStorage.getItem(quickNoteStorageKey);
-        if (raw) {
-          const saved = JSON.parse(raw) as {
-            noteId?: string | null;
-            content?: BlockNoteContent;
-          };
-          cached = {
-            noteId: saved.noteId ? String(saved.noteId) : null,
-            content: Array.isArray(saved.content) ? saved.content : [],
-          };
-        }
-      } catch {
-        cached = { noteId: null, content: [] };
-      }
-
-      try {
-        const response = await api.get("/notes");
-        if (response.ok) {
-          const payload = (await response.json()) as {
-            notes?: Array<{
-              id: string | number;
-              content?: BlockNoteContent;
-              created_at?: string;
-              last_edited_at?: string | null;
-              tags?: string[] | null;
-            }>;
-          };
-          const quickCandidates = (Array.isArray(payload.notes) ? payload.notes : []).filter(isQuickNote);
-          const sharedQuickNote =
-            (cached.noteId ? quickCandidates.find((note) => String(note.id) === cached.noteId) : null) ||
-            quickCandidates.sort((a, b) => {
-              const aTime = new Date(a.last_edited_at || a.created_at || 0).getTime();
-              const bTime = new Date(b.last_edited_at || b.created_at || 0).getTime();
-              return bTime - aTime;
-            })[0];
-
-          if (sharedQuickNote) {
-            const content = Array.isArray(sharedQuickNote.content) ? sharedQuickNote.content : [];
-            if (!isCancelled) {
-              setQuickNoteId(String(sharedQuickNote.id));
-              setQuickNoteContent(content);
-              setQuickNoteEditorRevision((revision) => revision + 1);
-              localStorage.setItem(quickNoteStorageKey, JSON.stringify({
-                noteId: String(sharedQuickNote.id),
-                content,
-              }));
-            }
-            return;
-          }
-        }
-      } catch {
-        // Fall back to the local cache below.
-      }
-
-      if (!isCancelled) {
-        setQuickNoteId(cached.noteId);
-        setQuickNoteContent(cached.content);
-        setQuickNoteEditorRevision((revision) => revision + 1);
-      }
-    };
-
-    void hydrateQuickNote().finally(() => {
-      if (!isCancelled) {
-        setIsQuickNoteHydrating(false);
-        setIsQuickNoteReady(true);
-      }
-    });
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [isQuickNoteModalOpen, isQuickNoteReady, quickNoteStorageKey]);
-
-  useEffect(() => {
-    if (!isQuickNoteModalOpen || !isQuickNoteReady || isQuickNoteHydrating) return;
-    try {
-      localStorage.setItem(
-        quickNoteStorageKey,
-        JSON.stringify({
-          noteId: quickNoteId,
-          content: quickNoteContent,
-        }),
-      );
-    } catch {
-      // ignore
-    }
-  }, [isQuickNoteModalOpen, isQuickNoteReady, isQuickNoteHydrating, quickNoteStorageKey, quickNoteId, quickNoteContent]);
+    if (!showChatHistory || hasLoadedHistory) return;
+    void fetchHistory();
+  }, [fetchHistory, hasLoadedHistory, showChatHistory]);
 
   useEffect(() => {
     setIsSettingsMenuOpen(false);
@@ -518,9 +368,17 @@ export default function AppSidebar({
     setIsHelpSubmenuOpen(true);
   };
 
+  const handleNavigate = (path: string) => {
+    if (path !== pathname) {
+      setPendingPath(path);
+    }
+    router.push(path);
+  };
+
   const handleLoadSession = async (id: string) => {
     setActiveSessionId(id);
     if (!isOnMain) {
+      setPendingPath("/main");
       router.push("/main");
     }
     if (typeof window !== "undefined" && window.innerWidth < 768) {
@@ -531,93 +389,13 @@ export default function AppSidebar({
   const handleNewChat = () => {
     setActiveSessionId(null);
     if (!isOnMain) {
+      setPendingPath("/main");
       router.push("/main");
     }
     if (typeof window !== "undefined" && window.innerWidth < 768) {
       onClose();
     }
   };
-
-  const openQuickNoteModal = () => {
-    setIsQuickNoteReady(false);
-    setIsQuickNoteModalOpen(true);
-  };
-
-  const closeQuickNoteModal = () => {
-    if (quickNoteSaveTimerRef.current) {
-      clearTimeout(quickNoteSaveTimerRef.current);
-      quickNoteSaveTimerRef.current = null;
-      void autosaveQuickNote();
-    }
-    setIsQuickNoteModalOpen(false);
-  };
-
-  const hasMeaningfulQuickNoteContent = () => {
-    return hasMeaningfulContent(quickNoteContent);
-  };
-
-  const autosaveQuickNote = async () => {
-    if (!isQuickNoteModalOpen || !isQuickNoteReady || isQuickNoteHydrating || isSavingQuickNote) return;
-    if (!hasMeaningfulQuickNoteContent()) return;
-
-    setIsSavingQuickNote(true);
-    try {
-      let savedQuickNoteId = quickNoteId;
-      if (quickNoteId) {
-        const response = await api.patch(`/notes/${quickNoteId}`, {
-          title: QUICK_NOTE_TITLE,
-          content: quickNoteContent,
-          tags: [QUICK_NOTE_TAG_PREFIX],
-        });
-        if (!response.ok) {
-          throw new Error(`Quick note update failed: ${response.status}`);
-        }
-      } else {
-        const response = await api.post("/notes", {
-          title: QUICK_NOTE_TITLE,
-          content: quickNoteContent,
-          user_annotation: null,
-          document_id: null,
-          tags: [QUICK_NOTE_TAG_PREFIX],
-        });
-        if (!response.ok) {
-          throw new Error(`Quick note save failed: ${response.status}`);
-        }
-        const saved = (await response.json()) as { id: string | number };
-        savedQuickNoteId = String(saved.id);
-        setQuickNoteId(savedQuickNoteId);
-      }
-
-      localStorage.setItem(
-        quickNoteStorageKey,
-        JSON.stringify({
-          noteId: savedQuickNoteId,
-          content: quickNoteContent,
-        }),
-      );
-      window.dispatchEvent(new Event("pansgpt-notes-updated"));
-    } catch (error) {
-      console.error(error);
-      toast.error("Unable to autosave quick note");
-    } finally {
-      setIsSavingQuickNote(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!isQuickNoteModalOpen || !isQuickNoteReady || isQuickNoteHydrating) return;
-    if (quickNoteSaveTimerRef.current) {
-      clearTimeout(quickNoteSaveTimerRef.current);
-    }
-    quickNoteSaveTimerRef.current = setTimeout(() => {
-      void autosaveQuickNote();
-    }, 1200);
-    return () => {
-      if (quickNoteSaveTimerRef.current) {
-        clearTimeout(quickNoteSaveTimerRef.current);
-      }
-    };
-  }, [isQuickNoteModalOpen, isQuickNoteReady, isQuickNoteHydrating, quickNoteContent]);
 
   return (
     <>
@@ -632,7 +410,7 @@ export default function AppSidebar({
             <button
               type="button"
               onClick={() => {
-                router.push("/main");
+                handleNavigate("/main");
                 onClose();
               }}
               className="rounded-[10px] transition-transform active:scale-[0.98]"
@@ -673,7 +451,7 @@ export default function AppSidebar({
               <button
                 type="button"
                 onClick={() => {
-                  router.push("/reader");
+                  handleNavigate("/reader");
                   onClose();
                 }}
                 className={`flex min-h-[40px] w-full items-center gap-3 rounded-[10px] px-1 text-left text-[15px] font-semibold transition-all active:scale-[0.98] active:bg-muted ${
@@ -687,7 +465,7 @@ export default function AppSidebar({
               <button
                 type="button"
                 onClick={() => {
-                  router.push("/quiz");
+                  handleNavigate("/quiz");
                   onClose();
                 }}
                 className={`flex min-h-[40px] w-full items-center gap-3 rounded-[10px] px-1 text-left text-[15px] font-semibold transition-all active:scale-[0.98] active:bg-muted ${
@@ -698,90 +476,43 @@ export default function AppSidebar({
                 <Brain className="h-[18px] w-[18px] shrink-0" strokeWidth={2.2} />
                 <span>Quiz</span>
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  router.push("/notes");
-                  onClose();
-                }}
-                className={`flex min-h-[40px] w-full items-center gap-3 rounded-[10px] px-1 text-left text-[15px] font-semibold transition-all active:scale-[0.98] active:bg-muted ${
-                  isOnNotes ? "text-primary" : "text-foreground"
-                }`}
-                style={{ WebkitTapHighlightColor: "transparent" }}
-              >
-                <NotepadText className="h-[18px] w-[18px] shrink-0" strokeWidth={2.2} />
-                <span>Notes</span>
-              </button>
             </nav>
 
-            {isOnQuiz && (
-              <section className="pt-6">
-                <div className="flex items-center justify-between gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setIsMobileQuizHistoryOpen((previous) => !previous)}
-                    aria-expanded={isMobileQuizHistoryOpen}
-                    className="flex min-h-8 flex-1 items-center gap-2 text-left transition-colors active:text-foreground"
-                    style={{ WebkitTapHighlightColor: "transparent" }}
-                  >
-                    <ChevronDown
-                      className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${
-                        isMobileQuizHistoryOpen ? "rotate-0" : "-rotate-90"
-                      }`}
-                    />
-                    <h2 className="text-[15px] font-semibold text-foreground">Quiz history</h2>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowFilterModal(true)}
-                    title="Filter quiz history"
-                    aria-label="Filter quiz history"
-                    className={`relative flex h-8 w-8 items-center justify-center rounded-[10px] transition-all active:scale-95 active:bg-muted ${
-                      hasActiveFilters ? "bg-primary/10 text-primary" : "text-muted-foreground"
-                    }`}
-                    style={{ WebkitTapHighlightColor: "transparent" }}
-                  >
-                    <SlidersHorizontal className="h-4 w-4" />
-                    {hasActiveFilters && <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-primary" />}
-                  </button>
-                </div>
-                {isMobileQuizHistoryOpen && (
-                  <div className="mt-3 space-y-1">
-                    {quizLoading ? (
-                      <div className="flex min-h-[38px] items-center gap-3 rounded-[10px] text-sm font-medium text-muted-foreground">
-                        <Loader2 className="h-5 w-5 animate-spin" />
-                        <span>Loading quizzes...</span>
-                      </div>
-                    ) : quizResults.length === 0 ? (
-                      <p className="py-3 text-sm font-medium text-muted-foreground">No quizzes yet</p>
-                    ) : (
-                      quizResults.map((item) =>
-                        item.result ? (
-                          <button
-                            key={item.result.id}
-                            type="button"
-                            onClick={() => {
-                              router.push(`/quiz/${item.id}/results?resultId=${item.result?.id}`);
-                              onClose();
-                            }}
-                            className="flex min-h-[38px] w-full items-center justify-between gap-3 rounded-[10px] px-1 text-left text-[14px] font-medium text-foreground transition-all active:scale-[0.98] active:bg-muted"
-                            style={{ WebkitTapHighlightColor: "transparent" }}
-                          >
-                            <span className="line-clamp-1">{item.title}</span>
-                            <span className="shrink-0 text-sm font-bold text-muted-foreground">{item.result.percentage.toFixed(0)}%</span>
-                          </button>
-                        ) : null
-                      )
-                    )}
-                  </div>
-                )}
-              </section>
-            )}
+            {/* COMMENTED OUT: Notes Feature
+            <div>
+              <SidebarNotesSection
+                isIconOnly={false}
+                compact
+                notes={sidebarNotes}
+                totalNotes={sidebarNotesCount}
+                routerPush={(path) => {
+                  router.push(path);
+                  onClose();
+                }}
+              />
+            </div>
+            */}
 
             {showChatHistory && (
               <section className="pt-6">
                 <div className="flex items-center justify-between gap-3">
-                  <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Recent chats</h2>
+                  <div className="flex items-center">
+                    <span className="text-xs font-medium text-muted-foreground">Recent chats</span>
+                    <button
+                      type="button"
+                      onClick={() => setIsMobileChatHistoryOpen((previous) => !previous)}
+                      aria-expanded={isMobileChatHistoryOpen}
+                      title={isMobileChatHistoryOpen ? "Collapse recent chats" : "Expand recent chats"}
+                      className="ml-1 rounded-md p-1 text-muted-foreground transition-colors active:bg-muted"
+                      style={{ WebkitTapHighlightColor: "transparent" }}
+                    >
+                      <ChevronDown
+                        className={`h-4 w-4 transition-transform ${
+                          isMobileChatHistoryOpen ? "rotate-0" : "-rotate-90"
+                        }`}
+                      />
+                    </button>
+                  </div>
                   <button
                     type="button"
                     onClick={() => setIsDateGroupingEnabled((previous) => !previous)}
@@ -795,19 +526,21 @@ export default function AppSidebar({
                     <CalendarDays className="h-4 w-4" />
                   </button>
                 </div>
-                <div className="mt-2 space-y-0">
-                  <SidebarConversationList
-                    activeSessionId={activeSessionId}
-                    handleLoadSession={handleLoadSession}
-                    isDateGroupingEnabled={isDateGroupingEnabled}
-                    isLoadingHistory={isLoadingHistory}
-                    onDeleteRequest={onDeleteRequest}
-                    onRenameRequest={onRenameRequest}
-                    openMenuId={openMenuId}
-                    sessions={sessions}
-                    setOpenMenuId={setOpenMenuId}
-                  />
-                </div>
+                {isMobileChatHistoryOpen ? (
+                  <div className="mt-2 space-y-0">
+                    <SidebarConversationList
+                      activeSessionId={activeSessionId}
+                      handleLoadSession={handleLoadSession}
+                      isDateGroupingEnabled={isDateGroupingEnabled}
+                      isLoadingHistory={isLoadingHistory}
+                      onDeleteRequest={onDeleteRequest}
+                      onRenameRequest={onRenameRequest}
+                      openMenuId={openMenuId}
+                      sessions={sessions}
+                      setOpenMenuId={setOpenMenuId}
+                    />
+                  </div>
+                ) : null}
               </section>
             )}
 
@@ -855,17 +588,30 @@ export default function AppSidebar({
         <div className="h-full flex flex-col bg-card overflow-visible">
           <div className={`flex items-center py-5 ${isIconOnly ? "justify-center px-2" : "justify-between pl-6 pr-3"}`}>
             {!isIconOnly && <Logo className="h-5 w-auto" />}
-            <button
-              onClick={onClose}
-              title={isIconOnly ? "Expand sidebar" : "Collapse sidebar"}
-              className="p-2 text-foreground hover:bg-accent active:bg-accent/80 active:scale-95 rounded-lg transition-colors"
-              style={{ WebkitTapHighlightColor: 'transparent' }}
-            >
-              <PanelLeft size={20} />
-            </button>
+            <div className="flex items-center gap-1">
+              {!isIconOnly && onSearchOpen && showChatHistory ? (
+                <button
+                  type="button"
+                  onClick={onSearchOpen}
+                  title="Search chats"
+                  aria-label="Search chats"
+                  className="p-2 text-foreground hover:bg-accent active:bg-accent/80 active:scale-95 rounded-lg transition-colors"
+                  style={{ WebkitTapHighlightColor: 'transparent' }}
+                >
+                  <Search size={18} />
+                </button>
+              ) : null}
+              <button
+                onClick={onClose}
+                title={isIconOnly ? "Expand sidebar" : "Collapse sidebar"}
+                className="p-2 text-foreground hover:bg-accent active:bg-accent/80 active:scale-95 rounded-lg transition-colors"
+                style={{ WebkitTapHighlightColor: 'transparent' }}
+              >
+                <PanelLeft size={20} />
+              </button>
+            </div>
           </div>
 
-          {/* COMMENTED OUT: notes sidebar — re-enable by adding quickNotes={quickNotes} onOpenQuickNote={openQuickNoteModal} */}
           {isOnMain && (
             <MainSidebarContent
               activeSessionId={activeSessionId}
@@ -875,40 +621,43 @@ export default function AppSidebar({
               isLoadingHistory={isLoadingHistory}
               onDeleteRequest={onDeleteRequest}
               onRenameRequest={onRenameRequest}
-              onSearchOpen={onSearchOpen}
               openMenuId={openMenuId}
-              routerPush={(path) => router.push(path)}
+              notes={sidebarNotes}
+              routerPush={handleNavigate}
               sessions={sessions}
               setOpenMenuId={setOpenMenuId}
+              totalNotes={sidebarNotesCount}
             />
           )}
 
           {isOnReader && (
             <StudySidebarContent
               isIconOnly={isIconOnly}
+              notes={sidebarNotes}
               pathname={pathname}
-              routerPush={(path) => router.push(path)}
+              routerPush={handleNavigate}
+              totalNotes={sidebarNotesCount}
             />
           )}
 
           {isOnQuiz && (
             <QuizSidebarContent
-              hasActiveFilters={hasActiveFilters}
               isIconOnly={isIconOnly}
+              notes={sidebarNotes}
               pathname={pathname}
-              quizLoading={quizLoading}
-              quizResults={quizResults}
-              routerPush={(path) => router.push(path)}
-              showFilters={() => setShowFilterModal(true)}
+              routerPush={handleNavigate}
+              totalNotes={sidebarNotesCount}
             />
           )}
 
           {isOnNotes && (
             <nav className={isIconOnly ? 'flex flex-col items-center py-1 gap-0.5' : 'px-2 space-y-0.5'}>
-              <SidebarLink icon={MessageSquare} label="Chat" onClick={() => router.push('/main')} isIconOnly={isIconOnly} />
-              <SidebarLink icon={BookOpen} label="Study" onClick={() => router.push('/reader')} isIconOnly={isIconOnly} />
-              <SidebarLink icon={Brain} label="Quiz" onClick={() => router.push('/quiz')} isIconOnly={isIconOnly} />
-              <SidebarLink icon={NotepadText} label="Notes" onClick={() => router.push('/notes')} isIconOnly={isIconOnly} active />
+              <SidebarLink icon={MessageSquare} label="Chat" onClick={() => handleNavigate('/main')} isIconOnly={isIconOnly} />
+              <SidebarLink icon={BookOpen} label="Study" onClick={() => handleNavigate('/reader')} isIconOnly={isIconOnly} />
+              <SidebarLink icon={Brain} label="Quiz" onClick={() => handleNavigate('/quiz')} isIconOnly={isIconOnly} />
+              {/* COMMENTED OUT: Notes Feature
+              <SidebarLink icon={NotepadText} label="Notes" onClick={() => handleNavigate('/notes')} isIconOnly={isIconOnly} active />
+              */}
             </nav>
           )}
 
@@ -919,7 +668,6 @@ export default function AppSidebar({
               isLoadingHistory={isLoadingHistory}
               onDeleteRequest={onDeleteRequest}
               onRenameRequest={onRenameRequest}
-              onSearchOpen={onSearchOpen}
               openMenuId={openMenuId}
               sessions={sessions}
               setOpenMenuId={setOpenMenuId}
@@ -1004,14 +752,6 @@ export default function AppSidebar({
         </div>
       </aside>
 
-      <QuizFilterModal
-        applyFilters={applyFilters}
-        clearFilters={clearFilters}
-        draftFilters={draftFilters}
-        isOpen={showFilterModal}
-        setDraftFilters={setDraftFilters}
-        onClose={() => setShowFilterModal(false)}
-      />
       {isHelpSubmenuOpen && desktopHelpMenuPosition && typeof document !== "undefined"
         ? createPortal(
             <div
@@ -1073,45 +813,6 @@ export default function AppSidebar({
           )
         : null}
 
-      {/* COMMENTED OUT: quick-note modal — re-enable when ready */}
-      {/* <div className={`fixed inset-0 z-[220] pointer-events-none transition-opacity duration-300 ${isQuickNoteModalOpen ? "opacity-100" : "opacity-0"}`}>
-        <aside
-          className={`fixed top-80 z-[221] flex h-[50dvh] w-[min(216px,calc(100vw-24px))] min-w-[216px] max-w-[216px] flex-col rounded-2xl border border-border bg-card shadow-2xl transition-all duration-300 ease-out ${
-            isQuickNoteModalOpen
-              ? "pointer-events-auto translate-y-0 scale-100 opacity-100"
-              : "pointer-events-none -translate-y-2 scale-[0.985] opacity-0"
-          }`}
-          style={mounted ? { left: typeof window !== "undefined" && window.innerWidth >= 768 ? (isOpen ? 288 : 78) : 12 } : undefined}
-        >
-          <div className="relative flex items-center gap-2 border-b border-border px-4 py-3 w-full">
-            <button
-              onClick={closeQuickNoteModal}
-              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              title="Close quick note"
-            >
-              <X className="h-4 w-4" />
-            </button>
-            <div className="min-w-0 flex-1 text-sm font-semibold text-foreground">{QUICK_NOTE_TITLE}</div>
-            {isSavingQuickNote ? (
-              <div className="flex items-center justify-center text-muted-foreground" title="Autosaving">
-                <Loader2 className="h-4 w-4 animate-spin" />
-              </div>
-            ) : null}
-          </div>
-          <div className="min-h-0 flex-1 overflow-visible px-5 pt-5 pb-8 w-full">
-            <div className="h-full overflow-visible">
-              <RichNoteEditor
-                key={`${quickNoteId ?? "new"}-${quickNoteEditorRevision}`}
-                initialContent={quickNoteContent}
-                onChange={setQuickNoteContent}
-                placeholder="Start writing your notes..."
-                compact={false}
-                editable
-              />
-            </div>
-          </div>
-        </aside>
-      </div> */}
     </>
   );
 }

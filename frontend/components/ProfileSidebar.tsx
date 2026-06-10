@@ -13,6 +13,7 @@ import {
 import { useRouter } from 'next/navigation';
 import TodaysClasses from '@/components/TodaysClasses';
 import { supabase } from '@/lib/supabase';
+import { clearAdminWorkspaceUniversity } from '@/lib/admin-workspace';
 
 interface ProfileSidebarProps {
     user: {
@@ -41,6 +42,7 @@ export default function ProfileSidebar({
     const router = useRouter();
 
     const handleLogout = async () => {
+        clearAdminWorkspaceUniversity();
         await supabase.auth.signOut();
         onClose();
         window.location.replace('/login');

@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
+import { useChatSession } from '@/lib/ChatSessionContext';
 import { ArrowLeft, ChevronLeft, ChevronRight, Clock3, X } from 'lucide-react';
 
 interface Question {
@@ -81,6 +82,7 @@ function formatDifficulty(value?: string) {
 
 export default function QuizTaking({ quizId }: { quizId: string }) {
   const router = useRouter();
+  const { setPendingPath } = useChatSession();
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -201,7 +203,7 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
           <h2 className="text-xl font-semibold text-foreground">Unable to open quiz</h2>
           <p className="mt-2 text-sm text-muted-foreground">{error || 'Quiz not found'}</p>
           <button
-            onClick={() => router.push('/quiz?new=1')}
+            onClick={() => { setPendingPath('/quiz'); router.push('/quiz?new=1'); }}
             className="mt-5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
           >
             Back to Quiz

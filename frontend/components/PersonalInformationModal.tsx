@@ -8,6 +8,7 @@ import { api } from '@/lib/api';
 import { dispatchProfileUpdated } from '@/lib/profile-events';
 import AvatarSelectionModal from '@/components/AvatarSelectionModal';
 import MobileBottomSheet from '@/components/MobileBottomSheet';
+import { fetchActiveUniversities, type UniversityOption } from '@/lib/universities';
 
 interface PersonalInformationModalProps {
     isOpen: boolean;
@@ -17,6 +18,7 @@ interface PersonalInformationModalProps {
         firstName: string;
         otherNames: string;
         university: string;
+        universityId?: string;
         level: string;
     }) => void;
     onAvatarChange?: (url: string) => void;
@@ -26,6 +28,7 @@ interface PersonalInformationModalProps {
         otherNames?: string;
         avatarUrl?: string;
         university?: string;
+        universityId?: string;
         level?: string;
     };
 }
@@ -34,14 +37,11 @@ interface PersonalInfoFormData {
     firstName: string;
     otherNames: string;
     university: string;
+    universityId: string;
     level: string;
 }
 
 const levelOptions = ['100', '200', '300', '400', '500', '600'];
-const universityOptions = [
-    'University of Jos (UNIJOS)',
-    'Other',
-];
 
 const splitName = (name: string) => {
     const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -57,6 +57,7 @@ const buildFormFromUser = (user: PersonalInformationModalProps['user']): Persona
         firstName: user.firstName || split.firstName,
         otherNames: user.otherNames || split.otherNames,
         university: user.university || '',
+        universityId: user.universityId || '',
         level: user.level || '400',
     };
 };
@@ -65,6 +66,7 @@ const normalizeForm = (form: PersonalInfoFormData): PersonalInfoFormData => ({
     firstName: form.firstName.trim(),
     otherNames: form.otherNames.trim(),
     university: form.university.trim(),
+    universityId: form.universityId.trim(),
     level: form.level.trim(),
 });
 
@@ -73,6 +75,7 @@ const upsertProfileForCurrentUser = async (
         first_name?: string | null;
         other_names?: string | null;
         university?: string | null;
+        university_id?: string | null;
         level?: string | null;
         avatar_url?: string | null;
     }
@@ -93,6 +96,9 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
     const [avatarUrl, setAvatarUrl] = useState(user.avatarUrl || '');
     const [initialFormData, setInitialFormData] = useState<PersonalInfoFormData>(buildFormFromUser(user));
     const [formData, setFormData] = useState<PersonalInfoFormData>(buildFormFromUser(user));
+    const [universities, setUniversities] = useState<UniversityOption[]>([]);
+    const [isLoadingUniversities, setIsLoadingUniversities] = useState(false);
+    const [universityLoadError, setUniversityLoadError] = useState<string | null>(null);
 
     useEffect(() => {
         if (!isOpen) return;
@@ -103,7 +109,18 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
         setSaveError(null);
         setIsEditing(false);
 
-        // Always hydrate from DB when opened so first_name/other_names reflect source of truth.
+        const loadUniversities = async () => {
+            try {
+                setIsLoadingUniversities(true);
+                setUniversityLoadError(null);
+                setUniversities(await fetchActiveUniversities());
+            } catch (error) {
+                setUniversityLoadError(error instanceof Error ? error.message : 'Unable to load universities right now.');
+            } finally {
+                setIsLoadingUniversities(false);
+            }
+        };
+
         const hydrateFromProfile = async () => {
             try {
                 const response = await api.get('/me/profile');
@@ -115,6 +132,7 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
                     firstName: profile.first_name || '',
                     otherNames: profile.other_names || '',
                     university: profile.university || user.university || '',
+                    universityId: profile.university_id || user.universityId || '',
                     level: profile.level || user.level || '400',
                 };
 
@@ -125,8 +143,9 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
                 console.warn('Unable to hydrate personal info from profiles', error);
             }
         };
+        void loadUniversities();
         void hydrateFromProfile();
-    }, [isOpen, user.avatarUrl, user.firstName, user.level, user.name, user.otherNames, user.university]);
+    }, [isOpen, user.avatarUrl, user.firstName, user.level, user.name, user.otherNames, user.university, user.universityId]);
 
     const updateField = <K extends keyof PersonalInfoFormData>(key: K, value: PersonalInfoFormData[K]) => {
         setFormData((prev) => ({ ...prev, [key]: value }));
@@ -165,6 +184,7 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
                 first_name: normalized.firstName || null,
                 other_names: normalized.otherNames || null,
                 university: normalized.university || null,
+                university_id: normalized.universityId || null,
                 level: normalized.level || null,
             });
 
@@ -173,6 +193,7 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
                 firstName: normalized.firstName,
                 otherNames: normalized.otherNames,
                 university: normalized.university,
+                universityId: normalized.universityId || undefined,
                 level: normalized.level,
             });
             dispatchProfileUpdated({
@@ -180,6 +201,7 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
                 firstName: normalized.firstName,
                 otherNames: normalized.otherNames,
                 university: normalized.university,
+                universityId: normalized.universityId || undefined,
                 level: normalized.level,
             });
 
@@ -272,19 +294,39 @@ export default function PersonalInformationModal({ isOpen, onClose, onSave, onAv
                     <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">University</label>
                     {isEditing ? (
                         <select
-                            value={formData.university}
-                            onChange={(e) => updateField('university', e.target.value)}
-                            className="w-full px-3 py-2.5 rounded-xl border-0 bg-background text-base md:text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                            value={formData.universityId}
+                            onChange={(e) => {
+                                const selectedUniversity = universities.find((university) => university.id === e.target.value) || null;
+                                setFormData((prev) => ({
+                                    ...prev,
+                                    universityId: selectedUniversity?.id || '',
+                                    university: selectedUniversity?.name || '',
+                                }));
+                            }}
+                            disabled={isLoadingUniversities || universities.length === 0}
+                            className="w-full px-3 py-2.5 rounded-xl border-0 bg-background text-base md:text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-all disabled:opacity-60"
                         >
-                            <option value="">Select your university</option>
-                            {universityOptions.map((u) => (
-                                <option key={u} value={u}>{u}</option>
+                            <option value="">
+                                {!formData.universityId && formData.university
+                                    ? formData.university
+                                    : isLoadingUniversities
+                                        ? 'Loading universities...'
+                                        : 'Select your university'}
+                            </option>
+                            {universities.map((university) => (
+                                <option key={university.id} value={university.id}>
+                                    {university.name}
+                                    {university.short_name ? ` (${university.short_name})` : ''}
+                                </option>
                             ))}
                         </select>
                     ) : (
                         <div className="w-full px-3 py-2.5 rounded-xl bg-muted/40 text-sm text-foreground">
                             {formData.university || 'Not set'}
                         </div>
+                    )}
+                    {isEditing && universityLoadError && (
+                        <p className="text-xs text-destructive">{universityLoadError}</p>
                     )}
                 </div>
 

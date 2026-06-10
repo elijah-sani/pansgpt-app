@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useChatSession } from '@/lib/ChatSessionContext';
 import { ArrowLeft, Award, CheckCircle2, Clock3, FileText, RotateCcw, Share2, X, XCircle } from 'lucide-react';
 import QuizShareCard from './QuizShareCard';
 
@@ -83,6 +84,7 @@ function getScoreMessage(percentage: number) {
 export default function QuizResults({ quizId }: { quizId: string }) {
   void quizId;
   const router = useRouter();
+  const { setPendingPath } = useChatSession();
   const searchParams = useSearchParams();
   const resultId = searchParams.get('resultId');
 
@@ -153,7 +155,7 @@ export default function QuizResults({ quizId }: { quizId: string }) {
           <h2 className="text-xl font-semibold text-foreground">Unable to load result</h2>
           <p className="mt-2 text-sm text-muted-foreground">{error || 'Result not found'}</p>
           <button
-            onClick={() => router.push('/quiz')}
+            onClick={() => { setPendingPath('/quiz'); router.push('/quiz'); }}
             className="mt-5 rounded-[5px] bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
           >
             Back to Quiz
@@ -201,7 +203,7 @@ export default function QuizResults({ quizId }: { quizId: string }) {
         <section className="min-w-0 space-y-4 md:space-y-6">
           <button
             type="button"
-            onClick={() => router.push('/quiz')}
+            onClick={() => { setPendingPath('/quiz'); router.push('/quiz'); }}
             className="hidden items-center gap-2 text-sm font-semibold text-primary transition-colors hover:text-primary/80 md:inline-flex"
           >
             <ArrowLeft className="h-4 w-4" />
@@ -274,7 +276,7 @@ export default function QuizResults({ quizId }: { quizId: string }) {
           </div>
 
           <button
-            onClick={() => router.push('/quiz?new=1')}
+            onClick={() => { setPendingPath('/quiz'); router.push('/quiz?new=1'); }}
             className="hidden min-h-11 w-full items-center justify-center gap-2 rounded-[5px] bg-primary px-4 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 lg:inline-flex"
           >
             <RotateCcw className="h-4 w-4" />

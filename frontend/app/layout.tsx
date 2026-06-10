@@ -7,6 +7,7 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import ProfileGuard from "@/components/ProfileGuard";
 import { QuizCacheProvider } from "@/lib/QuizCacheContext";
 import { ReaderCacheProvider } from "@/lib/ReaderCacheContext";
+import { ChatSessionProvider } from "@/lib/ChatSessionContext";
 import { SessionRefresher } from "@/components/SessionRefresher";
 import SplashScreenRemover from "@/components/SplashScreenRemover";
 import { Toaster } from "sonner";
@@ -103,7 +104,9 @@ export default function RootLayout({
               <ProfileGuard>
                 <SessionRefresher />
                 <ReaderCacheProvider>
-                  <QuizCacheProvider>{children}</QuizCacheProvider>
+                  <QuizCacheProvider>
+                    <ChatSessionProvider>{children}</ChatSessionProvider>
+                  </QuizCacheProvider>
                 </ReaderCacheProvider>
               </ProfileGuard>
             </MaintenanceGuard>

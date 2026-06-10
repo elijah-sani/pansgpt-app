@@ -2,9 +2,11 @@
 import React from "react";
 import { ArrowLeft, Share2 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useChatSession } from "@/lib/ChatSessionContext";
 
 export default function QuizResultsHeader() {
     const router = useRouter();
+    const { setPendingPath } = useChatSession();
     const toggleShareCard = () => {
         window.dispatchEvent(new Event('quiz-results-toggle-share'));
     };
@@ -12,7 +14,7 @@ export default function QuizResultsHeader() {
     return (
         <div className="md:hidden flex items-center px-4 py-3 border-b border-border bg-card/95 backdrop-blur-sm sticky top-0 z-10">
             <button
-                onClick={() => router.push('/quiz')}
+                onClick={() => { setPendingPath('/quiz'); router.push('/quiz'); }}
                 className="p-2 text-foreground hover:bg-accent rounded-lg transition-colors mr-2"
                 aria-label="Back to Quiz"
             >
