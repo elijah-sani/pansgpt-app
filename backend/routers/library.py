@@ -2,8 +2,15 @@
 Library Router: Document Management Endpoints
 Handles upload, list, delete, and update operations for documents.
 """
-from fastapi import APIRouter, HTTPException, Depends, File, UploadFile, Form, BackgroundTasks, Header
-from dependencies import get_current_admin, get_current_user, get_admin_university_scope, User
+from fastapi import APIRouter, HTTPException, Depends, File, UploadFile, Form, BackgroundTasks, Header, Query
+from dependencies import (
+    get_current_admin,
+    get_current_user,
+    get_admin_university_scope,
+    get_current_user_role_info,
+    resolve_admin_workspace_university,
+    User,
+)
 from fastapi.responses import JSONResponse
 from uuid import uuid4
 from pydantic import BaseModel
@@ -17,6 +24,7 @@ import asyncio
 import time
 from functools import partial
 import re
+from datetime import datetime, timezone
 
 # RAG & Extraction Imports
 from google import genai  # v1 SDK
@@ -26,10 +34,13 @@ from PIL import Image
 # from groq import Groq  <-- Removed
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from utils.thinking_token_utils import strip_thinking_tokens
+from .shared import get_current_academic_context
 
 logger = logging.getLogger("PansGPT")
 
 router = APIRouter(prefix="/admin", tags=["library"])
+PROCESSING_CONFLICT_DETAIL = "This document is already being processed. Wait for the current ingestion to finish before retrying."
+STALE_PROCESSING_THRESHOLD_SECONDS = 15 * 60
 
 # These will be injected from main api.py
 drive_service = None
@@ -40,6 +51,10 @@ supabase_service_client = None
 _cancelled_ingestions: set = set()
 verify_api_key_handler = None
 GOOGLE_DRIVE_FOLDER_ID = None
+
+
+class StaleIngestionRun(RuntimeError):
+    pass
 
 async def verify_api_key(x_api_key: str = Header(...)):
     """
@@ -190,6 +205,36 @@ def build_library_target_levels(level: Optional[str]) -> list[str]:
     return [normalized]
 
 
+def normalize_material_status(value: Optional[str], *, default: str = "active") -> str:
+    normalized = (value or default).strip().lower()
+    if normalized not in {"active", "archived"}:
+        raise HTTPException(status_code=400, detail="material_status must be active or archived")
+    return normalized
+
+
+def normalize_semester(value: Optional[str]) -> Optional[str]:
+    raw = (value or "").strip().lower()
+    if not raw:
+        return None
+    compact = re.sub(r"[\s_-]+", " ", raw).strip()
+    aliases = {
+        "first": "first",
+        "first semester": "first",
+        "1st": "first",
+        "1st semester": "first",
+        "one": "first",
+        "second": "second",
+        "second semester": "second",
+        "2nd": "second",
+        "2nd semester": "second",
+        "two": "second",
+    }
+    normalized = aliases.get(compact)
+    if not normalized:
+        raise HTTPException(status_code=400, detail="semester must be first or second")
+    return normalized
+
+
 async def create_library_document_from_existing_drive_file(
     *,
     background_tasks: BackgroundTasks,
@@ -202,10 +247,14 @@ async def create_library_document_from_existing_drive_file(
     university_id: Optional[str] = None,
     uploaded_by_email: Optional[str] = None,
     target_levels: Optional[list[str]] = None,
+    academic_session: Optional[str] = None,
+    semester: Optional[str] = None,
     material_status: Optional[str] = None,
     visibility: Optional[str] = None,
     source_type: Optional[str] = None,
     approval_status: Optional[str] = None,
+    lecturer_submission_id: Optional[str] = None,
+    queue_ingestion: bool = True,
 ) -> dict:
     """
     Reuse the normal library ingestion path for a file that is already in Drive.
@@ -214,14 +263,14 @@ async def create_library_document_from_existing_drive_file(
     """
     if not drive_service:
         raise HTTPException(status_code=503, detail="The file service is temporarily unavailable. Please try again in a moment.")
-
+    
     db = _db_client()
     if not db:
         raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
 
     existing_res = await _execute_with_retry_async(
         lambda: db.table("pans_library")
-        .select("id,embedding_status")
+        .select("id,embedding_status,university_id,source_type")
         .eq("drive_file_id", drive_file_id)
         .limit(1)
         .execute(),
@@ -230,6 +279,45 @@ async def create_library_document_from_existing_drive_file(
     existing_rows = existing_res.data or []
     if existing_rows:
         row = existing_rows[0]
+        existing_university_id = (row.get("university_id") or "").strip() or None
+        requested_university_id = (university_id or "").strip() or None
+        if existing_university_id != requested_university_id:
+            raise HTTPException(
+                status_code=409,
+                detail="A document with this Drive file already exists under a different university. Please review manually.",
+            )
+
+        existing_source_type = (row.get("source_type") or "").strip().lower()
+        if existing_source_type and existing_source_type not in {"lecturer"}:
+            raise HTTPException(
+                status_code=409,
+                detail="A document with this Drive file already exists with an incompatible source. Please review manually.",
+            )
+
+        if lecturer_submission_id:
+            linked_submission_res = await _execute_with_retry_async(
+                lambda: db.table("lecturer_material_submissions")
+                .select("id,university_id")
+                .eq("pans_library_id", row.get("id"))
+                .limit(1)
+                .execute(),
+                f"Check lecturer submission linkage for library doc {row.get('id')}",
+            )
+            linked_rows = linked_submission_res.data or []
+            if linked_rows:
+                linked = linked_rows[0]
+                linked_id = linked.get("id")
+                linked_university_id = (linked.get("university_id") or "").strip() or None
+                if linked_id and linked_id != lecturer_submission_id:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="This library document is already linked to another lecturer submission.",
+                    )
+                if linked_university_id != requested_university_id:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="This library document is linked under a different university.",
+                    )
         return {
             "document_id": row.get("id"),
             "status": row.get("embedding_status") or "pending",
@@ -244,14 +332,12 @@ async def create_library_document_from_existing_drive_file(
         logger.warning("Could not read Drive metadata for lecturer material %s: %s", drive_file_id, exc)
         file_size = 0
 
-    try:
-        content = await asyncio.to_thread(drive_service.download_file_bytes, drive_file_id)
-        if not content:
-            raise ValueError("Downloaded file is empty")
-    except Exception as exc:
-        logger.error("Failed to download lecturer material from Drive %s: %s", drive_file_id, exc)
-        raise HTTPException(status_code=500, detail="Unable to download material from storage. Please try again.")
-
+    # visibility and approval_status are retained as legacy DB columns only.
+    # They no longer control app behavior and are forced to non-blocking values.
+    academic_context = await get_current_academic_context(university_id)
+    default_academic_session = academic_context.get("current_academic_session") if academic_context else None
+    default_semester = academic_context.get("current_semester") if academic_context else None
+    ingestion_run_id = str(uuid4()) if queue_ingestion else None
     data = {
         "title": title,
         "course_code": course_code,
@@ -263,14 +349,20 @@ async def create_library_document_from_existing_drive_file(
         "university_id": university_id,
         "uploaded_by_email": uploaded_by_email,
         "target_levels": target_levels or [],
-        "material_status": material_status or "active",
-        "visibility": visibility or "visible",
+        "academic_session": (academic_session or "").strip() or default_academic_session,
+        "semester": normalize_semester(semester) or default_semester,
+        "material_status": normalize_material_status(material_status),
+        "visibility": "visible",
         "source_type": source_type or "admin",
-        "approval_status": approval_status or "approved",
-        "embedding_status": "processing",
+        "approval_status": "approved",
+        "embedding_status": "processing" if queue_ingestion else "pending",
         "embedding_progress": 0,
-        "total_chunks": 100,
+        "total_chunks": 100 if queue_ingestion else 0,
         "embedding_error": None,
+        "ingestion_run_id": ingestion_run_id,
+        "ingestion_worker_id": None,
+        "ingestion_worker_claimed_at": None,
+        "ingestion_worker_heartbeat_at": None,
     }
 
     response = await _execute_with_retry_async(
@@ -281,18 +373,30 @@ async def create_library_document_from_existing_drive_file(
     if not document_id:
         raise HTTPException(status_code=500, detail="Failed to create library document")
 
-    background_tasks.add_task(
-        process_document_background,
-        content,
-        document_id,
-        file_name,
-        uploaded_by_email,
-    )
-    logger.info("[INFO] Lecturer material ingestion queued for document %s", document_id)
+    if queue_ingestion:
+        try:
+            content = await asyncio.to_thread(drive_service.download_file_bytes, drive_file_id)
+            if not content:
+                raise ValueError("Downloaded file is empty")
+        except Exception as exc:
+            logger.error("Failed to download lecturer material from Drive %s: %s", drive_file_id, exc)
+            raise HTTPException(status_code=500, detail="Unable to download material from storage. Please try again.")
+
+        ingestion_worker_id = str(uuid4())
+        background_tasks.add_task(
+            process_document_background,
+            content,
+            document_id,
+            ingestion_run_id,
+            ingestion_worker_id,
+            file_name,
+            uploaded_by_email,
+        )
+        logger.info("[INFO] Lecturer material ingestion queued for document %s", document_id)
 
     return {
         "document_id": document_id,
-        "status": "processing",
+        "status": "processing" if queue_ingestion else "pending",
         "created": True,
     }
 
@@ -317,6 +421,12 @@ class DocumentUpdate(BaseModel):
     lecturer_name: Optional[str] = None
     topic: Optional[str] = None
     target_levels: Optional[list[str]] = None
+    academic_session: Optional[str] = None
+    semester: Optional[str] = None
+    department: Optional[str] = None
+    faculty: Optional[str] = None
+    material_status: Optional[str] = None
+    version_label: Optional[str] = None
 
 
 class ProgressUpsert(BaseModel):
@@ -387,7 +497,24 @@ def merge_system_into_user_sync(messages: list[dict]) -> list[dict]:
             
     return cleaned_messages
 
-async def _mark_document_failed(document_id: str, reason: str) -> None:
+def _apply_ingestion_run_filter(query, ingestion_run_id: Optional[str]):
+    if ingestion_run_id:
+        return query.eq("ingestion_run_id", ingestion_run_id)
+    return query
+
+
+def _apply_ingestion_worker_filter(query, ingestion_worker_id: Optional[str]):
+    if ingestion_worker_id:
+        return query.eq("ingestion_worker_id", ingestion_worker_id)
+    return query
+
+
+async def _mark_document_failed(
+    document_id: str,
+    reason: str,
+    ingestion_run_id: Optional[str] = None,
+    ingestion_worker_id: Optional[str] = None,
+) -> None:
     """
     Mark a document as failed in Supabase.
     """
@@ -395,18 +522,131 @@ async def _mark_document_failed(document_id: str, reason: str) -> None:
     if not db:
         return
     try:
+        query = db.table("pans_library").update({
+            "embedding_status": "failed",
+            "embedding_error": reason,
+            "last_updated_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", document_id)
+        query = _apply_ingestion_run_filter(query, ingestion_run_id)
+        query = _apply_ingestion_worker_filter(query, ingestion_worker_id)
         await _execute_with_retry_async(
-            lambda: db.table("pans_library").update({
-                "embedding_status": "failed",
-                "embedding_error": reason
-            }).eq("id", document_id).execute(),
+            lambda: query.execute(),
             "Mark document as failed",
         )
     except Exception as update_err:
         logger.error(f"Failed to persist failed status for {document_id}: {update_err}")
 
 
-async def analyze_image_with_llama(image_bytes: bytes, document_id: str, page_num: int) -> str:
+async def _get_document_ingestion_state(document_id: str) -> Optional[dict]:
+    db = _db_client()
+    if not db:
+        return None
+    try:
+        response = await _execute_with_retry_async(
+            lambda: db.table("pans_library")
+            .select("embedding_status,ingestion_run_id,ingestion_worker_id,ingestion_worker_heartbeat_at")
+            .eq("id", document_id)
+            .limit(1)
+            .execute(),
+            f"Fetch worker document state for {document_id}",
+        )
+        rows = response.data or []
+        if not rows:
+            return None
+        row = rows[0]
+        return {
+            "embedding_status": str(row.get("embedding_status") or "").strip().lower() or None,
+            "ingestion_run_id": str(row.get("ingestion_run_id") or "").strip() or None,
+            "ingestion_worker_id": str(row.get("ingestion_worker_id") or "").strip() or None,
+            "ingestion_worker_heartbeat_at": row.get("ingestion_worker_heartbeat_at"),
+        }
+    except Exception as exc:
+        logger.warning("Could not read ingestion state for %s: %s", document_id, exc)
+        return None
+
+
+async def _get_document_embedding_status(document_id: str) -> Optional[str]:
+    state = await _get_document_ingestion_state(document_id)
+    return state.get("embedding_status") if state else None
+
+
+async def _ensure_current_ingestion_run(
+    document_id: str,
+    ingestion_run_id: str,
+    phase: str,
+    ingestion_worker_id: Optional[str] = None,
+) -> None:
+    state = await _get_document_ingestion_state(document_id)
+    if not state:
+        raise StaleIngestionRun(f"Document {document_id} no longer exists during {phase}")
+    current_status = state.get("embedding_status")
+    current_run_id = state.get("ingestion_run_id")
+    current_worker_id = state.get("ingestion_worker_id")
+    if (
+        current_status != "processing"
+        or current_run_id != ingestion_run_id
+        or (ingestion_worker_id and current_worker_id != ingestion_worker_id)
+    ):
+        raise StaleIngestionRun(
+            f"Stale ingestion worker for {document_id} stopped during {phase}; "
+            f"status={current_status}, current_run_id={current_run_id}, "
+            f"current_worker_id={current_worker_id}, worker_run_id={ingestion_run_id}, worker_id={ingestion_worker_id}"
+        )
+
+
+async def _claim_document_ingestion_worker(document_id: str, ingestion_run_id: str, ingestion_worker_id: str) -> bool:
+    db = _db_client()
+    if not db:
+        return False
+    response = await _execute_with_retry_async(
+        lambda: db.rpc(
+            "claim_document_ingestion_worker",
+            {
+                "p_document_id": document_id,
+                "p_ingestion_run_id": ingestion_run_id,
+                "p_worker_id": ingestion_worker_id,
+            },
+        ).execute(),
+        f"Claim ingestion worker {ingestion_worker_id} for document {document_id}",
+    )
+    rows = response.data or []
+    return bool(rows and rows[0].get("claimed"))
+
+
+async def _heartbeat_document_ingestion_worker(document_id: str, ingestion_run_id: str, ingestion_worker_id: str) -> bool:
+    db = _db_client()
+    if not db:
+        return False
+    try:
+        response = await _execute_with_retry_async(
+            lambda: db.rpc(
+                "heartbeat_document_ingestion_worker",
+                {
+                    "p_document_id": document_id,
+                    "p_ingestion_run_id": ingestion_run_id,
+                    "p_worker_id": ingestion_worker_id,
+                },
+            ).execute(),
+            f"Heartbeat ingestion worker {ingestion_worker_id} for document {document_id}",
+        )
+        data = response.data
+        if isinstance(data, bool):
+            return data
+        if isinstance(data, list) and data:
+            return bool(data[0])
+        return bool(data)
+    except Exception as exc:
+        logger.warning("Worker heartbeat failed for document %s worker %s: %s", document_id, ingestion_worker_id, exc)
+        return False
+
+
+async def analyze_image_with_llama(
+    image_bytes: bytes,
+    document_id: str,
+    page_num: int,
+    ingestion_run_id: Optional[str] = None,
+    ingestion_worker_id: Optional[str] = None,
+) -> str:
     """Sends image bytes to Gemma Vision (via Google) for a concise description.
     Retries with capped exponential backoff on transient/rate-limit failures."""
     if not vision_client:
@@ -455,7 +695,7 @@ async def analyze_image_with_llama(image_bytes: bytes, document_id: str, page_nu
                     f"(document={document_id}, page={page_num}): {e}"
                 )
                 logger.critical(failure_reason)
-                await _mark_document_failed(document_id, failure_reason)
+                await _mark_document_failed(document_id, failure_reason, ingestion_run_id, ingestion_worker_id)
                 raise RuntimeError(failure_reason)
 
             delay = VISION_RETRY_BASE_DELAY_SECONDS * (2 ** attempt)
@@ -502,49 +742,62 @@ def process_page_images(page) -> list[bytes]:
 # Simple in-memory tracker to avoid hitting DB too often
 _progress_cache = {}
 
-def _update_progress(doc_id: str, current_step: int, total_steps: int = 100):
+def _update_progress(
+    doc_id: str,
+    current_step: int,
+    total_steps: int = 100,
+    ingestion_run_id: Optional[str] = None,
+    ingestion_worker_id: Optional[str] = None,
+) -> bool:
     """
     Updates Supabase progress with throttling (only saves every 5%) and retry logic.
     """
     try:
         db = _db_client()
         if not db:
-            return
+            return False
         # 1. Calculate Percentage
-        if total_steps == 0: return
+        if total_steps == 0: return False
         # Support both (id, 42) where 42 is % and (id, 5, 10) where 5/10 is 50%
         raw_progress = (current_step / total_steps) * 100
         new_progress = max(0, min(100, int(raw_progress)))
 
         # 2. Throttle: Don't write if we haven't moved much
-        last_saved = _progress_cache.get(doc_id, -1)
+        cache_key = f"{doc_id}:{ingestion_run_id or 'default'}"
+        last_saved = _progress_cache.get(cache_key, -1)
         
         # Only save if:
         # a) We jumped at least 5%
         # b) We are finished (100%)
         # c) It's the very first update
         if new_progress < 100 and (new_progress - last_saved) < 5:
-            return
+            return True
 
         # 3. Retry Logic for Supabase
         try:
+            query = db.table('pans_library').update({
+                'embedding_progress': new_progress,
+                'last_updated_at': datetime.now(timezone.utc).isoformat(),
+            }).eq('id', doc_id)
+            query = _apply_ingestion_run_filter(query, ingestion_run_id)
+            query = _apply_ingestion_worker_filter(query, ingestion_worker_id)
             _execute_with_retry_sync(
-                lambda: db.table('pans_library').update({
-                    'embedding_progress': new_progress
-                }).eq('id', doc_id).execute(),
+                lambda: query.execute(),
                 f"Update embedding progress for {doc_id}",
             )
             # Update cache ONLY after successful commit
-            _progress_cache[doc_id] = new_progress
+            _progress_cache[cache_key] = new_progress
+            return True
         except Exception as e:
             logger.warning(f"[WARNING] Progress update failed for {doc_id}: {e}")
+            return False
 
     except Exception as e:
         logger.error(f"[ERROR] Progress Calculation Error: {e}")
-        pass
+        return False
 
 
-def extract_hybrid_content(file_content: bytes, document_id: str):
+def extract_hybrid_content(file_content: bytes, document_id: str, ingestion_run_id: str, ingestion_worker_id: str):
     """
     Main ingestion: Text via fitz + Vision via Llama for images.
     Updates progress in real-time as work completes.
@@ -573,7 +826,13 @@ def extract_hybrid_content(file_content: bytes, document_id: str):
         # Update progress per page
         steps_done += 1
         extraction_pct = int((steps_done / max(total_steps, 1)) * 40)  # 0-40%
-        _update_progress(document_id, extraction_pct)
+        if not _update_progress(
+            document_id,
+            extraction_pct,
+            ingestion_run_id=ingestion_run_id,
+            ingestion_worker_id=ingestion_worker_id,
+        ):
+            raise StaleIngestionRun(f"Progress update rejected during extraction for {document_id}")
         logger.info(f"[INFO] Page {page_num + 1}/{total_pages} text extracted ({extraction_pct}%)")
 
         # Queue valid images for sequential vision analysis
@@ -587,7 +846,13 @@ def extract_hybrid_content(file_content: bytes, document_id: str):
 
 
 # --- RAG Processing Function ---
-async def process_and_embed(file_content: bytes, document_id: str, file_name: str = "document.pdf"):
+async def process_and_embed(
+    file_content: bytes,
+    document_id: str,
+    ingestion_run_id: str,
+    ingestion_worker_id: str,
+    file_name: str = "document.pdf",
+):
     """
     Hybrid Extraction Strategy with Real-Time Progress:
     Phase 1 (0-40%):  Extract text + analyze images via Llama Vision.
@@ -599,7 +864,8 @@ async def process_and_embed(file_content: bytes, document_id: str, file_name: st
         db = _db_client()
         if not db:
             raise RuntimeError("Database client is not configured")
-        logger.info(f"[INFO] WORKER STARTED: Processing document {document_id}")
+        await _ensure_current_ingestion_run(document_id, ingestion_run_id, "worker start", ingestion_worker_id)
+        logger.info(f"[INFO] WORKER STARTED: Processing document {document_id} run {ingestion_run_id} worker {ingestion_worker_id}")
         
         # 1. Setup: Status is already set to 'processing' by the upload endpoint.
         
@@ -608,16 +874,39 @@ async def process_and_embed(file_content: bytes, document_id: str, file_name: st
         # We run the ENTIRE function in a separate thread.
         try:
             logger.info("[INFO] Starting extraction in separate thread...")
-            full_text, pending_images, steps_done, total_steps = await asyncio.to_thread(extract_hybrid_content, file_content, document_id)
+            full_text, pending_images, steps_done, total_steps = await asyncio.to_thread(
+                extract_hybrid_content,
+                file_content,
+                document_id,
+                ingestion_run_id,
+                ingestion_worker_id,
+            )
             # --- PHASE 2: Image Analysis (sequential + throttled, async-safe) ---
             for page_num, img_bytes in pending_images:
-                description = await analyze_image_with_llama(img_bytes, document_id, page_num)
+                await _ensure_current_ingestion_run(document_id, ingestion_run_id, "image analysis", ingestion_worker_id)
+                await _heartbeat_document_ingestion_worker(document_id, ingestion_run_id, ingestion_worker_id)
+                description = await analyze_image_with_llama(
+                    img_bytes,
+                    document_id,
+                    page_num,
+                    ingestion_run_id,
+                    ingestion_worker_id,
+                )
                 if description:
                     full_text += f"\n[From Page {page_num}] {description}"
 
                 steps_done += 1
                 extraction_pct = int((steps_done / max(total_steps, 1)) * 40)  # 0-40%
-                await asyncio.to_thread(_update_progress, document_id, extraction_pct)
+                progress_saved = await asyncio.to_thread(
+                    _update_progress,
+                    document_id,
+                    extraction_pct,
+                    100,
+                    ingestion_run_id,
+                    ingestion_worker_id,
+                )
+                if not progress_saved:
+                    raise StaleIngestionRun(f"Progress update rejected during image analysis for {document_id}")
                 logger.info(f"Image done ({steps_done}/{total_steps}, {extraction_pct}%)")
 
                 # Throttle to stay under provider rate limits without blocking the event loop.
@@ -631,7 +920,10 @@ async def process_and_embed(file_content: bytes, document_id: str, file_name: st
             
         except Exception as e:
             logger.error(f"Hybrid extraction failed: {e}")
-            await _mark_document_failed(document_id, str(e))
+            if isinstance(e, StaleIngestionRun):
+                logger.info("[INFO] %s", e)
+                return
+            await _mark_document_failed(document_id, str(e), ingestion_run_id, ingestion_worker_id)
             return
         
         # 3. Chunk text (CPU Heavy)
@@ -644,7 +936,16 @@ async def process_and_embed(file_content: bytes, document_id: str, file_name: st
         
         logger.info(f"[INFO] Split into {len(chunks)} chunks")
         # Wrap progress update
-        await asyncio.to_thread(_update_progress, document_id, 42)
+        progress_saved = await asyncio.to_thread(
+            _update_progress,
+            document_id,
+            42,
+            100,
+            ingestion_run_id,
+            ingestion_worker_id,
+        )
+        if not progress_saved:
+            raise StaleIngestionRun(f"Progress update rejected after chunking for {document_id}")
         
         # 4. Embedding Loop  42%  100%
         failed_chunks_count = 0
@@ -655,12 +956,11 @@ async def process_and_embed(file_content: bytes, document_id: str, file_name: st
             if document_id in _cancelled_ingestions:
                 _cancelled_ingestions.discard(document_id)
                 logger.info(f"[INFO] Ingestion cancelled by admin for {document_id} at chunk {idx}/{len(chunks)}")
-                await _execute_with_retry_async(
-                    lambda: db.table('pans_library').update({
-                        'embedding_status': 'failed',
-                        'embedding_error': f'Cancelled by admin at chunk {idx} of {len(chunks)}.',
-                    }).eq('id', document_id).execute(),
-                    "Mark ingestion as cancelled",
+                await _mark_document_failed(
+                    document_id,
+                    f'Cancelled by admin at chunk {idx} of {len(chunks)}.',
+                    ingestion_run_id,
+                    ingestion_worker_id,
                 )
                 return
             # --- Rate-limit aware embedding with 429 retry ---
@@ -671,6 +971,8 @@ async def process_and_embed(file_content: bytes, document_id: str, file_name: st
                     if not gemini_client:
                         raise ValueError("Gemini Client not initialized")
 
+                    await _ensure_current_ingestion_run(document_id, ingestion_run_id, f"chunk {idx+1} embed", ingestion_worker_id)
+                    await _heartbeat_document_ingestion_worker(document_id, ingestion_run_id, ingestion_worker_id)
                     response = await asyncio.to_thread(
                         partial(
                             gemini_client.models.embed_content,
@@ -681,15 +983,19 @@ async def process_and_embed(file_content: bytes, document_id: str, file_name: st
                     )
 
                     embedding = response.embeddings[0].values
+                    await _ensure_current_ingestion_run(document_id, ingestion_run_id, f"chunk {idx+1} insert", ingestion_worker_id)
 
                     await _execute_with_retry_async(
                         lambda: db.table('document_embeddings').insert({
                             'document_id': document_id,
+                            'ingestion_run_id': ingestion_run_id,
+                            'ingestion_worker_id': ingestion_worker_id,
                             'content': chunk_text,
                             'embedding': embedding
                         }).execute(),
                         f"Insert document embedding chunk {idx+1}",
                     )
+                    await _heartbeat_document_ingestion_worker(document_id, ingestion_run_id, ingestion_worker_id)
 
                     logger.info(f"[INFO] Chunk {idx+1}/{len(chunks)} embedded")
                     embed_success = True
@@ -720,7 +1026,16 @@ async def process_and_embed(file_content: bytes, document_id: str, file_name: st
 
             # Update progress: map chunk index to 42% → 99%
             embed_pct = 42 + int(((idx + 1) / len(chunks)) * 58)
-            await asyncio.to_thread(_update_progress, document_id, embed_pct)
+            progress_saved = await asyncio.to_thread(
+                _update_progress,
+                document_id,
+                embed_pct,
+                100,
+                ingestion_run_id,
+                ingestion_worker_id,
+            )
+            if not progress_saved:
+                raise StaleIngestionRun(f"Progress update rejected after chunk {idx+1} for {document_id}")
 
         # 5. Final Status
         final_status = 'completed'
@@ -735,36 +1050,41 @@ async def process_and_embed(file_content: bytes, document_id: str, file_name: st
                 final_error = f"Completed with {failed_chunks_count} failed chunks.\n{error_log}"
         
         # Wrap final update
+        await _ensure_current_ingestion_run(document_id, ingestion_run_id, "final status", ingestion_worker_id)
         await _execute_with_retry_async(
             lambda: db.table('pans_library').update({
                 'embedding_status': final_status,
                 'embedding_progress': 100,  # 100% done
                 'total_chunks': len(chunks),
-                'embedding_error': final_error
-            }).eq('id', document_id).execute(),
+                'embedding_error': final_error,
+                'failed_chunks_count': failed_chunks_count,
+                'error_log': error_log or None,
+                'last_updated_at': datetime.now(timezone.utc).isoformat(),
+            })
+            .eq('id', document_id)
+            .eq('ingestion_run_id', ingestion_run_id)
+            .eq('ingestion_worker_id', ingestion_worker_id)
+            .execute(),
             f"Finalize ingestion status for {document_id}",
         )
         
         logger.info(f"[INFO] RAG ingestion finished for {document_id}. Status: {final_status}")
         
+    except StaleIngestionRun as e:
+        logger.info("[INFO] %s", e)
     except Exception as e:
         logger.error(f"[ERROR] RAG ingestion CRITICAL FAILURE for {document_id}: {e}")
         try:
             error_msg = str(e)
-            # Wrap error update
-            await _execute_with_retry_async(
-                lambda: db.table('pans_library').update({
-                    'embedding_status': 'failed',
-                    'embedding_error': f"Critical failures: {error_msg}"
-                }).eq('id', document_id).execute(),
-                f"Persist critical ingestion failure for {document_id}",
-            )
+            await _mark_document_failed(document_id, f"Critical failures: {error_msg}", ingestion_run_id, ingestion_worker_id)
         except Exception as update_err:
             logger.error(f"[ERROR] Failed to update error status: {update_err}")
 
 async def process_document_background(
     file_content: bytes,
     document_id: str,
+    ingestion_run_id: str,
+    ingestion_worker_id: str,
     file_name: str = "document.pdf",
     uploaded_by: Optional[str] = None,
 ) -> None:
@@ -772,11 +1092,41 @@ async def process_document_background(
     Background task wrapper for heavy document parsing/chunking/embedding work.
     Guarantees a terminal status update on failure.
     """
+    queued_worker_id = ingestion_worker_id
+    ingestion_worker_id = str(uuid4())
     try:
-        await process_and_embed(file_content, document_id, file_name)
+        claimed = await _claim_document_ingestion_worker(document_id, ingestion_run_id, ingestion_worker_id)
+        if not claimed:
+            logger.info(
+                "[INFO] Duplicate ingestion worker skipped for document %s run %s worker %s queued_worker %s",
+                document_id,
+                ingestion_run_id,
+                ingestion_worker_id,
+                queued_worker_id,
+            )
+            return
+        state = await _get_document_ingestion_state(document_id)
+        current_status = state.get("embedding_status") if state else None
+        current_run_id = state.get("ingestion_run_id") if state else None
+        current_worker_id = state.get("ingestion_worker_id") if state else None
+        if current_status != "processing" or current_run_id != ingestion_run_id or current_worker_id != ingestion_worker_id:
+            logger.info(
+                "[INFO] Skipping ingestion worker for %s because status/run/worker is %s/%s/%s, worker run/id is %s/%s queued_worker %s",
+                document_id,
+                current_status or "missing",
+                current_run_id or "missing",
+                current_worker_id or "missing",
+                ingestion_run_id,
+                ingestion_worker_id,
+                queued_worker_id,
+            )
+            return
+        await process_and_embed(file_content, document_id, ingestion_run_id, ingestion_worker_id, file_name)
+    except StaleIngestionRun as e:
+        logger.info("[INFO] %s", e)
     except Exception as e:
         logger.error(f"[ERROR] Background processing failed for {document_id}: {e}")
-        await _mark_document_failed(document_id, str(e))
+        await _mark_document_failed(document_id, str(e), ingestion_run_id, ingestion_worker_id)
 
 # --- Endpoints ---
 @router.post("/upload", dependencies=[Depends(verify_api_key)])
@@ -790,6 +1140,9 @@ async def admin_upload_document(
     uploaded_by: Optional[str] = Form(None),
     university_id: Optional[str] = Form(None),
     target_levels: Optional[str] = Form(None),  # JSON-encoded list e.g. '["400lvl","500lvl"]'
+    academic_session: Optional[str] = Form(None),
+    semester: Optional[str] = Form(None),
+    material_status: str = Form("active"),
     current_user: User = Depends(get_current_admin),
 ):
     """
@@ -800,13 +1153,19 @@ async def admin_upload_document(
 
     if not drive_service:
         raise HTTPException(status_code=503, detail="The file service is temporarily unavailable. Please try again in a moment.")
+    if not (GOOGLE_DRIVE_FOLDER_ID or "").strip():
+        raise HTTPException(status_code=503, detail="Google Drive upload folder is not configured.")
     
     db = _db_client()
     if not db:
         raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
 
-    admin_scope = await _get_admin_scope(current_user)
-    scoped_university_id = (admin_scope or (university_id or "").strip() or None)
+    scoped_university_id = await resolve_admin_workspace_university(current_user, university_id)
+    normalized_material_status = normalize_material_status(material_status)
+    academic_context = await get_current_academic_context(scoped_university_id)
+    default_academic_session = academic_context.get("current_academic_session") if academic_context else None
+    default_semester = academic_context.get("current_semester") if academic_context else None
+    normalized_semester = normalize_semester(semester) or default_semester
 
     # 1. Prepare File for Streaming (Don't read into memory yet)
     try:
@@ -858,6 +1217,7 @@ async def admin_upload_document(
 
     # 5. Insert into Supabase
     try:
+        ingestion_run_id = str(uuid4())
         data = {
             "title": title,
             "course_code": course_code,
@@ -869,11 +1229,20 @@ async def admin_upload_document(
             "university_id": scoped_university_id,
             "uploaded_by_email": uploaded_by,
             "target_levels": levels_list,
+            "academic_session": (academic_session or "").strip() or default_academic_session,
+            "semester": normalized_semester,
+            "material_status": normalized_material_status,
+            "visibility": "visible",
+            "approval_status": "approved",
             # Initialize status immediately
             "embedding_status": "processing",
             "embedding_progress": 0,
             "total_chunks": 100,
-            "embedding_error": None
+            "embedding_error": None,
+            "ingestion_run_id": ingestion_run_id,
+            "ingestion_worker_id": None,
+            "ingestion_worker_claimed_at": None,
+            "ingestion_worker_heartbeat_at": None,
         }
 
         response = await _execute_with_retry_async(
@@ -887,11 +1256,35 @@ async def admin_upload_document(
         if not document_id:
             raise HTTPException(status_code=500, detail="Failed to create document record")
 
+        try:
+            role_info = await get_current_user_role_info(current_user)
+            if role_info.is_super_admin:
+                await _execute_with_retry_async(
+                    lambda: db.table("access_control_audit_logs").insert({
+                        "actor_user_id": current_user.id,
+                        "university_id": scoped_university_id,
+                        "action": "super_admin_library_upload_override",
+                        "target_type": "pans_library",
+                        "target_id": document_id,
+                        "metadata": {
+                            "course_code": course_code,
+                            "title": title,
+                            "file_name": file.filename,
+                        },
+                    }).execute(),
+                    "Log super-admin library upload override",
+                )
+        except Exception as audit_exc:
+            logger.warning("Super-admin upload override audit log failed for document %s: %s", document_id, audit_exc)
+
         # 5. Offload heavy parsing/chunking/embedding to background task.
+        ingestion_worker_id = str(uuid4())
         background_tasks.add_task(
             process_document_background,
             content,
             document_id,
+            ingestion_run_id,
+            ingestion_worker_id,
             file.filename,
             uploaded_by,
         )
@@ -912,14 +1305,17 @@ async def admin_upload_document(
         raise HTTPException(status_code=500, detail="Unable to save the document. Please try again.")
 
 @router.get("/documents", dependencies=[Depends(verify_api_key)])
-async def admin_list_documents(current_user: User = Depends(get_current_admin)):
+async def admin_list_documents(
+    university_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_admin),
+):
     """
     Admin Endpoint: List all documents from Supabase.
     """
     db = _db_client()
     if not db:
         raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
-    admin_scope = await _get_admin_scope(current_user)
+    admin_scope = await resolve_admin_workspace_university(current_user, university_id)
     
     try:
         query = db.table("pans_library").select("*")
@@ -934,7 +1330,10 @@ async def admin_list_documents(current_user: User = Depends(get_current_admin)):
         raise HTTPException(status_code=500, detail="Unable to load documents. Please try again.")
 
 @router.post("/documents/repair-progress", dependencies=[Depends(verify_api_key)])
-async def admin_repair_document_progress(current_user: User = Depends(get_current_admin)):
+async def admin_repair_document_progress(
+    university_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_admin),
+):
     """
     Admin utility: force embedding_progress=100 for rows already marked as completed.
     Useful for repairing stale progress values from earlier runs.
@@ -942,7 +1341,7 @@ async def admin_repair_document_progress(current_user: User = Depends(get_curren
     db = _db_client()
     if not db:
         raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
-    admin_scope = await _get_admin_scope(current_user)
+    admin_scope = await resolve_admin_workspace_university(current_user, university_id)
 
     try:
         query = db.table("pans_library").select("id, embedding_status, embedding_progress").eq("embedding_status", "completed")
@@ -987,7 +1386,11 @@ async def admin_repair_document_progress(current_user: User = Depends(get_curren
         raise HTTPException(status_code=500, detail="Unable to repair document progress. Please try again.")
 
 @router.delete("/documents/{doc_id}", dependencies=[Depends(verify_api_key)])
-async def admin_delete_document(doc_id: str, current_user: User = Depends(get_current_admin)):
+async def admin_delete_document(
+    doc_id: str,
+    university_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_admin),
+):
     """
     Admin Endpoint: Delete document from Google Drive and Supabase.
     """
@@ -997,12 +1400,27 @@ async def admin_delete_document(doc_id: str, current_user: User = Depends(get_cu
     db = _db_client()
     if not db:
         raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
-    admin_scope = await _get_admin_scope(current_user)
+    admin_scope = await resolve_admin_workspace_university(current_user, university_id)
         
     try:
         # 1. Fetch drive_file_id from Supabase
         document_row = await _get_document_row_for_admin(db, doc_id, admin_scope, "id,drive_file_id,university_id")
         drive_file_id = document_row['drive_file_id']
+
+        linked_submission_res = await _execute_with_retry_async(
+            lambda: db.table("lecturer_material_submissions")
+            .select("id")
+            .eq("pans_library_id", doc_id)
+            .eq("status", "approved")
+            .limit(1)
+            .execute(),
+            f"Check approved lecturer submission link for document {doc_id}",
+        )
+        if linked_submission_res.data:
+            raise HTTPException(
+                status_code=409,
+                detail="This document is linked to an approved lecturer submission. Archive it instead. Hard deletion is reserved for controlled cleanup.",
+            )
 
         # 2. Delete from Drive (with Retry & Graceful Degradation)
         drive_deletion_success = False
@@ -1061,17 +1479,35 @@ async def admin_delete_document(doc_id: str, current_user: User = Depends(get_cu
         raise HTTPException(status_code=500, detail="Unable to complete the delete operation. Please try again.")
 
 @router.patch("/documents/{doc_id}", dependencies=[Depends(verify_api_key)])
-async def admin_update_document(doc_id: str, updates: DocumentUpdate, current_user: User = Depends(get_current_admin)):
+async def admin_update_document(
+    doc_id: str,
+    updates: DocumentUpdate,
+    university_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_admin),
+):
     """
     Admin Endpoint: Update document metadata in Supabase.
     """
     db = _db_client()
     if not db:
         raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
-    admin_scope = await _get_admin_scope(current_user)
+    admin_scope = await resolve_admin_workspace_university(current_user, university_id)
 
     try:
-        update_data = {k: v for k, v in updates.dict().items() if v is not None}
+        raw_updates = updates.dict()
+        provided_fields = getattr(updates, "model_fields_set", getattr(updates, "__fields_set__", set()))
+        nullable_clear_fields = {"academic_session", "semester"}
+        update_data = {
+            k: v
+            for k, v in raw_updates.items()
+            if v is not None or (k in nullable_clear_fields and k in provided_fields)
+        }
+        if "material_status" in update_data:
+            update_data["material_status"] = normalize_material_status(update_data.get("material_status"))
+        if "semester" in update_data:
+            update_data["semester"] = normalize_semester(update_data.get("semester"))
+        if "academic_session" in update_data:
+            update_data["academic_session"] = (update_data.get("academic_session") or "").strip() or None
         
         if not update_data:
             raise HTTPException(status_code=400, detail="No updates provided")
@@ -1090,6 +1526,8 @@ async def admin_update_document(doc_id: str, updates: DocumentUpdate, current_us
             
         return {"message": "Document updated successfully", "data": response.data}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Update Error: {e}")
         raise HTTPException(status_code=500, detail="Unable to update the document. Please try again.")
@@ -1097,6 +1535,7 @@ async def admin_update_document(doc_id: str, updates: DocumentUpdate, current_us
 @router.post("/documents/{document_id}/cancel", dependencies=[Depends(verify_api_key)])
 async def cancel_document_ingestion(
     document_id: str,
+    university_id: Optional[str] = Query(None),
     current_user: User = Depends(get_current_admin),
 ):
     """
@@ -1107,14 +1546,28 @@ async def cancel_document_ingestion(
     db = _db_client()
     if not db:
         raise HTTPException(status_code=503, detail="The service is temporarily unavailable.")
-    admin_scope = await _get_admin_scope(current_user)
+    admin_scope = await resolve_admin_workspace_university(current_user, university_id)
 
     # Verify document exists and is currently processing
     try:
-        document_row = await _get_document_row_for_admin(db, document_id, admin_scope, "id,university_id,embedding_status")
+        document_row = await _get_document_row_for_admin(db, document_id, admin_scope, "id,university_id,embedding_status,ingestion_run_id")
         status = document_row.get('embedding_status')
         if status != 'processing':
             return {"status": "skipped", "reason": f"Document is not processing (current status: {status})"}
+        cancel_query = db.table("pans_library").update({
+            "embedding_status": "failed",
+            "embedding_error": "Cancelled by admin.",
+            "ingestion_run_id": None,
+            "ingestion_worker_id": None,
+            "ingestion_worker_claimed_at": None,
+            "ingestion_worker_heartbeat_at": None,
+            "last_updated_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", document_id).eq("embedding_status", "processing")
+        cancel_query = _apply_ingestion_run_filter(cancel_query, document_row.get("ingestion_run_id"))
+        await _execute_with_retry_async(
+            lambda: cancel_query.execute(),
+            f"Invalidate ingestion run for cancelled document {document_id}",
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -1127,7 +1580,11 @@ async def cancel_document_ingestion(
 
 
 @router.get("/documents/{document_id}/status", dependencies=[Depends(verify_api_key)])
-async def get_document_status(document_id: str, current_user: User = Depends(get_current_admin)):
+async def get_document_status(
+    document_id: str,
+    university_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_admin),
+):
     """
     Get the real-time embedding status of a document.
     Frontend polls this to update progress bars.
@@ -1135,7 +1592,7 @@ async def get_document_status(document_id: str, current_user: User = Depends(get
     db = _db_client()
     if not db:
         raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
-    admin_scope = await _get_admin_scope(current_user)
+    admin_scope = await resolve_admin_workspace_university(current_user, university_id)
     
     try:
         await _get_document_row_for_admin(db, document_id, admin_scope, "id,university_id")
@@ -1252,7 +1709,13 @@ async def upsert_reading_progress(
 
 
 @router.post("/documents/{doc_id}/reembed", dependencies=[Depends(verify_api_key)])
-async def admin_reembed_document(doc_id: str, background_tasks: BackgroundTasks, current_user: User = Depends(get_current_admin)):
+async def admin_reembed_document(
+    doc_id: str,
+    background_tasks: BackgroundTasks,
+    allow_stale_processing_retry: bool = Query(False),
+    university_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_admin),
+):
     """
     Admin Endpoint: Re-trigger embedding for a document that has failed or partial chunks.
     Downloads the PDF from Google Drive and re-runs the full ingestion pipeline.
@@ -1264,7 +1727,7 @@ async def admin_reembed_document(doc_id: str, background_tasks: BackgroundTasks,
     db = _db_client()
     if not db:
         raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
-    admin_scope = await _get_admin_scope(current_user)
+    admin_scope = await resolve_admin_workspace_university(current_user, university_id)
 
     # 1. Fetch document metadata
     try:
@@ -1279,6 +1742,12 @@ async def admin_reembed_document(doc_id: str, background_tasks: BackgroundTasks,
     except Exception as e:
         raise HTTPException(status_code=500, detail="Unable to fetch document. Please try again.")
 
+    if (doc.get("embedding_status") or "").strip().lower() == "processing" and not allow_stale_processing_retry:
+        raise HTTPException(
+            status_code=409,
+            detail=PROCESSING_CONFLICT_DETAIL,
+        )
+
     # 2. Download PDF from Google Drive
     try:
         file_content = await asyncio.to_thread(
@@ -1291,31 +1760,46 @@ async def admin_reembed_document(doc_id: str, background_tasks: BackgroundTasks,
         logger.error(f"[ERROR] Failed to download {doc_id} from Drive: {e}")
         raise HTTPException(status_code=500, detail="Unable to download file from storage. Please try again.")
 
-    # 3. Clear existing embeddings to avoid duplicates
+    # 3. Atomically clear embeddings and mark the document ready for one new worker.
     try:
-        await _execute_with_retry_async(
-            lambda: db.table("document_embeddings").delete().eq("document_id", doc_id).execute(),
-            f"Clear embeddings for reembed {doc_id}",
+        rpc_response = await _execute_with_retry_async(
+            lambda: db.rpc(
+                "prepare_document_reembed",
+                {
+                    "p_document_id": doc_id,
+                    "p_allow_stale_processing_retry": allow_stale_processing_retry,
+                },
+            ).execute(),
+            f"Prepare reembed for {doc_id}",
         )
-        logger.info(f"[INFO] Cleared existing embeddings for {doc_id}")
+        rpc_rows = rpc_response.data or []
+        if not rpc_rows or not rpc_rows[0].get("should_queue_ingestion"):
+            raise HTTPException(status_code=500, detail="Retry preparation did not return a queueable document")
+        ingestion_run_id = str(rpc_rows[0].get("ingestion_run_id") or "").strip()
+        if not ingestion_run_id:
+            raise HTTPException(status_code=500, detail="Retry preparation did not return an ingestion run token")
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.warning(f"[WARNING] Could not clear existing embeddings for {doc_id}: {e}")
+        message = str(e)
+        if "already being processed" in message:
+            raise HTTPException(
+                status_code=409,
+                detail=PROCESSING_CONFLICT_DETAIL,
+            )
+        if "Document not found" in message:
+            raise HTTPException(status_code=404, detail="Document not found")
+        logger.error(f"[ERROR] Failed to prepare reembed for {doc_id}: {e}")
+        raise HTTPException(status_code=500, detail="Unable to prepare document retry. Please try again.")
 
-    # 4. Reset status to processing
-    await _execute_with_retry_async(
-        lambda: db.table("pans_library").update({
-            "embedding_status": "processing",
-            "embedding_progress": 0,
-            "embedding_error": None,
-        }).eq("id", doc_id).execute(),
-        f"Reset status for reembed {doc_id}",
-    )
-
-    # 5. Queue background reprocessing
+    # 4. Queue background reprocessing only after the atomic preparation succeeds.
+    ingestion_worker_id = str(uuid4())
     background_tasks.add_task(
         process_document_background,
         file_content,
         doc_id,
+        ingestion_run_id,
+        ingestion_worker_id,
         doc.get("file_name", "document.pdf"),
     )
 

@@ -1,20 +1,24 @@
 'use client';
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 
 import {
     Search, Filter, Plus, FileText, Trash2, Pencil, Square,
     AlertCircle, Loader2,
-    UploadCloud, HardDrive, BookOpen, X, ChevronRight,
-    Sparkles, Clock
+    UploadCloud, HardDrive, BookOpen, X,
+    Sparkles, Clock, MoreVertical, Archive
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '@/lib/supabase';
 import { SystemStatusBadge } from '../../../components/SystemStatusBadge';
 import { api } from '@/lib/api';
+import { getAdminWorkspaceUniversityId } from '@/lib/admin-workspace';
+import { fetchBootstrap } from '@/lib/bootstrap-cache';
 
 // --- Types ---
+type MaterialStatus = 'active' | 'archived';
+
 interface Document {
     id: string;
     drive_file_id: string;
@@ -31,16 +35,15 @@ interface Document {
     embedding_status: 'pending' | 'processing' | 'completed' | 'failed';
     embedding_progress: number;
     embedding_error?: string; // For partial success or failure details
+    ingestion_worker_heartbeat_at?: string | null;
     total_chunks: number;
     target_levels?: string[];
     academic_session?: string;
     semester?: string;
     department?: string;
     faculty?: string;
-    material_status?: string;
-    visibility?: string;
+    material_status?: MaterialStatus;
     source_type?: string;
-    approval_status?: string;
     version_label?: string;
 }
 
@@ -70,6 +73,14 @@ interface FormInputProps {
     onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }
 
+interface MobileQuickStatCardProps {
+    icon: LucideIcon;
+    label: string;
+    value: string;
+    color: string;
+    bg: string;
+}
+
 interface FormSelectProps {
     label: string;
     name: string;
@@ -80,48 +91,106 @@ interface FormSelectProps {
 
 const MATERIAL_STATUS_OPTIONS = [
     { value: 'active', label: 'Active' },
-    { value: 'archived', label: 'Archived' },
-    { value: 'hidden', label: 'Hidden' },
-    { value: 'deprecated', label: 'Deprecated' }
-];
-
-const VISIBILITY_OPTIONS = [
-    { value: 'visible', label: 'Visible' },
-    { value: 'hidden', label: 'Hidden' }
-];
-
-const APPROVAL_STATUS_OPTIONS = [
-    { value: 'approved', label: 'Approved' },
-    { value: 'pending', label: 'Pending' },
-    { value: 'rejected', label: 'Rejected' }
+    { value: 'archived', label: 'Archived' }
 ];
 
 const SEMESTER_OPTIONS = [
     { value: '', label: 'Not set' },
-    { value: 'First', label: 'First' },
-    { value: 'Second', label: 'Second' }
+    { value: 'first', label: 'First Semester' },
+    { value: 'second', label: 'Second Semester' }
 ];
+
+function normalizeMaterialStatus(value?: string | null): MaterialStatus {
+    return value === 'archived' ? 'archived' : 'active';
+}
+
+function normalizeSemester(value?: string | null): '' | 'first' | 'second' {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return '';
+    if (['first', 'first semester', '1st', '1st semester'].includes(raw)) return 'first';
+    if (['second', 'second semester', '2nd', '2nd semester'].includes(raw)) return 'second';
+    return '';
+}
+
+function formatSemester(value?: string | null): string {
+    const normalized = normalizeSemester(value);
+    if (normalized === 'first') return 'First Semester';
+    if (normalized === 'second') return 'Second Semester';
+    return '';
+}
+
+function MaterialStatusBadge({ status }: { status?: MaterialStatus | string | null }) {
+    const normalized = normalizeMaterialStatus(status);
+    const isArchived = normalized === 'archived';
+    return (
+        <span
+            className={`max-w-full truncate rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${
+                isArchived
+                    ? 'border-slate-500/20 bg-slate-500/10 text-slate-500'
+                    : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-500'
+            }`}
+            title={isArchived ? 'Archived' : 'Active'}
+        >
+            {isArchived ? 'Archived' : 'Active'}
+        </span>
+    );
+}
 
 export default function LibraryPage() {
     const [searchQuery, setSearchQuery] = useState('');
-    const [showMobileSearch, setShowMobileSearch] = useState(false);
     const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
     const [editingDoc, setEditingDoc] = useState<Document | null>(null);
+    const [mobileDetailsDoc, setMobileDetailsDoc] = useState<Document | null>(null);
+    const [mobileMenuDocId, setMobileMenuDocId] = useState<string | null>(null);
+    const [desktopMenuDocId, setDesktopMenuDocId] = useState<string | null>(null);
     const [deleteTarget, setDeleteTarget] = useState<Document | null>(null); // Store full doc object
     const [cancellingIds, setCancellingIds] = useState<Set<string>>(new Set());
+    const [reembeddingIds, setReembeddingIds] = useState<Set<string>>(new Set());
     const [documents, setDocuments] = useState<Document[]>([]);
     const [isLoadingData, setIsLoadingData] = useState(true);
 
     // Filters
     const [filterLevel, setFilterLevel] = useState('All');
     const [filterSort, setFilterSort] = useState('Newest');
+    const [filterStatus, setFilterStatus] = useState<'All' | MaterialStatus>('All');
+    const [filterSession, setFilterSession] = useState('All');
+    const [filterSemester, setFilterSemester] = useState<'All' | 'first' | 'second'>('All');
+    const [isAdvancedFiltersOpen, setIsAdvancedFiltersOpen] = useState(false);
+    const [pendingFilterLevel, setPendingFilterLevel] = useState('All');
+    const [pendingFilterSort, setPendingFilterSort] = useState('Newest');
+    const [pendingFilterSession, setPendingFilterSession] = useState('All');
+    const [pendingFilterSemester, setPendingFilterSemester] = useState<'All' | 'first' | 'second'>('All');
+    const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false);
+    const [currentAcademicContext, setCurrentAcademicContext] = useState<{ current_academic_session?: string | null; current_semester?: string | null } | null>(null);
+    const advancedFiltersRef = useRef<HTMLDivElement | null>(null);
+    const statusMenuRef = useRef<HTMLDivElement | null>(null);
 
     const LEVEL_OPTIONS = ['All', '100', '200', '300', '400', '500'];
     const SORT_OPTIONS = ['Newest', 'Oldest'];
+    const STATUS_FILTER_OPTIONS: Array<{ value: 'All' | MaterialStatus; label: string }> = [
+        { value: 'All', label: 'All Status' },
+        { value: 'active', label: 'Active' },
+        { value: 'archived', label: 'Archived' },
+    ];
+    const sessionOptions = useMemo(
+        () => ['All', ...Array.from(new Set(documents.map((doc) => doc.academic_session).filter((value): value is string => Boolean(value && value.trim())))).sort().reverse()],
+        [documents]
+    );
+    const activeFilterChips = useMemo(() => {
+        const chips: Array<{ key: string; label: string; onClear: () => void }> = [];
+        if (filterStatus !== 'All') chips.push({ key: 'status', label: `Status: ${filterStatus === 'active' ? 'Active' : 'Archived'}`, onClear: () => setFilterStatus('All') });
+        if (filterLevel !== 'All') chips.push({ key: 'level', label: `Level: ${filterLevel}`, onClear: () => setFilterLevel('All') });
+        if (filterSession !== 'All') chips.push({ key: 'session', label: `Session: ${filterSession}`, onClear: () => setFilterSession('All') });
+        if (filterSemester !== 'All') chips.push({ key: 'semester', label: `Semester: ${filterSemester === 'first' ? 'First' : 'Second'}`, onClear: () => setFilterSemester('All') });
+        if (filterSort !== 'Newest') chips.push({ key: 'sort', label: `Sort: ${filterSort}`, onClear: () => setFilterSort('Newest') });
+        return chips;
+    }, [filterStatus, filterLevel, filterSession, filterSemester, filterSort]);
 
     // We can get user from session here if needed for upload attribution, 
     // or pass it down via context. For now, let's fetch session quickly to get email.
     const [userEmail, setUserEmail] = useState<string | null>(null);
+    const [canUploadMaterials, setCanUploadMaterials] = useState(false);
+    const [isSuperAdmin, setIsSuperAdmin] = useState(false);
 
     useEffect(() => {
         const getSession = async () => {
@@ -129,13 +198,21 @@ export default function LibraryPage() {
             if (session?.user?.email) {
                 setUserEmail(session.user.email);
             }
+            const bootstrap = await fetchBootstrap();
+            setIsSuperAdmin(Boolean(bootstrap?.is_super_admin));
+            setCanUploadMaterials(Boolean(bootstrap?.is_super_admin || bootstrap?.is_university_admin));
         };
         getSession();
-    }, [supabase]);
+    }, []);
 
     // --- Data Fetching ---
     const fetchDocuments = useCallback(async (isSilent = false) => {
         if (!userEmail) return;
+        if (isSuperAdmin && !getAdminWorkspaceUniversityId()) {
+            setDocuments([]);
+            setIsLoadingData(false);
+            return;
+        }
         if (!isSilent) setIsLoadingData(true);
         try {
             const response = await api.get('/admin/documents');
@@ -156,6 +233,7 @@ export default function LibraryPage() {
                 embedding_status?: 'pending' | 'processing' | 'completed' | 'failed';
                 embedding_progress?: number;
                 embedding_error?: string;
+                ingestion_worker_heartbeat_at?: string | null;
                 total_chunks?: number;
                 target_levels?: string[];
                 academic_session?: string;
@@ -163,9 +241,7 @@ export default function LibraryPage() {
                 department?: string;
                 faculty?: string;
                 material_status?: string;
-                visibility?: string;
                 source_type?: string;
-                approval_status?: string;
                 version_label?: string;
             }) => {
                 const status = row.embedding_status || 'pending';
@@ -186,16 +262,15 @@ export default function LibraryPage() {
                     embedding_status: status,
                     embedding_progress: progress,
                     embedding_error: row.embedding_error,
+                    ingestion_worker_heartbeat_at: row.ingestion_worker_heartbeat_at,
                     total_chunks: Number(row.total_chunks) || 0,
                     target_levels: row.target_levels || [],
                     academic_session: row.academic_session || '',
-                    semester: row.semester || '',
+                    semester: normalizeSemester(row.semester),
                     department: row.department || '',
                     faculty: row.faculty || '',
-                    material_status: row.material_status || 'active',
-                    visibility: row.visibility || 'visible',
+                    material_status: normalizeMaterialStatus(row.material_status),
                     source_type: row.source_type || 'admin',
-                    approval_status: row.approval_status || 'approved',
                     version_label: row.version_label || ''
                 };
             });
@@ -206,11 +281,52 @@ export default function LibraryPage() {
         } finally {
             if (!isSilent) setIsLoadingData(false);
         }
-    }, [userEmail]);
+    }, [userEmail, isSuperAdmin]);
 
     useEffect(() => {
         if (userEmail) fetchDocuments();
     }, [userEmail, fetchDocuments]);
+
+    useEffect(() => {
+        if (!userEmail) return;
+        if (isSuperAdmin && !getAdminWorkspaceUniversityId()) return;
+        let cancelled = false;
+        api.get('/admin/academic-context')
+            .then(async (response) => {
+                if (!response.ok || cancelled) return;
+                const payload = await response.json();
+                const context = payload?.context || null;
+                setCurrentAcademicContext(context);
+                if (context?.current_academic_session) {
+                    setFilterSession(context.current_academic_session);
+                }
+                const normalizedSemester = normalizeSemester(context?.current_semester);
+                if (normalizedSemester) {
+                    setFilterSemester(normalizedSemester);
+                }
+            })
+            .catch(() => {});
+        return () => {
+            cancelled = true;
+        };
+    }, [userEmail, isSuperAdmin]);
+
+    useEffect(() => {
+        if (!isAdvancedFiltersOpen && !isStatusMenuOpen) return;
+        const handleOutsideClick = (event: MouseEvent) => {
+            const target = event.target as Node;
+            const clickedAdvanced = advancedFiltersRef.current?.contains(target);
+            const clickedStatus = statusMenuRef.current?.contains(target);
+            if (!clickedAdvanced) {
+                setIsAdvancedFiltersOpen(false);
+            }
+            if (!clickedStatus) setIsStatusMenuOpen(false);
+        };
+        document.addEventListener('mousedown', handleOutsideClick);
+        return () => {
+            document.removeEventListener('mousedown', handleOutsideClick);
+        };
+    }, [isAdvancedFiltersOpen, isStatusMenuOpen]);
 
     // --- Background Polling for Processing Documents ---
     useEffect(() => {
@@ -233,15 +349,12 @@ export default function LibraryPage() {
     const totalStorageBytes = documents.reduce((acc, d) => acc + d.file_size, 0);
     const storageUsedGB = (totalStorageBytes / (1024 * 1024 * 1024)).toFixed(2);
     const storagePercentage = Math.min(100, (totalStorageBytes / (1024 * 1024 * 1024 * 15)) * 100); // 15GB limit
-
     let storageColor = "bg-cyan-500";
     if (storagePercentage > 90) storageColor = "bg-red-500";
     else if (storagePercentage > 75) storageColor = "bg-amber-500";
 
     // --- Actions ---
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-    const [isRepairingProgress, setIsRepairingProgress] = useState(false);
-
     // Filtered Docs for Select All
     const filteredDocs = documents
         .filter(doc => {
@@ -253,8 +366,11 @@ export default function LibraryPage() {
 
             const matchesLevel = filterLevel === 'All' ||
                 (doc.course_code && doc.course_code.match(/\d+/)?.[0]?.startsWith(filterLevel.charAt(0)));
+            const matchesStatus = filterStatus === 'All' || normalizeMaterialStatus(doc.material_status) === filterStatus;
+            const matchesSession = filterSession === 'All' || doc.academic_session === filterSession;
+            const matchesSemester = filterSemester === 'All' || normalizeSemester(doc.semester) === filterSemester;
 
-            return matchesSearch && matchesLevel;
+            return matchesSearch && matchesLevel && matchesStatus && matchesSession && matchesSemester;
         })
         .sort((a, b) => {
             const dateA = new Date(a.date).getTime();
@@ -280,6 +396,35 @@ export default function LibraryPage() {
             newSet.add(id);
         }
         setSelectedIds(newSet);
+    };
+
+    const openAdvancedFilters = () => {
+        setPendingFilterLevel(filterLevel);
+        setPendingFilterSort(filterSort);
+        setPendingFilterSession(filterSession);
+        setPendingFilterSemester(filterSemester);
+        setIsAdvancedFiltersOpen(true);
+    };
+
+    const applyAdvancedFilters = () => {
+        setFilterLevel(pendingFilterLevel);
+        setFilterSort(pendingFilterSort);
+        setFilterSession(pendingFilterSession);
+        setFilterSemester(pendingFilterSemester);
+        setIsAdvancedFiltersOpen(false);
+    };
+
+    const clearAllFilters = () => {
+        setPendingFilterLevel('All');
+        setPendingFilterSort('Newest');
+        setPendingFilterSession('All');
+        setPendingFilterSemester('All');
+        setFilterLevel('All');
+        setFilterSort('Newest');
+        setFilterStatus('All');
+        setFilterSession('All');
+        setFilterSemester('All');
+        setIsAdvancedFiltersOpen(false);
     };
 
 
@@ -333,28 +478,6 @@ export default function LibraryPage() {
         }
     };
 
-    const handleRepairProgress = async () => {
-        setIsRepairingProgress(true);
-        try {
-            const response = await api.fetch('/admin/documents/repair-progress', { method: 'POST' });
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => null);
-                throw new Error(errorData?.detail || 'Failed to repair progress');
-            }
-
-            const result = await response.json();
-            await fetchDocuments(true);
-            alert(result.repaired > 0
-                ? `Repaired ${result.repaired} completed document(s).`
-                : 'No completed documents needed repair.');
-        } catch (err) {
-            console.error("Repair progress failed:", err);
-            alert('Failed to repair progress. Check console.');
-        } finally {
-            setIsRepairingProgress(false);
-        }
-    };
-
     const handleCancelIngestion = async (doc: Document) => {
         if (cancellingIds.has(doc.id)) return;
         setCancellingIds(prev => new Set(prev).add(doc.id));
@@ -373,17 +496,113 @@ export default function LibraryPage() {
         }
     };
 
+    const handleToggleMaterialStatus = async (doc: Document) => {
+        const nextStatus: MaterialStatus = normalizeMaterialStatus(doc.material_status) === 'archived' ? 'active' : 'archived';
+        const previousStatus = normalizeMaterialStatus(doc.material_status);
+        setDocuments(prev => prev.map(d => d.id === doc.id ? { ...d, material_status: nextStatus } : d));
+        try {
+            const response = await api.patch(`/admin/documents/${doc.id}`, { material_status: nextStatus });
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.detail || 'Status update failed');
+            }
+        } catch (err) {
+            console.error('Status update failed:', err);
+            setDocuments(prev => prev.map(d => d.id === doc.id ? { ...d, material_status: previousStatus } : d));
+            alert('Failed to update material status. Please try again.');
+        }
+    };
+
+    const canShowReembedAction = (doc: Document) => {
+        return (
+            doc.embedding_status === 'pending' ||
+            doc.embedding_status === 'processing' ||
+            doc.embedding_status === 'completed' ||
+            doc.embedding_status === 'failed' ||
+            Boolean((doc.embedding_error || '').trim())
+        );
+    };
+
+    const isStaleProcessingDocument = (doc: Document) => {
+        if (doc.embedding_status !== 'processing' || !doc.ingestion_worker_heartbeat_at) return false;
+        const heartbeatTime = new Date(doc.ingestion_worker_heartbeat_at).getTime();
+        if (!Number.isFinite(heartbeatTime)) return false;
+        return Date.now() - heartbeatTime > 15 * 60 * 1000;
+    };
+
+    const canRunReembedDocument = (doc: Document) => {
+        return canShowReembedAction(doc)
+            && (doc.embedding_status !== 'processing' || isStaleProcessingDocument(doc))
+            && !reembeddingIds.has(doc.id);
+    };
+
+    const getReembedActionLabel = (doc: Document) => {
+        if (doc.embedding_status === 'processing' && isStaleProcessingDocument(doc)) return 'Retry stale processing';
+        if (doc.embedding_status === 'processing') return 'Processing…';
+        if (reembeddingIds.has(doc.id)) return 'Restarting ingestion...';
+        if (doc.embedding_status === 'completed') return 'Re-process';
+        return 'Retry Processing';
+    };
+
+    const handleReembedDocument = async (doc: Document) => {
+        if (!canRunReembedDocument(doc)) return;
+        const isStaleRetry = isStaleProcessingDocument(doc);
+        const confirmed = window.confirm(isStaleRetry
+            ? 'Retry stale processing for this document? The previous worker appears inactive. A new ingestion run will invalidate the old worker and rebuild existing embeddings from the stored file.'
+            : 'Rebuild AI processing for this document? Existing embeddings will be deleted and rebuilt from the stored file.'
+        );
+        if (!confirmed) return;
+
+        setReembeddingIds(prev => new Set(prev).add(doc.id));
+        setDocuments(prev => prev.map(d => d.id === doc.id ? {
+            ...d,
+            embedding_status: 'processing',
+            embedding_progress: 0,
+            embedding_error: undefined,
+        } : d));
+        try {
+            const retryUrl = isStaleRetry
+                ? `/admin/documents/${doc.id}/reembed?allow_stale_processing_retry=true`
+                : `/admin/documents/${doc.id}/reembed`;
+            const response = await api.fetch(retryUrl, { method: 'POST' });
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.detail || 'Failed to restart ingestion');
+            }
+        } catch (err) {
+            console.error('Re-embed failed:', err);
+            const message = err instanceof Error ? err.message : 'Failed to restart ingestion. Please try again.';
+            setDocuments(prev => prev.map(d => d.id === doc.id ? {
+                ...d,
+                embedding_status: doc.embedding_status,
+                embedding_progress: doc.embedding_progress,
+                embedding_error: doc.embedding_error,
+            } : d));
+            alert(message);
+        } finally {
+            setReembeddingIds(prev => {
+                const next = new Set(prev);
+                next.delete(doc.id);
+                return next;
+            });
+        }
+    };
+
     if (!userEmail) return null; // Wait for session fetch
 
     return (
-        <div className="w-full max-w-5xl mx-auto md:pt-6 md:px-4 space-y-8 animate-in fade-in duration-500 pb-24">
+        <div className="w-full min-h-screen space-y-8 overflow-x-hidden pb-24 md:px-6 md:pt-6 animate-in fade-in duration-500">
             {/* Header */}
             <header className="mb-8 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                 <div>
                     <div className="flex items-center gap-3 mb-1">
                         <h2 className="text-2xl font-bold text-foreground">Library Management</h2>
                     </div>
-                    <p className="text-muted-foreground">Organize course materials, track storage, and manage document access permissions.</p>
+                    <p className="text-muted-foreground">
+                        {currentAcademicContext
+                            ? `Organize course materials for ${currentAcademicContext.current_academic_session || 'current session'} • ${formatSemester(currentAcademicContext.current_semester) || 'current semester'}.`
+                            : 'Organize course materials, track storage, and manage document access permissions.'}
+                    </p>
                 </div>
                 <div className="hidden items-center gap-4 md:flex">
                     <SystemStatusBadge />
@@ -391,99 +610,116 @@ export default function LibraryPage() {
             </header>
 
             {/* Stats Ribbon (Real Data) */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div className="mb-8 hidden grid-cols-1 gap-4 sm:grid-cols-2 md:grid md:grid-cols-3 md:gap-6">
                 <StatsCard icon={FileText} label="Total Documents" value={totalDocs.toLocaleString()} trend="+--" color="bg-blue-500" />
                 <StatsCard icon={BookOpen} label="Active Courses" value={activeCourses.toLocaleString()} sub="Unique Codes" color="bg-purple-500" />
                 <StatsCard icon={HardDrive} label="Storage Used" value={`${storageUsedGB} GB`} sub="of 15 GB Plan" color={storageColor} progress={storagePercentage} />
             </div>
+            <div className="grid grid-cols-2 gap-3 md:hidden">
+                <MobileQuickStatCard icon={FileText} label="Documents" value={totalDocs.toLocaleString()} color="text-blue-500" bg="bg-blue-500/10" />
+                <MobileQuickStatCard icon={BookOpen} label="Courses" value={activeCourses.toLocaleString()} color="text-purple-500" bg="bg-purple-500/10" />
+                <MobileQuickStatCard icon={HardDrive} label="Storage" value={`${storageUsedGB} GB`} color="text-cyan-500" bg="bg-cyan-500/10" />
+                <MobileQuickStatCard icon={Sparkles} label="Processed" value={`${documents.filter((doc) => doc.embedding_status === 'completed').length}`} color="text-emerald-500" bg="bg-emerald-500/10" />
+            </div>
 
             {/* Toolbar */}
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-                {/* Desktop Search */}
-                <div className="hidden md:flex items-center gap-2 w-full md:flex-1 md:max-w-lg bg-card border border-border rounded-xl px-4 py-2.5 focus-within:border-primary/50 transition-colors">
-                    <Search className="w-4 h-4 text-muted-foreground" />
-                    <input
-                        type="text"
-                        placeholder="Search documents by title, code or lecturer..."
-                        className="bg-transparent border-none outline-none text-sm w-full placeholder:text-muted-foreground/70 text-foreground"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                    />
-                </div>
-
-                {/* Mobile Search Toggle */}
-                <div className="md:hidden w-full">
-                    {!showMobileSearch ? (
-                        <button onClick={() => setShowMobileSearch(true)} className="flex items-center gap-2 text-sm text-muted-foreground bg-card border border-border rounded-xl px-4 py-2.5 w-full transition-all hover:border-primary/50">
-                            <Search className="w-4 h-4 shrink-0" />
-                            <span className="truncate">Search documents...</span>
-                        </button>
-                    ) : (
-                        <div className="flex items-center gap-2 w-full bg-card border border-primary/50 rounded-xl px-4 py-2.5 focus-within:ring-2 focus-within:ring-primary/20 transition-all">
-                            <Search className="w-4 h-4 text-muted-foreground shrink-0" />
-                            <input
-                                autoFocus
-                                type="text"
-                                placeholder="Search documents..."
-                                className="bg-transparent border-none outline-none text-sm w-full placeholder:text-muted-foreground/70 text-foreground"
-                                value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
-                                onBlur={() => !searchQuery && setShowMobileSearch(false)}
-                            />
-                            <button onClick={() => { setSearchQuery(''); setShowMobileSearch(false); }} className="text-muted-foreground hover:text-foreground shrink-0">
-                                <X className="w-4 h-4" />
-                            </button>
-                        </div>
-                    )}
-                </div>
-
-                <div className="flex gap-3 w-full md:w-auto">
-                    <div className="flex gap-3 w-full md:w-auto overflow-x-auto pb-2 md:pb-0 p-1 pr-4">
-                        {/* Level Filter */}
-                        <div className="relative group">
-                            <select
-                                value={filterLevel}
-                                onChange={(e) => setFilterLevel(e.target.value)}
-                                className="appearance-none bg-card border border-border rounded-xl px-4 py-2.5 pr-8 text-sm font-medium focus:outline-none focus:border-primary/50 cursor-pointer hover:bg-muted transition-colors"
-                            >
-                                {LEVEL_OPTIONS.map(opt => <option key={opt} value={opt}>{opt === 'All' ? 'All Levels' : `${opt} Level`}</option>)}
-                            </select>
-                            <Filter className="w-4 h-4 text-muted-foreground absolute right-3 top-3 pointer-events-none" />
-                        </div>
-
-                        {/* Sort Filter */}
-                        <div className="relative group">
-                            <select
-                                value={filterSort}
-                                onChange={(e) => setFilterSort(e.target.value)}
-                                className="appearance-none bg-card border border-border rounded-xl px-4 py-2.5 pr-8 text-sm font-medium focus:outline-none focus:border-primary/50 cursor-pointer hover:bg-muted transition-colors"
-                            >
-                                {SORT_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                            </select>
-                            <ChevronRight className="w-4 h-4 text-muted-foreground absolute right-3 top-3 pointer-events-none rotate-90" />
-                        </div>
+            <div className="mb-6 flex flex-col gap-4">
+                <div className="flex items-center gap-2">
+                    <div className="flex min-w-0 flex-1 items-center gap-2 bg-card border border-border rounded-xl px-4 py-2.5 focus-within:border-primary/50 transition-colors">
+                        <Search className="w-4 h-4 text-muted-foreground" />
+                        <input type="text" placeholder="Search documents..." className="bg-transparent border-none outline-none text-sm w-full placeholder:text-muted-foreground/70 text-foreground" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+                    </div>
+                    <div className="relative shrink-0" ref={statusMenuRef}>
                         <button
-                            onClick={handleRepairProgress}
-                            disabled={isRepairingProgress}
-                            className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-card border border-border hover:border-primary/40 hover:bg-muted text-foreground rounded-xl text-sm font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                            type="button"
+                            onClick={() => setIsStatusMenuOpen((prev) => !prev)}
+                            className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-border bg-card text-muted-foreground transition-colors hover:bg-muted"
+                            aria-expanded={isStatusMenuOpen}
+                            aria-label="Filter by material status"
+                            title="Status filter"
                         >
-                            {isRepairingProgress ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                                <AlertCircle className="w-4 h-4" />
-                            )}
-                            <span>{isRepairingProgress ? 'Repairing...' : 'Repair Progress'}</span>
+                            <Archive className="h-4 w-4" />
                         </button>
-                        <button
-                            onClick={() => setIsUploadModalOpen(true)}
-                            className="flex-1 md:flex-none flex items-center justify-center gap-2 px-6 py-2.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl text-sm font-bold shadow-lg shadow-primary/20 transition-all hover:scale-[1.02] active:scale-[0.98]"
-                        >
+                        {isStatusMenuOpen && (
+                            <div className="absolute right-0 top-12 z-40 w-44 rounded-xl border border-border bg-card p-2 shadow-2xl ring-1 ring-black/10">
+                                {STATUS_FILTER_OPTIONS.map((opt) => (
+                                    <button
+                                        key={opt.value}
+                                        type="button"
+                                        onClick={() => {
+                                            setFilterStatus(opt.value);
+                                            setIsStatusMenuOpen(false);
+                                        }}
+                                        className={`w-full rounded-lg px-3 py-2 text-left text-sm transition-colors ${
+                                            filterStatus === opt.value ? 'bg-primary/10 text-primary' : 'text-foreground hover:bg-muted'
+                                        }`}
+                                    >
+                                        {opt.label}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                    <div className="relative shrink-0" ref={advancedFiltersRef}>
+                        <button type="button" onClick={() => isAdvancedFiltersOpen ? setIsAdvancedFiltersOpen(false) : openAdvancedFilters()} className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-border bg-card text-foreground transition-colors hover:bg-muted" aria-expanded={isAdvancedFiltersOpen} aria-label="Open advanced filters" title="Advanced filters">
+                            <Filter className="h-4 w-4 text-muted-foreground" />
+                        </button>
+                        {isAdvancedFiltersOpen && (
+                            <div className="absolute right-0 top-12 z-40 w-72 rounded-xl border border-border bg-card p-3 shadow-2xl ring-1 ring-black/10">
+                                <div className="space-y-3">
+                                    <div>
+                                        <label className="mb-1 block text-xs text-muted-foreground">Level</label>
+                                        <select value={pendingFilterLevel} onChange={(e) => setPendingFilterLevel(e.target.value)} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                                            {LEVEL_OPTIONS.map(opt => <option key={opt} value={opt}>{opt === 'All' ? 'All Levels' : `${opt} Level`}</option>)}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="mb-1 block text-xs text-muted-foreground">Session</label>
+                                        <select value={pendingFilterSession} onChange={(e) => setPendingFilterSession(e.target.value)} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                                            {sessionOptions.map(opt => <option key={opt} value={opt}>{opt === 'All' ? 'All Sessions' : opt}</option>)}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="mb-1 block text-xs text-muted-foreground">Semester</label>
+                                        <select value={pendingFilterSemester} onChange={(e) => setPendingFilterSemester(e.target.value as 'All' | 'first' | 'second')} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                                            <option value="All">All Semesters</option>
+                                            <option value="first">First Semester</option>
+                                            <option value="second">Second Semester</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="mb-1 block text-xs text-muted-foreground">Sort</label>
+                                        <select value={pendingFilterSort} onChange={(e) => setPendingFilterSort(e.target.value)} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                                            {SORT_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
+                                <div className="mt-3 flex items-center justify-between gap-2">
+                                    <button type="button" onClick={clearAllFilters} className="rounded-lg px-3 py-2 text-sm text-muted-foreground hover:bg-muted">Clear all</button>
+                                    <button type="button" onClick={applyAdvancedFilters} className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground">Apply</button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                    {canUploadMaterials ? (
+                    <div className="shrink-0">
+                        <button onClick={() => setIsUploadModalOpen(true)} className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-lg shadow-primary/20 transition-all hover:scale-[1.02] hover:bg-primary/90 active:scale-[0.98]" aria-label="Upload material" title="Upload material">
                             <Plus className="w-4 h-4" />
-                            <span>Upload Material</span>
                         </button>
                     </div>
+                    ) : null}
                 </div>
-
+                {activeFilterChips.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-2">
+                        {activeFilterChips.map((chip) => (
+                            <button key={chip.key} onClick={chip.onClear} className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-3 py-1 text-xs text-foreground hover:bg-muted">
+                                <span>{chip.label}</span>
+                                <X className="h-3 w-3" />
+                            </button>
+                        ))}
+                        <button onClick={clearAllFilters} className="text-xs text-muted-foreground underline-offset-2 hover:underline">Clear all filters</button>
+                    </div>
+                )}
             </div>
 
             {/* Data Table */}
@@ -499,23 +735,32 @@ export default function LibraryPage() {
                     </div>
                 ) : (
                     filteredDocs.map((doc) => (
-                        <article key={doc.id} className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+                        <article key={doc.id} className="relative rounded-2xl border border-border bg-card p-4 shadow-sm">
                             <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0">
-                                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">{doc.course_code}</p>
-                                    <h3 className="mt-1 text-base font-semibold text-foreground">{doc.title}</h3>
-                                    <p className="mt-1 text-sm text-muted-foreground">{doc.lecturer}</p>
+                                    <div className="flex items-center gap-2">
+                                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">{doc.course_code}</p>
+                                        <AIBadge
+                                            status={doc.embedding_status}
+                                            progress={doc.embedding_progress}
+                                            error={doc.embedding_error}
+                                            compact
+                                        />
+                                    </div>
+                                    <h3 className="mt-1 min-w-0 break-words text-base font-semibold text-foreground">{doc.title}</h3>
+                                    <p className="mt-1 break-words text-sm text-muted-foreground">{doc.lecturer}</p>
                                 </div>
-                                <input
-                                    type="checkbox"
-                                    className="mt-1 h-4 w-4 rounded border-border text-primary focus:ring-primary/50 bg-card cursor-pointer"
-                                    checked={selectedIds.has(doc.id)}
-                                    onChange={() => toggleSelect(doc.id)}
-                                />
+                                <button
+                                    onClick={() => setMobileMenuDocId((prev) => (prev === doc.id ? null : doc.id))}
+                                    className="rounded-lg border border-border p-2 text-muted-foreground"
+                                    aria-label="Open actions"
+                                >
+                                    <MoreVertical className="h-4 w-4" />
+                                </button>
                             </div>
 
-                            <div className="mt-4 flex items-center gap-2">
-                                <span className="rounded-full bg-secondary/20 px-3 py-1 text-xs font-medium text-secondary-foreground border border-secondary/30">
+                            <div className="hidden">
+                                <span className="rounded-full border border-secondary/30 bg-secondary/20 px-3 py-1 text-xs font-medium text-secondary-foreground">
                                     {doc.topic}
                                 </span>
                                 <AIBadge
@@ -525,55 +770,83 @@ export default function LibraryPage() {
                                 />
                             </div>
 
-                            <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                            <div className="hidden">
                                 <div>
                                     <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Date</p>
                                     <p className="mt-1 text-foreground">{doc.date}</p>
                                 </div>
                                 <div>
                                     <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Levels</p>
-                                    <p className="mt-1 text-foreground">{doc.target_levels?.join(', ') || 'All'}</p>
+                                    <p className="mt-1 break-words text-foreground">{doc.target_levels?.join(', ') || 'All'}</p>
                                 </div>
                             </div>
 
-                            <div className="mt-4 flex flex-wrap gap-1.5">
-                                <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-400">
-                                    {doc.material_status || 'active'}
-                                </span>
-                                <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-400">
-                                    {doc.visibility || 'visible'}
-                                </span>
-                                <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-[10px] font-bold uppercase text-sky-400">
-                                    {doc.approval_status || 'approved'}
-                                </span>
+                            <div className="hidden">
+                                <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Academic Meta</p>
+                                <p className="mt-1 break-words text-sm text-foreground">
+                                    {[doc.academic_session, formatSemester(doc.semester), doc.department, doc.faculty].filter(Boolean).join(' • ') || 'Not set'}
+                                </p>
                             </div>
 
-                            <div className="mt-4 flex items-center justify-end gap-2">
-                                {doc.embedding_status === 'processing' ? (
-                                    <button
-                                        onClick={() => handleCancelIngestion(doc)}
-                                        disabled={cancellingIds.has(doc.id)}
-                                        className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-500 disabled:opacity-50"
-                                        title="Cancel ingestion"
-                                    >
-                                        {cancellingIds.has(doc.id) ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />}
-                                    </button>
-                                ) : null}
-                                <button
-                                    onClick={() => setEditingDoc(doc)}
-                                    className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
-                                    title="Quick Edit"
-                                >
-                                    <Pencil className="h-4 w-4" />
-                                </button>
-                                <button
-                                    onClick={() => setDeleteTarget(doc)}
-                                    className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                                    title="Delete"
-                                >
-                                    <Trash2 className="h-4 w-4" />
-                                </button>
+                            <div className="hidden">
+                                <MaterialStatusBadge status={doc.material_status} />
                             </div>
+
+                            <div className="mt-3 flex items-center justify-between gap-3">
+                                <span className="truncate text-xs text-muted-foreground">{doc.topic}</span>
+                            </div>
+                            {mobileMenuDocId === doc.id ? (
+                                <div className="absolute right-3 top-12 z-20 min-w-36 rounded-xl border border-border bg-background p-1.5 shadow-lg">
+                                    <button
+                                        onClick={() => {
+                                            setMobileDetailsDoc(doc);
+                                            setMobileMenuDocId(null);
+                                        }}
+                                        className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-foreground hover:bg-muted"
+                                    >
+                                        View details
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setEditingDoc(doc);
+                                            setMobileMenuDocId(null);
+                                        }}
+                                        className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-foreground hover:bg-muted"
+                                    >
+                                        Edit
+                                    </button>
+                                    {canShowReembedAction(doc) && (
+                                        <button
+                                            onClick={() => {
+                                                void handleReembedDocument(doc);
+                                                setMobileMenuDocId(null);
+                                            }}
+                                            disabled={!canRunReembedDocument(doc)}
+                                            className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-foreground hover:bg-muted disabled:opacity-50"
+                                        >
+                                            {getReembedActionLabel(doc)}
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={() => {
+                                            void handleToggleMaterialStatus(doc);
+                                            setMobileMenuDocId(null);
+                                        }}
+                                        className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-foreground hover:bg-muted"
+                                    >
+                                        {normalizeMaterialStatus(doc.material_status) === 'archived' ? 'Restore to Active' : 'Archive'}
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setDeleteTarget(doc);
+                                            setMobileMenuDocId(null);
+                                        }}
+                                        className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-destructive hover:bg-destructive/10"
+                                    >
+                                        Delete
+                                    </button>
+                                </div>
+                            ) : null}
                         </article>
                     ))
                 )}
@@ -581,7 +854,7 @@ export default function LibraryPage() {
 
             <div className="hidden min-h-[400px] overflow-hidden rounded-2xl border border-border bg-card backdrop-blur-sm md:block">
                 <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm min-w-[1120px]">
+                    <table className="w-full min-w-[860px] table-fixed text-left text-sm">
                         <thead className="bg-muted/50 border-b border-border text-muted-foreground uppercase tracking-wider text-xs font-semibold">
                             <tr>
                                 <th className="px-6 py-4 whitespace-nowrap w-4">
@@ -594,29 +867,25 @@ export default function LibraryPage() {
                                         />
                                     </div>
                                 </th>
-                                <th className="px-6 py-4 whitespace-nowrap">Course Code</th>
-                                <th className="px-6 py-4 whitespace-nowrap">Course Title</th>
-                                <th className="px-6 py-4 whitespace-nowrap">Topic</th>
-                                <th className="px-6 py-4 whitespace-nowrap">Lecturer</th>
-                                <th className="px-6 py-4 whitespace-nowrap">Date</th>
-                                <th className="px-6 py-4 whitespace-nowrap">Academic Meta</th>
-                                <th className="px-6 py-4 whitespace-nowrap">State</th>
-                                <th className="px-6 py-4 whitespace-nowrap">Levels</th>
-                                <th className="px-6 py-4 text-center whitespace-nowrap">Uploaded By</th>
-                                <th className="px-6 py-4 text-right whitespace-nowrap">Action</th>
+                                <th className="w-[30%] px-4 py-4 whitespace-nowrap">Material</th>
+                                <th className="w-[14%] px-4 py-4 whitespace-nowrap">Lecturer</th>
+                                <th className="w-[14%] px-4 py-4 whitespace-nowrap">AI Status</th>
+                                <th className="w-[18%] px-4 py-4 whitespace-nowrap">Access</th>
+                                <th className="w-[12%] px-4 py-4 whitespace-nowrap">Uploaded</th>
+                                <th className="w-[12%] px-4 py-4 text-right whitespace-nowrap">Actions</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-border">
                             {isLoadingData ? (
                                 <tr>
-                                    <td colSpan={11} className="px-6 py-20 text-center text-muted-foreground">
+                                    <td colSpan={7} className="px-6 py-20 text-center text-muted-foreground">
                                         <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-primary" />
                                         Loading library data...
                                     </td>
                                 </tr>
                             ) : filteredDocs.length === 0 ? (
                                 <tr>
-                                    <td colSpan={11} className="px-6 py-20 text-center text-slate-500">
+                                    <td colSpan={7} className="px-6 py-20 text-center text-slate-500">
                                         No documents found.
                                     </td>
                                 </tr>
@@ -637,98 +906,135 @@ export default function LibraryPage() {
                                                 onChange={() => toggleSelect(doc.id)}
                                             />
                                         </td>
-                                        <td className="px-6 py-4 font-bold text-foreground whitespace-nowrap">{doc.course_code}</td>
-                                        <td className="px-6 py-4 text-foreground/80 font-medium whitespace-nowrap">{doc.title}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <div className="flex items-center gap-2">
-                                                <span className="px-3 py-1 rounded-full bg-secondary/20 border border-secondary/30 text-secondary-foreground text-xs font-medium">
-                                                    {doc.topic}
-                                                </span>
+                                        <td className="px-4 py-4">
+                                            <div className="min-w-0">
+                                                <div className="flex min-w-0 items-center gap-2">
+                                                    <span className="shrink-0 rounded-md bg-primary/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-primary">
+                                                        {doc.course_code}
+                                                    </span>
+                                                    <span className="truncate text-xs text-muted-foreground" title={doc.topic}>
+                                                        {doc.topic || 'No topic'}
+                                                    </span>
+                                                </div>
+                                                <div className="mt-1 truncate text-sm font-semibold text-foreground" title={doc.title}>
+                                                    {doc.title}
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td className="px-4 py-4 text-muted-foreground">
+                                            <div className="truncate" title={doc.lecturer}>{doc.lecturer}</div>
+                                        </td>
 
-                                                {/* REPLACED WITH AI BADGE COMPONENT */}
+                                        <td className="px-4 py-4">
+                                            <div className="flex min-w-0 items-center gap-2">
                                                 <AIBadge
                                                     status={doc.embedding_status}
                                                     progress={doc.embedding_progress}
                                                     error={doc.embedding_error}
                                                 />
+                                                <span className="truncate text-[11px] text-muted-foreground">
+                                                    {doc.embedding_status === 'completed'
+                                                        ? `${doc.total_chunks.toLocaleString()} chunks`
+                                                        : doc.embedding_status === 'processing'
+                                                            ? `${Math.round(doc.embedding_progress || 0)}%`
+                                                            : doc.embedding_status}
+                                                </span>
                                             </div>
                                         </td>
-                                        <td className="px-6 py-4 text-muted-foreground whitespace-nowrap">{doc.lecturer}</td>
-
-                                        <td className="px-6 py-4 text-muted-foreground whitespace-nowrap">{doc.date}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <div className="space-y-1">
-                                                <div className="text-xs font-semibold text-foreground">
-                                                    {doc.academic_session || 'Session not set'}
-                                                </div>
-                                                <div className="text-[11px] text-muted-foreground">
-                                                    {[doc.semester, doc.department, doc.faculty].filter(Boolean).join(' • ') || 'No academic tags'}
-                                                </div>
+                                        <td className="px-4 py-4">
+                                            <div className="flex min-w-0 flex-wrap gap-1">
+                                                <MaterialStatusBadge status={doc.material_status} />
                                             </div>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <div className="flex flex-wrap gap-1">
-                                                <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-bold uppercase">
-                                                    {doc.material_status || 'active'}
-                                                </span>
-                                                <span className="px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-bold uppercase">
-                                                    {doc.visibility || 'visible'}
-                                                </span>
-                                                <span className="px-2 py-0.5 rounded-full bg-sky-500/10 border border-sky-500/20 text-sky-400 text-[10px] font-bold uppercase">
-                                                    {doc.approval_status || 'approved'}
-                                                </span>
-                                            </div>
-                                            <div className="mt-1 text-[11px] text-muted-foreground">
+                                            <div className="mt-1 truncate text-[11px] text-muted-foreground">
                                                 {[doc.source_type, doc.version_label].filter(Boolean).join(' • ')}
                                             </div>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            {doc.target_levels && doc.target_levels.length > 0 ? (
-                                                <div className="flex flex-wrap gap-1">
-                                                    {doc.target_levels.map(lvl => (
-                                                        <span key={lvl} className="px-2 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-[10px] font-bold">
-                                                            {lvl}
-                                                        </span>
-                                                    ))}
-                                                </div>
-                                            ) : (
-                                                <span className="text-[10px] font-medium text-muted-foreground/60 uppercase">All</span>
-                                            )}
-                                        </td>
-                                        <td className="px-6 py-4 flex justify-center whitespace-nowrap">
-                                            <div className="w-8 h-8 rounded-full bg-muted border border-border flex items-center justify-center text-xs font-bold text-muted-foreground cursor-help" title={doc.uploaded_by.email}>
-                                                {doc.uploaded_by.name}
+                                            <div className="mt-1 truncate text-[11px] text-muted-foreground">
+                                                {[doc.academic_session, formatSemester(doc.semester)].filter(Boolean).join(' • ') || 'No session set'}
                                             </div>
                                         </td>
-                                        <td className="px-6 py-4 text-right whitespace-nowrap">
-                                            <div className="flex items-center justify-end gap-2">
-                                                {doc.embedding_status === 'processing' && (
-                                                    <button
-                                                        onClick={() => handleCancelIngestion(doc)}
-                                                        disabled={cancellingIds.has(doc.id)}
-                                                        className="p-2 hover:bg-red-500/10 hover:text-red-500 rounded-lg text-muted-foreground transition-colors disabled:opacity-50"
-                                                        title="Cancel ingestion"
-                                                    >
-                                                        {cancellingIds.has(doc.id)
-                                                            ? <Loader2 className="w-4 h-4 animate-spin" />
-                                                            : <Square className="w-4 h-4" />
-                                                        }
-                                                    </button>
+                                        <td className="px-4 py-4 text-muted-foreground">
+                                            <div className="truncate" title={doc.date}>{doc.date}</div>
+                                            <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px]">
+                                                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-[9px] font-bold" title={doc.uploaded_by.email}>
+                                                    {doc.uploaded_by.name}
+                                                </span>
+                                                <span className="truncate" title={doc.uploaded_by.email}>{doc.uploaded_by.email}</span>
+                                            </div>
+                                        </td>
+                                        <td className="px-4 py-4 text-right">
+                                            <div className="relative flex items-center justify-end">
+                                                <button
+                                                    onClick={() => setDesktopMenuDocId((prev) => (prev === doc.id ? null : doc.id))}
+                                                    className="rounded-lg border border-border p-2 text-muted-foreground transition-colors hover:bg-muted"
+                                                    title="Open actions"
+                                                    aria-label="Open actions"
+                                                >
+                                                    <MoreVertical className="h-4 w-4" />
+                                                </button>
+                                                {desktopMenuDocId === doc.id && (
+                                                    <div className="absolute right-0 top-11 z-30 min-w-44 rounded-xl border border-border bg-background p-1.5 text-left shadow-lg">
+                                                        <button
+                                                            onClick={() => {
+                                                                setMobileDetailsDoc(doc);
+                                                                setDesktopMenuDocId(null);
+                                                            }}
+                                                            className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-foreground hover:bg-muted"
+                                                        >
+                                                            View details
+                                                        </button>
+                                                        {doc.embedding_status === 'processing' && (
+                                                            <button
+                                                                onClick={() => {
+                                                                    void handleCancelIngestion(doc);
+                                                                    setDesktopMenuDocId(null);
+                                                                }}
+                                                                disabled={cancellingIds.has(doc.id)}
+                                                                className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-foreground hover:bg-muted disabled:opacity-50"
+                                                            >
+                                                                {cancellingIds.has(doc.id) ? 'Cancelling...' : 'Cancel ingestion'}
+                                                            </button>
+                                                        )}
+                                                        <button
+                                                            onClick={() => {
+                                                                setEditingDoc(doc);
+                                                                setDesktopMenuDocId(null);
+                                                            }}
+                                                            className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-foreground hover:bg-muted"
+                                                        >
+                                                            Edit
+                                                        </button>
+                                                        {canShowReembedAction(doc) && (
+                                                            <button
+                                                                onClick={() => {
+                                                                    void handleReembedDocument(doc);
+                                                                    setDesktopMenuDocId(null);
+                                                                }}
+                                                                disabled={!canRunReembedDocument(doc)}
+                                                                className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-foreground hover:bg-muted disabled:opacity-50"
+                                                            >
+                                                                {getReembedActionLabel(doc)}
+                                                            </button>
+                                                        )}
+                                                        <button
+                                                            onClick={() => {
+                                                                void handleToggleMaterialStatus(doc);
+                                                                setDesktopMenuDocId(null);
+                                                            }}
+                                                            className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-foreground hover:bg-muted"
+                                                        >
+                                                            {normalizeMaterialStatus(doc.material_status) === 'archived' ? 'Restore to Active' : 'Archive'}
+                                                        </button>
+                                                        <button
+                                                            onClick={() => {
+                                                                setDeleteTarget(doc);
+                                                                setDesktopMenuDocId(null);
+                                                            }}
+                                                            className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-destructive hover:bg-destructive/10"
+                                                        >
+                                                            Delete
+                                                        </button>
+                                                    </div>
                                                 )}
-                                                <button
-                                                    onClick={() => setEditingDoc(doc)}
-                                                    className="p-2 hover:bg-primary/10 hover:text-primary rounded-lg text-muted-foreground transition-colors"
-                                                    title="Quick Edit"
-                                                >
-                                                    <Pencil className="w-4 h-4" />
-                                                </button>
-                                                <button
-                                                    onClick={() => setDeleteTarget(doc)}
-                                                    className="p-2 hover:bg-destructive/10 hover:text-destructive rounded-lg text-muted-foreground transition-colors"
-                                                    title="Delete"
-                                                >
-                                                    <Trash2 className="w-4 h-4" />
-                                                </button>
                                             </div>
                                         </td>
                                     </motion.tr>
@@ -780,7 +1086,8 @@ export default function LibraryPage() {
                     <UploadModal
                         isOpen={isUploadModalOpen}
                         onClose={() => setIsUploadModalOpen(false)}
-                        userEmail={userEmail}
+                        userEmail={userEmail || ''}
+                        isSuperAdmin={isSuperAdmin}
                         onSuccess={() => fetchDocuments()} // Refresh data
                     />
                 )}
@@ -802,14 +1109,19 @@ export default function LibraryPage() {
                         }}
                     />
                 )}
+                {mobileDetailsDoc && (
+                    <MobileDocumentDetailsModal
+                        doc={mobileDetailsDoc}
+                        onClose={() => setMobileDetailsDoc(null)}
+                    />
+                )}
             </AnimatePresence>
         </div >
     );
 }
 
 // --- Sub-Components ---
-
-function AIBadge({ status, progress, error }: { status: string, progress: number, error?: string }) {
+function AIBadge({ status, progress, error, compact = false }: { status: string, progress: number, error?: string; compact?: boolean }) {
     // 1. Determine State
     let state = status;
     if (status === 'completed' && error) {
@@ -819,8 +1131,8 @@ function AIBadge({ status, progress, error }: { status: string, progress: number
     // 2. Render Check
     if (state === 'pending') {
         return (
-            <div className="flex items-center gap-1 bg-gray-50 text-gray-500 border border-gray-200 px-2 py-0.5 rounded-full" title="Queued for AI Training">
-                <Clock className="w-3 h-3" />
+            <div className={`flex items-center gap-1 bg-gray-50 text-gray-500 border border-gray-200 rounded-full ${compact ? 'px-1.5 py-0.5' : 'px-2 py-0.5'}`} title="Queued for AI Training">
+                <Clock className={compact ? 'w-2.5 h-2.5' : 'w-3 h-3'} />
             </div>
         );
     }
@@ -828,9 +1140,9 @@ function AIBadge({ status, progress, error }: { status: string, progress: number
     if (state === 'processing') {
         const percentage = Math.max(0, Math.min(100, Math.round(Number(progress) || 0)));
         return (
-            <div className="flex items-center gap-1 bg-blue-50 text-blue-600 border border-blue-200 px-2 py-0.5 rounded-full" title={`Training: ${percentage}%`}>
-                <Loader2 className="w-3 h-3 animate-spin" />
-                <span className="text-[10px] font-bold">{percentage}%</span>
+            <div className={`flex items-center gap-1 bg-blue-50 text-blue-600 border border-blue-200 rounded-full ${compact ? 'px-1.5 py-0.5' : 'px-2 py-0.5'}`} title={`Training: ${percentage}%`}>
+                <Loader2 className={`${compact ? 'w-2.5 h-2.5' : 'w-3 h-3'} animate-spin`} />
+                <span className={`${compact ? 'text-[9px]' : 'text-[10px]'} font-bold`}>{percentage}%</span>
             </div>
         );
     }
@@ -862,8 +1174,8 @@ function AIBadge({ status, progress, error }: { status: string, progress: number
 
     return (
         <div className="group/badge relative flex items-center justify-center">
-            <div className={`flex items-center gap-1 border px-2 py-0.5 rounded-full shadow-sm cursor-help ${config.style}`}>
-                <Icon className="w-3 h-3" />
+            <div className={`flex items-center gap-1 border rounded-full shadow-sm cursor-help ${compact ? 'px-1.5 py-0.5' : 'px-2 py-0.5'} ${config.style}`}>
+                <Icon className={compact ? 'w-2.5 h-2.5' : 'w-3 h-3'} />
                 {/* Optional text if space permits, user asked for icon mostly but style implies pill */}
             </div>
             {/* Tooltip */}
@@ -878,43 +1190,25 @@ function AIBadge({ status, progress, error }: { status: string, progress: number
 }
 
 // SidebarItem moved to layout.tsx
-
 function StatsCard({ icon: Icon, label, value, trend, sub, color, progress }: StatsCardProps) {
-    // Exact mapping for tone-on-tone styles
-    const styles: { [key: string]: { bg: string, text: string } } = {
-        'bg-blue-500': { bg: 'bg-blue-600', text: 'text-blue-100' },
-        'bg-purple-500': { bg: 'bg-purple-600', text: 'text-purple-100' },
-        'bg-cyan-500': { bg: 'bg-cyan-600', text: 'text-cyan-100' },
-        // Fallbacks
-        'bg-green-500': { bg: 'bg-green-600', text: 'text-green-100' },
-        'bg-amber-500': { bg: 'bg-amber-600', text: 'text-amber-100' },
-        'bg-red-500': { bg: 'bg-red-600', text: 'text-red-100' },
-        'bg-emerald-500': { bg: 'bg-emerald-600', text: 'text-emerald-100' },
-    };
-
-    const style = styles[color] || { bg: color, text: 'text-primary-foreground' };
-
     return (
-        <div className="relative overflow-hidden bg-card border border-border rounded-2xl p-5 group hover:border-primary/20 transition-colors shadow-sm">
-            <div className={`absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity`}>
-                <Icon className="w-16 h-16" />
+        <div className="rounded-2xl border border-border bg-background/90 p-4 transition-colors hover:border-primary/30 hover:bg-muted/40 relative overflow-hidden group">
+            <div className="flex justify-between items-start mb-2">
+                <div className={`inline-flex h-10 w-10 items-center justify-center rounded-2xl border ${color.replace('bg-', 'border-')}/20 ${color.replace('bg-', 'bg-')}/10 ${color.replace('bg-', 'text-')}`}>
+                    <Icon className="w-5 h-5" />
+                </div>
+                {trend && <span className="text-[10px] font-bold bg-primary/10 text-primary px-2 py-1 rounded-full">{trend}</span>}
             </div>
-            <div className="relative z-10">
-                <div className="flex items-center gap-3 mb-3">
-                    <div className={`w-10 h-10 rounded-full ${style.bg} flex items-center justify-center shadow-inner`}>
-                        <Icon className={`w-5 h-5 ${style.text}`} />
-                    </div>
-                    <span className="text-muted-foreground text-sm font-medium">{label}</span>
+            <div>
+                <p className="mt-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
+                <div className="flex items-baseline gap-2 mt-1">
+                    <span className="text-lg font-bold text-foreground">{value}</span>
                 </div>
-                <div className="flex items-end gap-3 mb-1">
-                    <span className="text-2xl font-bold text-foreground">{value}</span>
-                    {trend && <span className="text-emerald-500 text-xs font-medium mb-1">{trend}</span>}
-                </div>
-                {sub && <p className="text-muted-foreground/70 text-[10px] uppercase tracking-wide font-bold">{sub}</p>}
+                {sub && <p className="text-xs text-muted-foreground font-medium mt-1">{sub}</p>}
 
                 {progress && (
-                    <div className="mt-3 h-1 w-full bg-secondary rounded-full overflow-hidden">
-                        <div className={`h-full ${color} rounded-full`} style={{ width: `${progress}%` }} />
+                    <div className="mt-3 h-1.5 w-full bg-secondary/50 rounded-full overflow-hidden">
+                        <div className={`h-full ${color} rounded-full transition-all duration-500`} style={{ width: `${progress}%` }} />
                     </div>
                 )}
             </div>
@@ -922,7 +1216,57 @@ function StatsCard({ icon: Icon, label, value, trend, sub, color, progress }: St
     );
 }
 
-function UploadModal({ onClose, userEmail, onSuccess }: { isOpen: boolean, onClose: () => void, userEmail: string, onSuccess: () => void }) {
+function MobileQuickStatCard({ icon: Icon, label, value, color, bg }: MobileQuickStatCardProps) {
+    return (
+        <div className="rounded-2xl border border-border bg-background/90 p-4">
+            <div className={`inline-flex h-10 w-10 items-center justify-center rounded-2xl border ${bg} ${color}`}>
+                <Icon className="h-4 w-4" />
+            </div>
+            <p className="mt-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
+            <p className="mt-1 text-lg font-bold text-foreground">{value}</p>
+        </div>
+    );
+}
+
+function MobileDocumentDetailsModal({ doc, onClose }: { doc: Document; onClose: () => void }) {
+    return (
+        <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[65] bg-black/60 p-4"
+            onClick={onClose}
+        >
+            <motion.div
+                initial={{ y: 16, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: 16, opacity: 0 }}
+                className="mx-auto mt-16 w-full max-w-md rounded-2xl border border-border bg-background p-5 md:max-w-2xl"
+                onClick={(event) => event.stopPropagation()}
+            >
+                <h3 className="text-base font-bold text-foreground">{doc.title}</h3>
+                <p className="mt-1 text-sm text-muted-foreground">{doc.course_code} - {doc.lecturer}</p>
+                <div className="mt-4 space-y-2 text-sm">
+                    <p><span className="text-muted-foreground">Topic:</span> {doc.topic}</p>
+                    <p><span className="text-muted-foreground">Date:</span> {doc.date}</p>
+                    <p><span className="text-muted-foreground">Levels:</span> {doc.target_levels?.join(', ') || 'All'}</p>
+                    <p><span className="text-muted-foreground">Academic:</span> {[doc.academic_session, formatSemester(doc.semester), doc.department, doc.faculty].filter(Boolean).join(' - ') || 'Not set'}</p>
+                    <p><span className="text-muted-foreground">Status:</span> {normalizeMaterialStatus(doc.material_status) === 'archived' ? 'Archived' : 'Active'}</p>
+                    <p><span className="text-muted-foreground">Source:</span> {[doc.source_type, doc.version_label].filter(Boolean).join(' - ') || 'Not set'}</p>
+                    <p><span className="text-muted-foreground">AI:</span> {doc.embedding_status}{doc.embedding_status === 'completed' ? ` - ${doc.total_chunks.toLocaleString()} chunks` : ''}</p>
+                    {doc.embedding_error ? <p><span className="text-muted-foreground">AI error:</span> {doc.embedding_error}</p> : null}
+                    <p><span className="text-muted-foreground">Uploaded by:</span> {doc.uploaded_by.email}</p>
+                </div>
+                <button onClick={onClose} className="mt-5 w-full rounded-xl border border-border py-2 text-sm font-semibold text-foreground">
+                    Close
+                </button>
+            </motion.div>
+        </motion.div>
+    );
+}
+
+
+function UploadModal({ onClose, userEmail, isSuperAdmin, onSuccess }: { isOpen: boolean, onClose: () => void, userEmail: string, isSuperAdmin: boolean, onSuccess: () => void }) {
     const [isLoading, setIsLoading] = useState(false);
     const [isTraining, setIsTraining] = useState(false); // New State for AI Training
     const [trainingProgress, setTrainingProgress] = useState(0);
@@ -930,6 +1274,7 @@ function UploadModal({ onClose, userEmail, onSuccess }: { isOpen: boolean, onClo
     const [error, setError] = useState('');
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [fileName, setFileName] = useState('');
+    const workspaceUniversityId = isSuperAdmin ? getAdminWorkspaceUniversityId() : '';
     const [formData, setFormData] = useState({
         title: '',
         course_code: '',
@@ -940,10 +1285,34 @@ function UploadModal({ onClose, userEmail, onSuccess }: { isOpen: boolean, onClo
         department: '',
         faculty: '',
         material_status: 'active',
-        visibility: 'visible'
     });
     const [selectedLevels, setSelectedLevels] = useState<string[]>([]);
     const LEVEL_CHOICES = ['100lvl', '200lvl', '300lvl', '400lvl', '500lvl', '600lvl'];
+
+    useEffect(() => {
+        let cancelled = false;
+        if (isSuperAdmin && !workspaceUniversityId) {
+            return () => {
+                cancelled = true;
+            };
+        }
+        api.get('/admin/academic-context')
+            .then(async (response) => {
+                if (!response.ok || cancelled) return;
+                const payload = await response.json();
+                const context = payload?.context;
+                if (!context) return;
+                setFormData(prev => ({
+                    ...prev,
+                    academic_session: prev.academic_session || context.current_academic_session || '',
+                    semester: prev.semester || normalizeSemester(context.current_semester),
+                }));
+            })
+            .catch(() => {});
+        return () => {
+            cancelled = true;
+        };
+    }, [isSuperAdmin, workspaceUniversityId]);
 
     const toggleLevel = (level: string) => {
         setSelectedLevels(prev =>
@@ -973,6 +1342,12 @@ function UploadModal({ onClose, userEmail, onSuccess }: { isOpen: boolean, onClo
             setIsLoading(false);
             return;
         }
+        const selectedWorkspaceUniversityId = getAdminWorkspaceUniversityId();
+        if (isSuperAdmin && !selectedWorkspaceUniversityId) {
+            setError('Enter a university workspace from the Super Admin portal before uploading.');
+            setIsLoading(false);
+            return;
+        }
 
         try {
             const data = new FormData();
@@ -986,14 +1361,17 @@ function UploadModal({ onClose, userEmail, onSuccess }: { isOpen: boolean, onClo
             if (formData.department) data.append('department', formData.department);
             if (formData.faculty) data.append('faculty', formData.faculty);
             data.append('material_status', formData.material_status);
-            data.append('visibility', formData.visibility);
             if (userEmail) data.append('uploaded_by', userEmail);
+            if (isSuperAdmin) data.append('university_id', selectedWorkspaceUniversityId);
             if (selectedLevels.length > 0) data.append('target_levels', JSON.stringify(selectedLevels));
 
             // Step 1: Upload File
             const response = await api.post('/admin/upload', data);
 
-            if (!response.ok) throw new Error('Upload failed');
+            if (!response.ok) {
+                const payload = await response.json().catch(() => null);
+                throw new Error(payload?.detail || payload?.message || 'Upload failed');
+            }
 
             const result = await response.json();
             const documentId = result.document_id ?? result.supabase_record?.[0]?.id;
@@ -1103,7 +1481,6 @@ function UploadModal({ onClose, userEmail, onSuccess }: { isOpen: boolean, onClo
                     department: '',
                     faculty: '',
                     material_status: 'active',
-                    visibility: 'visible'
                 });
                 setFileName('');
                 setTrainingProgress(0);
@@ -1119,7 +1496,7 @@ function UploadModal({ onClose, userEmail, onSuccess }: { isOpen: boolean, onClo
         >
             <motion.div
                 initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
-                className="w-full max-w-lg bg-background border border-border rounded-2xl shadow-2xl overflow-hidden relative"
+                className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-background shadow-2xl md:max-h-none max-h-[84vh]"
             >
                 {isTraining && (
                     <button
@@ -1153,19 +1530,24 @@ function UploadModal({ onClose, userEmail, onSuccess }: { isOpen: boolean, onClo
                             key="form"
                             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, y: -20 }}
                             onSubmit={handleSubmit}
-                            className="p-5 space-y-5"
+                            className="space-y-4 overflow-y-auto p-4 md:p-5"
                         >
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {isSuperAdmin ? (
+                                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs font-medium text-amber-700 dark:text-amber-300">
+                                    You are uploading as Super Admin into the active university workspace.
+                                </div>
+                            ) : null}
+
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
                                 <FormInput label="Course Code" name="course_code" placeholder="e.g. CS101" value={formData.course_code} required onChange={handleInputChange} />
                                 <FormInput label="Course Title" name="title" placeholder="e.g. Intro to AI" value={formData.title} required onChange={handleInputChange} />
                                 <FormInput label="Lecturer" name="lecturer" placeholder="e.g. Dr. Vance" value={formData.lecturer} required onChange={handleInputChange} />
                                 <FormInput label="Topic" name="topic" placeholder="e.g. Neural Nets" value={formData.topic} required onChange={handleInputChange} />
                                 <FormInput label="Academic Session" name="academic_session" placeholder="e.g. 2024/2025" value={formData.academic_session} onChange={handleInputChange} />
-                                <FormSelect label="Semester" name="semester" value={formData.semester} options={SEMESTER_OPTIONS} onChange={(e) => setFormData({ ...formData, semester: e.target.value })} />
+                                <FormSelect label="Semester" name="semester" value={formData.semester} options={SEMESTER_OPTIONS} onChange={(e) => setFormData({ ...formData, semester: normalizeSemester(e.target.value) })} />
                                 <FormInput label="Department" name="department" placeholder="e.g. Computer Science" value={formData.department} onChange={handleInputChange} />
                                 <FormInput label="Faculty" name="faculty" placeholder="e.g. Science" value={formData.faculty} onChange={handleInputChange} />
-                                <FormSelect label="Material Status" name="material_status" value={formData.material_status} options={MATERIAL_STATUS_OPTIONS} onChange={(e) => setFormData({ ...formData, material_status: e.target.value })} />
-                                <FormSelect label="Visibility" name="visibility" value={formData.visibility} options={VISIBILITY_OPTIONS} onChange={(e) => setFormData({ ...formData, visibility: e.target.value })} />
+                                <FormSelect label="Material Status" name="material_status" value={formData.material_status} options={MATERIAL_STATUS_OPTIONS} onChange={(e) => setFormData({ ...formData, material_status: normalizeMaterialStatus(e.target.value) })} />
                             </div>
 
                             {/* Target Level Selector */}
@@ -1198,7 +1580,7 @@ function UploadModal({ onClose, userEmail, onSuccess }: { isOpen: boolean, onClo
                                     onChange={handleFileChange}
                                     className="absolute inset-0 w-full h-full opacity-0 z-10 cursor-pointer"
                                 />
-                                <div className={`h-32 border-2 border-dashed rounded-xl flex flex-col items-center justify-center transition-all duration-300
+                                <div className={`h-28 border-2 border-dashed rounded-xl flex flex-col items-center justify-center transition-all duration-300
                                     ${fileName ? 'border-primary/50 bg-primary/5' : 'border-border bg-muted/30 group-hover:border-primary/30 group-hover:bg-muted/50'}
                                 `}>
                                     <div className="p-3 rounded-full bg-background mb-2 group-hover:-translate-y-1 transition-transform duration-300 shadow-sm border border-border">
@@ -1218,11 +1600,11 @@ function UploadModal({ onClose, userEmail, onSuccess }: { isOpen: boolean, onClo
                                 </div>
                             )}
 
-                            <div className="flex justify-end gap-3 pt-2">
-                                <button type="button" onClick={onClose} className="px-5 py-2.5 rounded-xl text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+                            <div className="flex justify-end gap-2 pt-1">
+                                <button type="button" onClick={onClose} className="rounded-xl px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
                                     Cancel
                                 </button>
-                                <button type="submit" className="px-6 py-2.5 rounded-xl text-sm font-bold bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg shadow-primary/20 transition-all active:scale-95">
+                                <button type="submit" className="rounded-xl bg-primary px-5 py-2 text-sm font-bold text-primary-foreground shadow-lg shadow-primary/20 transition-all hover:bg-primary/90 active:scale-95">
                                     Confirm Upload
                                 </button>
                             </div>
@@ -1426,12 +1808,10 @@ function EditDocumentModal({ onClose, doc, onUpdate }: { isOpen: boolean, onClos
         topic: doc.topic || '',
         lecturer: doc.lecturer || '',
         academic_session: doc.academic_session || '',
-        semester: doc.semester || '',
+        semester: normalizeSemester(doc.semester),
         department: doc.department || '',
         faculty: doc.faculty || '',
         material_status: doc.material_status || 'active',
-        visibility: doc.visibility || 'visible',
-        approval_status: doc.approval_status || 'approved',
         version_label: doc.version_label || ''
     });
     const [editLevels, setEditLevels] = useState<string[]>(doc.target_levels || []);
@@ -1454,12 +1834,10 @@ function EditDocumentModal({ onClose, doc, onUpdate }: { isOpen: boolean, onClos
                 lecturer_name: formData.lecturer,
                 target_levels: editLevels,
                 academic_session: formData.academic_session || null,
-                semester: formData.semester || null,
+                semester: normalizeSemester(formData.semester) || null,
                 department: formData.department || null,
                 faculty: formData.faculty || null,
                 material_status: formData.material_status,
-                visibility: formData.visibility,
-                approval_status: formData.approval_status,
                 version_label: formData.version_label || null
             });
 
@@ -1481,12 +1859,10 @@ function EditDocumentModal({ onClose, doc, onUpdate }: { isOpen: boolean, onClos
                 course_code: formData.course_code,
                 target_levels: editLevels,
                 academic_session: formData.academic_session,
-                semester: formData.semester,
+                semester: normalizeSemester(formData.semester),
                 department: formData.department,
                 faculty: formData.faculty,
-                material_status: formData.material_status,
-                visibility: formData.visibility,
-                approval_status: formData.approval_status,
+                material_status: normalizeMaterialStatus(formData.material_status),
                 version_label: formData.version_label
             });
 
@@ -1518,20 +1894,18 @@ function EditDocumentModal({ onClose, doc, onUpdate }: { isOpen: boolean, onClos
                 </div>
                 <form onSubmit={handleSubmit} className="p-5 space-y-4">
                     <div className="space-y-4">
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                             <FormInput label="Course Code" name="course_code" value={formData.course_code} required onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, course_code: e.target.value })} />
                             <FormInput label="Topic" name="topic" value={formData.topic} required onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, topic: e.target.value })} />
                         </div>
                         <FormInput label="Course Title" name="title" value={formData.title} required onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, title: e.target.value })} />
                         <FormInput label="Lecturer" name="lecturer" value={formData.lecturer} required onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, lecturer: e.target.value })} />
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                             <FormInput label="Academic Session" name="academic_session" value={formData.academic_session} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, academic_session: e.target.value })} />
-                            <FormSelect label="Semester" name="semester" value={formData.semester} options={SEMESTER_OPTIONS} onChange={(e) => setFormData({ ...formData, semester: e.target.value })} />
+                            <FormSelect label="Semester" name="semester" value={formData.semester} options={SEMESTER_OPTIONS} onChange={(e) => setFormData({ ...formData, semester: normalizeSemester(e.target.value) })} />
                             <FormInput label="Department" name="department" value={formData.department} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, department: e.target.value })} />
                             <FormInput label="Faculty" name="faculty" value={formData.faculty} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, faculty: e.target.value })} />
-                            <FormSelect label="Material Status" name="material_status" value={formData.material_status} options={MATERIAL_STATUS_OPTIONS} onChange={(e) => setFormData({ ...formData, material_status: e.target.value })} />
-                            <FormSelect label="Visibility" name="visibility" value={formData.visibility} options={VISIBILITY_OPTIONS} onChange={(e) => setFormData({ ...formData, visibility: e.target.value })} />
-                            <FormSelect label="Approval Status" name="approval_status" value={formData.approval_status} options={APPROVAL_STATUS_OPTIONS} onChange={(e) => setFormData({ ...formData, approval_status: e.target.value })} />
+                            <FormSelect label="Material Status" name="material_status" value={formData.material_status} options={MATERIAL_STATUS_OPTIONS} onChange={(e) => setFormData({ ...formData, material_status: normalizeMaterialStatus(e.target.value) })} />
                             <FormInput label="Version Label" name="version_label" value={formData.version_label} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, version_label: e.target.value })} />
                         </div>
                         {/* Target Level Selector */}

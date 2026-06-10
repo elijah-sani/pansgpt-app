@@ -21,6 +21,12 @@ class DriveUploadTemporaryError(ValueError):
     """Raised when Google Drive upload fails after retryable transport errors."""
     pass
 
+
+class DriveUploadConfigurationError(ValueError):
+    """Raised when upload configuration would place application files outside the configured folder."""
+    pass
+
+
 class GoogleDriveService:
     """
     Service class for Google Drive operations.
@@ -256,11 +262,13 @@ class GoogleDriveService:
         file_name: str,
         file_obj,
         mime_type: str,
-        target_folder: Optional[str],
+        target_folder: str,
     ) -> str:
+        if not target_folder:
+            raise DriveUploadConfigurationError("Google Drive upload folder is not configured.")
+
         metadata = {'name': file_name}
-        if target_folder:
-            metadata['parents'] = [target_folder]
+        metadata['parents'] = [target_folder]
 
         suffix = os.path.splitext(file_name)[1] or ".bin"
         temp_path = self._copy_to_temp_file(file_obj, suffix)
@@ -311,12 +319,12 @@ class GoogleDriveService:
         1. Chunked Streaming (Low Memory)
         2. Fresh Session per Retry (SSL Fix)
         """
-        target_folder = folder_id or os.getenv('GOOGLE_DRIVE_FOLDER_ID')
+        target_folder = (folder_id or os.getenv('GOOGLE_DRIVE_FOLDER_ID') or "").strip()
+        if not target_folder:
+            raise DriveUploadConfigurationError("Google Drive upload folder is not configured.")
         
         # Prepare Metadata
-        metadata = {'name': file_name}
-        if target_folder:
-            metadata['parents'] = [target_folder]
+        metadata = {'name': file_name, 'parents': [target_folder]}
 
         upload_url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable"
         init_headers = {
