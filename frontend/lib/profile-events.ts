@@ -5,6 +5,7 @@ export type ProfileUpdateDetail = {
   avatarUrl?: string;
   level?: string;
   university?: string;
+  universityId?: string;
   subscriptionTier?: string;
 };
 
