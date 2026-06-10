@@ -14,6 +14,9 @@ export interface ReaderDocument {
   drive_file_id: string;
   file_name?: string;
   file_size?: number;
+  material_status?: 'active' | 'archived' | string;
+  academic_session?: string;
+  semester?: string;
 }
 
 const LS_KEY = 'pansgpt_documents_cache';

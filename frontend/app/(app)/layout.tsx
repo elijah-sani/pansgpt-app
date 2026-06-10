@@ -4,20 +4,25 @@ import React, { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Clock3, Loader2, Pencil, ShieldAlert, Trash2, X } from "lucide-react";
 import AppSidebar from "@/components/AppSidebar";
+import MainLoading from "./main/loading";
+import ReaderLoading from "./reader/loading";
+import QuizLoading from "./quiz/loading";
 import OfflineBanner from "@/components/OfflineBanner";
 import PersonalInformationModal from "@/components/PersonalInformationModal";
 import PWAInstallBanner from "@/components/PWAInstallBanner";
 import ReportProblemModal from "@/components/ReportProblemModal";
 import SearchChatsModal from "@/components/SearchChatsModal";
 import SettingsModal from "@/components/SettingsModal";
+import UniversitySuspendedBlocker from "@/components/UniversitySuspendedBlocker";
 import type { MainUser } from "@/components/main/types";
 import { ChatSessionProvider, useChatSession } from "@/lib/ChatSessionContext";
 import { PROFILE_UPDATED_EVENT, type ProfileUpdateDetail } from "@/lib/profile-events";
 import { SidebarControlsContext } from "@/lib/sidebar-controls";
-import { resolveDestinationFromBootstrap } from "@/lib/bootstrap-routing";
 import { fetchBootstrap } from "@/lib/bootstrap-cache";
 import { supabase } from "@/lib/supabase";
 import { api } from "@/lib/api";
+import { clearAdminWorkspaceUniversity } from "@/lib/admin-workspace";
+import { buildWhatsAppSupportUrl } from "@/lib/support-config";
 
 type ActiveRestriction = {
     course_code?: string | null;
@@ -40,17 +45,16 @@ type RestrictionStatusResponse = {
 function AppLayoutContent({ children }: { children: React.ReactNode }) {
     const router = useRouter();
     const pathname = usePathname();
-    const { clearHistory, deleteSession, sessions, setSessions, setActiveSessionId, activeSessionId } = useChatSession();
+    const { clearHistory, deleteSession, sessions, setSessions, setActiveSessionId, activeSessionId, pendingPath, setPendingPath } = useChatSession();
 
-    const isQuizTaking = /^\/quiz\/[^/]+$/.test(pathname ?? "");
+    useEffect(() => {
+        setPendingPath(null);
+    }, [pathname, setPendingPath]);
 
-    const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
-        if (typeof window === "undefined") {
-            return true;
-        }
+    const isQuizTaking = /^\/quiz\/generating\/[^/]+$/.test(pathname ?? "")
+        || /^\/quiz\/(?!history$|new$|generating$)[^/]+$/.test(pathname ?? "");
 
-        return window.innerWidth >= 768;
-    });
+    const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [isPersonalInfoOpen, setIsPersonalInfoOpen] = useState(false);
@@ -65,8 +69,13 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
     const [restriction, setRestriction] = useState<ActiveRestriction | null>(null);
     const [, setIsRestrictionLoading] = useState(true);
     const [restrictionNow, setRestrictionNow] = useState(() => Date.now());
+    const [isUniversitySuspended, setIsUniversitySuspended] = useState(false);
     const hasResolvedInitialShellRef = useRef(false);
     const sidebarTouchStartRef = useRef<{ x: number; y: number } | null>(null);
+
+    useEffect(() => {
+        setIsSidebarOpen(window.innerWidth >= 768);
+    }, []);
 
     const handleConfirmDelete = async () => {
         if (!deleteTargetId) return;
@@ -144,6 +153,7 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                 setIsAdmin(false);
                 setRestriction(null);
                 setIsRestrictionLoading(false);
+                setIsUniversitySuspended(false);
                 hasResolvedInitialShellRef.current = false;
                 return;
             }
@@ -166,9 +176,23 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                 return;
             }
 
-            const destination = resolveDestinationFromBootstrap(data);
-            if (destination !== "/main") {
-                router.replace(destination);
+            if (data?.is_lecturer) {
+                if (data.lecturer_status === "active") {
+                    router.replace("/lecturer");
+                    return;
+                }
+
+                if (data.lecturer_status === "pending") {
+                    router.replace("/lecturer/pending");
+                    return;
+                }
+
+                if (data.lecturer_status && ["rejected", "suspended", "revoked"].includes(data.lecturer_status)) {
+                    router.replace("/lecturer");
+                    return;
+                }
+
+                router.replace("/lecturer");
                 return;
             }
 
@@ -187,6 +211,7 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                 subscriptionTier: profile?.subscription_tier || "free",
             });
             setIsAdmin(Boolean(data?.is_admin));
+            setIsUniversitySuspended(Boolean((data as Record<string, unknown>)?.is_university_suspended));
             await loadRestrictionStatus({ foreground: isInitialShellLoad });
             hasResolvedInitialShellRef.current = true;
         };
@@ -201,6 +226,7 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                 setIsReportProblemOpen(false);
                 setRestriction(null);
                 setIsRestrictionLoading(false);
+                setIsUniversitySuspended(false);
                 hasResolvedInitialShellRef.current = false;
             } else {
                 void loadShellUser();
@@ -282,6 +308,7 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
             localStorage.removeItem("deviceId");
         }
 
+        clearAdminWorkspaceUniversity();
         await supabase.auth.signOut();
         window.location.replace("/login");
     };
@@ -350,7 +377,9 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                 toggle: () => setIsSidebarOpen((prev) => !prev),
             }}
         >
-            {restriction ? (
+            {isUniversitySuspended ? (
+                <UniversitySuspendedBlocker onLogout={handleLogout} />
+            ) : restriction ? (
                 <StudentRestrictionBlocker restriction={restriction} now={restrictionNow} />
             ) : (
                 <>
@@ -375,7 +404,15 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                         <div className={`flex-1 min-w-0 overflow-x-hidden overflow-y-auto transition-transform duration-300 ease-out md:translate-x-0 ${
                             isSidebarOpen && !isQuizTaking ? "max-md:translate-x-full" : "max-md:translate-x-0"
                         } ${!pathname?.startsWith("/reader/") ? "overscroll-none" : ""}`}>
-                            {children}
+                            {pendingPath === "/reader" ? (
+                                <ReaderLoading />
+                            ) : pendingPath === "/quiz" ? (
+                                <QuizLoading />
+                            ) : pendingPath === "/main" ? (
+                                <MainLoading />
+                            ) : (
+                                children
+                            )}
                         </div>
                     </div>
 
@@ -479,6 +516,7 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                         onDeleteAccount={handleDeleteAccount}
                         onClearHistory={handleClearHistory}
                         user={shellUser}
+                        onOpenReportProblem={() => setIsReportProblemOpen(true)}
                     />
 
                     {shellUser && (
@@ -514,9 +552,7 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
     return (
-        <ChatSessionProvider>
-            <AppLayoutContent>{children}</AppLayoutContent>
-        </ChatSessionProvider>
+        <AppLayoutContent>{children}</AppLayoutContent>
     );
 }
 
@@ -537,7 +573,7 @@ function StudentRestrictionBlocker({
         `Lecturer: ${lecturerName}`,
         `Restriction ends: ${formatRestrictionDateTime(restriction.end_time)}`,
     ].join("\n");
-    const whatsappSupportUrl = `https://wa.me/2349042581125?text=${encodeURIComponent(whatsappMessage)}`;
+    const whatsappSupportUrl = buildWhatsAppSupportUrl(whatsappMessage);
 
     return (
         <div className="flex min-h-[100dvh] w-full items-center justify-center bg-background px-6 py-12">

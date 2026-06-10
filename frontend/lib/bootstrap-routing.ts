@@ -3,13 +3,21 @@ export type BootstrapRouteResponse = {
   is_super_admin?: boolean;
   is_global_admin?: boolean;
   is_university_admin?: boolean;
+  is_senior_university_admin?: boolean;
+  admin_level?: 'senior' | 'standard' | null;
   is_lecturer?: boolean;
   lecturer_status?: 'pending' | 'active' | 'rejected' | 'suspended' | 'revoked' | null;
+  university_status?: 'active' | 'suspended' | null;
+  is_university_suspended?: boolean;
 };
 
 export function resolveDestinationFromBootstrap(bootstrap: BootstrapRouteResponse | null | undefined): string {
   if (bootstrap?.is_super_admin || bootstrap?.is_global_admin) {
     return '/super-admin';
+  }
+
+  if (bootstrap?.is_university_admin) {
+    return '/admin';
   }
 
   if (bootstrap?.is_lecturer) {

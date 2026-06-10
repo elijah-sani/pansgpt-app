@@ -3,14 +3,16 @@
 import { ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
 import QuizHistory from "@/components/QuizHistory";
+import { useChatSession } from "@/lib/ChatSessionContext";
 
 export default function QuizHistoryPage() {
   const router = useRouter();
+  const { setPendingPath } = useChatSession();
 
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className="sticky top-0 z-10 flex items-center border-b border-border bg-card/95 px-4 py-3 backdrop-blur-sm md:hidden">
-        <button onClick={() => router.push("/quiz")} className="mr-2 rounded-lg p-2 text-foreground transition-colors hover:bg-accent" aria-label="Back to Quiz">
+        <button onClick={() => { setPendingPath("/quiz"); router.push("/quiz"); }} className="mr-2 rounded-lg p-2 text-foreground transition-colors hover:bg-accent" aria-label="Back to Quiz">
           <ArrowLeft size={20} />
         </button>
         <span className="text-sm font-semibold">Quiz History</span>

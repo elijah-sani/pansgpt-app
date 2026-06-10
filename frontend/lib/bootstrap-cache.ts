@@ -10,13 +10,21 @@ type BootstrapProfile = {
   other_names?: string | null;
   subscription_tier?: string | null;
   university?: string | null;
+  university_id?: string | null;
 };
 
 type BootstrapPayload = BootstrapRouteResponse & {
   profile?: BootstrapProfile | null;
+  academic_context?: {
+    current_academic_session?: string | null;
+    current_semester?: 'first' | 'second' | string | null;
+    university_id?: string | null;
+  } | null;
   system_settings?: Record<string, unknown> | null;
   lecturer_profile?: Record<string, unknown> | null;
   file_count?: number;
+  university_id?: string | null;
+  university_name?: string | null;
 };
 
 const BOOTSTRAP_CACHE_TTL_MS = 10_000;
