@@ -3,7 +3,7 @@ Quiz router – Generate, submit, and retrieve quizzes.
 """
 from fastapi import APIRouter, HTTPException, Request, Depends, Header, BackgroundTasks
 from fastapi.responses import JSONResponse
-from dependencies import get_current_user, User
+from dependencies import get_current_user, User, UNIVERSITY_SUSPENDED_MESSAGE
 from pydantic import BaseModel, field_validator
 from typing import Optional, List, Union, Any
 import json
@@ -144,7 +144,6 @@ async def _resolve_active_university_by_text(sb, university_name: Optional[str])
         res = await _execute_quiz_query(
             lambda: sb.table("universities")
             .select("id,name,status")
-            .eq("status", "active")
             .ilike("name", normalized_name)
             .limit(1)
             .execute(),
@@ -157,7 +156,6 @@ async def _resolve_active_university_by_text(sb, university_name: Optional[str])
         fallback = await _execute_quiz_query(
             lambda: sb.table("universities")
             .select("id,name,status")
-            .eq("status", "active")
             .ilike("name", f"%{normalized_name}%")
             .limit(1)
             .execute(),
@@ -201,18 +199,27 @@ async def resolve_student_university_context(current_user: User) -> dict:
                 "Validate quiz student university",
             )
             university_row = (university_res.data or [None])[0]
-            if university_row and (university_row.get("status") or "").strip().lower() == "active":
+            university_status = (university_row.get("status") or "").strip().lower() if university_row else None
+            if university_status == "suspended":
+                raise HTTPException(status_code=400, detail=UNIVERSITY_SUSPENDED_MESSAGE)
+            if university_row and university_status == "active":
                 university_name = _normalize_optional_text(university_row.get("name")) or university_name
             else:
                 resolved_university_id = None
+        except HTTPException:
+            raise
         except Exception as exc:
             logger.warning("Could not validate quiz student university_id=%s: %s", explicit_university_id, exc)
             resolved_university_id = None
     elif university_name:
         matched_university = await _resolve_active_university_by_text(sb, university_name)
         if matched_university:
-            resolved_university_id = _normalize_optional_text(matched_university.get("id"))
-            university_name = _normalize_optional_text(matched_university.get("name")) or university_name
+            university_status = (matched_university.get("status") or "").strip().lower()
+            if university_status == "suspended":
+                raise HTTPException(status_code=400, detail=UNIVERSITY_SUSPENDED_MESSAGE)
+            if university_status == "active":
+                resolved_university_id = _normalize_optional_text(matched_university.get("id"))
+                university_name = _normalize_optional_text(matched_university.get("name")) or university_name
 
     return {
         "profile": profile or None,
@@ -855,7 +862,10 @@ def _update_quiz_generation_job(
         payload["completed_at"] = datetime.now(timezone.utc).isoformat()
 
     try:
-        sb.table("quiz_generation_jobs").update(payload).eq("id", job_id).execute()
+        query = sb.table("quiz_generation_jobs").update(payload).eq("id", job_id)
+        if status != "cancelled":
+            query = query.neq("status", "cancelled")
+        query.execute()
     except Exception as exc:
         logger.warning("Failed to update quiz generation job %s: %s", job_id, exc)
 
@@ -1333,6 +1343,8 @@ async def create_quiz_generation_job(
     current_user: User = Depends(get_current_user),
 ):
     """Create a background quiz generation job and return immediately."""
+    await resolve_student_university_context(current_user)
+
     restriction = await _get_quiz_restriction_if_any(current_user)
     if restriction:
         return JSONResponse(status_code=423, content=build_restriction_block_payload(restriction))
@@ -1368,6 +1380,8 @@ async def create_quiz_generation_job(
 
 @router.get("/jobs/{job_id}", dependencies=[Depends(_verify_api_key)])
 async def get_quiz_generation_job(job_id: str, current_user: User = Depends(get_current_user)):
+    await resolve_student_university_context(current_user)
+
     sb = _get_supabase()
     try:
         res = (
@@ -1389,9 +1403,61 @@ async def get_quiz_generation_job(job_id: str, current_user: User = Depends(get_
     return {"job": _normalize_quiz_generation_job(rows[0])}
 
 
+@router.post("/jobs/{job_id}/cancel", dependencies=[Depends(_verify_api_key)])
+async def cancel_quiz_generation_job(job_id: str, current_user: User = Depends(get_current_user)):
+    await resolve_student_university_context(current_user)
+
+    sb = _get_supabase()
+    try:
+        res = (
+            sb.table("quiz_generation_jobs")
+            .select("id,status")
+            .eq("id", job_id)
+            .eq("user_id", current_user.id)
+            .limit(1)
+            .execute()
+        )
+        rows = res.data or []
+    except Exception as exc:
+        logger.error("Could not load quiz generation job %s for cancellation: %s", job_id, exc)
+        raise HTTPException(status_code=500, detail="Unable to cancel quiz generation.")
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="Quiz generation job not found.")
+
+    current_status = rows[0].get("status")
+    if current_status in {"completed", "failed", "cancelled"}:
+        return {"job": _normalize_quiz_generation_job(rows[0])}
+
+    payload = {
+        "status": "cancelled",
+        "progress": 100,
+        "current_step": "Quiz generation cancelled",
+        "error_message": "Quiz generation was cancelled.",
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    try:
+        cancel_res = (
+            sb.table("quiz_generation_jobs")
+            .update(payload)
+            .eq("id", job_id)
+            .eq("user_id", current_user.id)
+            .execute()
+        )
+        cancelled_rows = cancel_res.data or []
+    except Exception as exc:
+        logger.error("Could not cancel quiz generation job %s: %s", job_id, exc)
+        raise HTTPException(status_code=500, detail="Unable to cancel quiz generation.")
+
+    return {"job": _normalize_quiz_generation_job(cancelled_rows[0] if cancelled_rows else {**rows[0], **payload})}
+
+
 @router.get("/history", dependencies=[Depends(_verify_api_key)])
 async def quiz_history(limit: int = 50, current_user: User = Depends(get_current_user)):
     """Get user's quiz history with results."""
+    await resolve_student_university_context(current_user)
+
     sb = _get_supabase()
     try:
         # Fetch quizzes
@@ -1421,6 +1487,8 @@ async def quiz_history(limit: int = 50, current_user: User = Depends(get_current
 
         return {"quizzes": quizzes}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Quiz history error: {e}")
         raise HTTPException(status_code=500, detail="Unable to load your quiz history. Please try again.")
@@ -1429,6 +1497,8 @@ async def quiz_history(limit: int = 50, current_user: User = Depends(get_current
 @router.get("/{quiz_id}", dependencies=[Depends(_verify_api_key)])
 async def get_quiz(quiz_id: str, current_user: User = Depends(get_current_user)):
     """Get a quiz with its questions."""
+    await resolve_student_university_context(current_user)
+
     sb = _get_supabase()
     try:
         quiz_res = sb.table("quizzes") \
@@ -1464,6 +1534,8 @@ async def get_quiz(quiz_id: str, current_user: User = Depends(get_current_user))
 @router.post("/submit", dependencies=[Depends(_verify_api_key)])
 async def submit_quiz(body: QuizSubmitRequest, current_user: User = Depends(get_current_user)):
     """Submit quiz answers, calculate score, save result."""
+    await resolve_student_university_context(current_user)
+
     sb = _get_supabase()
     try:
         # Fetch questions for scoring
@@ -1675,6 +1747,8 @@ async def submit_quiz(body: QuizSubmitRequest, current_user: User = Depends(get_
             "feedback": feedback_items,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Quiz submit error: {e}")
         raise HTTPException(status_code=500, detail="Unable to submit your answers. Please try again.")
@@ -1683,6 +1757,8 @@ async def submit_quiz(body: QuizSubmitRequest, current_user: User = Depends(get_
 @router.get("/results/{result_id}", dependencies=[Depends(_verify_api_key)])
 async def get_quiz_result(result_id: str, current_user: User = Depends(get_current_user)):
     """Get a specific quiz result."""
+    await resolve_student_university_context(current_user)
+
     sb = _get_supabase()
     try:
         res = sb.table("quiz_results") \

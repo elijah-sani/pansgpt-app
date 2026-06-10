@@ -43,6 +43,7 @@ export default function QuizGeneratingScreen({ jobId }: { jobId: string }) {
   const [factDeck, setFactDeck] = useState<DidYouKnowFact[]>(() => shuffleFacts(DID_YOU_KNOW_FACTS));
   const [factIndex, setFactIndex] = useState(0);
   const [isFactPopupDismissed, setIsFactPopupDismissed] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -82,6 +83,11 @@ export default function QuizGeneratingScreen({ jobId }: { jobId: string }) {
         }
       } catch (err) {
         if (!cancelled) {
+          if (typeof window !== 'undefined' && err instanceof Error && err.message.toLowerCase().includes('not found')) {
+            window.localStorage.removeItem('pansgpt-active-quiz-job-id');
+            router.replace('/quiz');
+            return;
+          }
           setError(err instanceof Error ? err.message : 'Unable to check quiz generation status.');
           timeoutId = window.setTimeout(poll, 2500);
         }
@@ -137,12 +143,34 @@ export default function QuizGeneratingScreen({ jobId }: { jobId: string }) {
   const currentFact = factDeck[factIndex] || DID_YOU_KNOW_FACTS[0];
   const shouldShowFactPopup = Boolean(currentFact && !isFactPopupDismissed);
 
+  const cancelGeneration = async () => {
+    if (isCancelling) return;
+
+    setIsCancelling(true);
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem('pansgpt-active-quiz-job-id');
+    }
+
+    try {
+      await api.post(`/api/quiz/jobs/${jobId}/cancel`, {});
+    } catch (err) {
+      console.error('Failed to cancel quiz generation:', err);
+    } finally {
+      router.replace('/quiz');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="sticky top-0 z-10 flex min-h-[3.75rem] items-center gap-3 border-b border-border bg-card/95 px-5 md:min-h-[4.5rem] md:px-8">
         <button
           type="button"
-          onClick={() => router.replace('/quiz')}
+          onClick={() => {
+            if (typeof window !== 'undefined') {
+              window.localStorage.removeItem('pansgpt-active-quiz-job-id');
+            }
+            router.replace('/quiz');
+          }}
           className="flex h-9 w-9 items-center justify-center rounded-full text-foreground transition-colors hover:bg-muted"
           aria-label="Back to quiz"
         >
@@ -172,12 +200,26 @@ export default function QuizGeneratingScreen({ jobId }: { jobId: string }) {
             {failed ? (
               <button
                 type="button"
-                onClick={() => router.replace('/quiz?new=1')}
+                onClick={() => {
+                  if (typeof window !== 'undefined') {
+                    window.localStorage.removeItem('pansgpt-active-quiz-job-id');
+                  }
+                  router.replace('/quiz?new=1');
+                }}
                 className="mt-5 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-red-700 transition-colors hover:bg-white/90"
               >
                 Try again
               </button>
-            ) : null}
+            ) : (
+              <button
+                type="button"
+                onClick={cancelGeneration}
+                disabled={isCancelling}
+                className="mt-5 rounded-lg border border-white/20 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isCancelling ? 'Cancelling...' : 'Cancel generation'}
+              </button>
+            )}
           </div>
         </section>
 

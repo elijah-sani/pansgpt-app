@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useSidebarTrigger } from "@/lib/sidebar-controls";
 import { useQuizCache } from "@/lib/QuizCacheContext";
+import { api } from "@/lib/api";
 import QuizBuilderModal, { type QuizGenerationJob } from "@/components/QuizBuilderModal";
 
 type QuizHistoryResult = {
@@ -106,9 +107,34 @@ export default function QuizPage() {
     const params = new URLSearchParams(window.location.search);
     if (params.get("new") === "1") return;
     const storedJobId = window.localStorage.getItem("pansgpt-active-quiz-job-id");
-    if (storedJobId) {
-      router.replace(`/quiz/generating/${storedJobId}`);
-    }
+    if (!storedJobId) return;
+
+    let cancelled = false;
+    const checkStoredJob = async () => {
+      try {
+        const response = await api.get(`/api/quiz/jobs/${storedJobId}`);
+        const rawText = await response.clone().text().catch(() => "");
+        const data = rawText ? JSON.parse(rawText) : {};
+        const status = data.job?.status;
+
+        if (cancelled) return;
+        if (!response.ok || status === "completed" || status === "failed" || status === "cancelled") {
+          window.localStorage.removeItem("pansgpt-active-quiz-job-id");
+          return;
+        }
+
+        router.replace(`/quiz/generating/${storedJobId}`);
+      } catch {
+        if (!cancelled) {
+          window.localStorage.removeItem("pansgpt-active-quiz-job-id");
+        }
+      }
+    };
+
+    void checkStoredJob();
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
 
   const openBuilder = () => setIsBuilderOpen(true);
