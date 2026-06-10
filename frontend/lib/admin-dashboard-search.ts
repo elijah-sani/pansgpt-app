@@ -117,11 +117,11 @@ const QUICK_ACTIONS = [
     },
     {
         id: 'quick-settings',
-        title: 'Settings',
-        description: 'Manage admin settings and preferences.',
+        title: 'University settings',
+        description: 'Manage academic context and semester rollover.',
         href: '/admin/settings',
         category: 'Quick actions' as const,
-        keywords: ['settings', 'preferences', 'configuration', 'options'],
+        keywords: ['settings', 'academic', 'context', 'semester', 'rollover'],
     },
 ] as const;
 

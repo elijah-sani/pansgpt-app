@@ -1,23 +1,19 @@
 'use client';
 
-'use client';
-
 import React, { useEffect, useState } from 'react';
 import {
-    ThumbsUp,
-    ThumbsDown,
     AlertTriangle,
+    List,
     MessageSquare,
     Search,
-    ArrowUpRight,
-    List,
-    X
+    ThumbsDown,
+    ThumbsUp,
+    X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import Link from 'next/link';
+
 import { api } from '@/lib/api';
 
-// --- Types ---
 interface FeedbackItem {
     id: number;
     rating: 'up' | 'down' | 'report';
@@ -25,7 +21,7 @@ interface FeedbackItem {
     comments: string;
     created_at: string;
     session_id: string;
-    message_id: string; // Added field
+    message_id: string;
     user_id: string;
     profiles: {
         first_name: string | null;
@@ -68,8 +64,8 @@ export default function AdminFeedbackPage() {
     const [searchQuery, setSearchQuery] = useState('');
     const [showMobileSearch, setShowMobileSearch] = useState(false);
     const [filterRating, setFilterRating] = useState<'all' | 'up' | 'down' | 'report'>('all');
+    const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
 
-    // --- Fetch Data ---
     useEffect(() => {
         const fetchFeedback = async () => {
             setIsLoading(true);
@@ -78,212 +74,193 @@ export default function AdminFeedbackPage() {
                 if (!res.ok) {
                     throw new Error(`Failed to fetch admin feedback: ${res.status}`);
                 }
+
                 const payload = await res.json();
                 const data = (payload?.data || []) as RawFeedbackItem[];
                 const normalized = data.map((item) => {
-                    const resolvedProfile = Array.isArray(item.profiles)
-                        ? (item.profiles[0] ?? null)
-                        : (item.profiles ?? null);
+                    const resolvedProfile = Array.isArray(item.profiles) ? (item.profiles[0] ?? null) : (item.profiles ?? null);
                     const firstName = resolvedProfile?.first_name?.trim() || '';
                     const otherNames = resolvedProfile?.other_names?.trim() || '';
                     const localDisplayName = [firstName, otherNames].filter(Boolean).join(' ').trim();
+
                     return {
                         ...item,
                         profiles: resolvedProfile,
                         display_name: item.display_name || localDisplayName || `User ${item.user_id?.slice(0, 8) || 'Unknown'}`,
                     };
                 });
+
                 setFeedback(normalized);
             } catch (err) {
-                console.error("Failed to fetch:", err);
+                console.error('Failed to fetch:', err);
             } finally {
                 setIsLoading(false);
             }
         };
 
-        fetchFeedback();
+        void fetchFeedback();
     }, []);
 
-    // --- Stats Calculation ---
     const totalFeedback = feedback.length;
-    const thumbsUp = feedback.filter(f => f.rating === 'up').length;
-    const thumbsDown = feedback.filter(f => f.rating === 'down').length;
-    const reports = feedback.filter(f => f.rating === 'report').length;
+    const thumbsUp = feedback.filter((item) => item.rating === 'up').length;
+    const thumbsDown = feedback.filter((item) => item.rating === 'down').length;
+    const reports = feedback.filter((item) => item.rating === 'report').length;
 
-    // --- Filter Logic ---
-    const filteredFeedback = feedback.filter(item => {
+    const filteredFeedback = feedback.filter((item) => {
+        const query = searchQuery.toLowerCase();
         const matchesSearch =
-            (item.comments?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
-            (item.category?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
-            (item.display_name?.toLowerCase() || '').includes(searchQuery.toLowerCase());
+            (item.comments?.toLowerCase() || '').includes(query) ||
+            (item.category?.toLowerCase() || '').includes(query) ||
+            (item.display_name?.toLowerCase() || '').includes(query);
 
         const matchesFilter = filterRating === 'all' || item.rating === filterRating;
-
         return matchesSearch && matchesFilter;
     });
 
-    // --- Render Helpers ---
-    const renderRatingBadge = (rating: string) => {
+    const renderRatingBadge = (rating: FeedbackItem['rating']) => {
         switch (rating) {
             case 'up':
                 return (
-                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
-                        <ThumbsUp className="w-3 h-3" />
+                    <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/30 dark:text-green-400">
+                        <ThumbsUp className="h-3 w-3" />
                         Positive
                     </span>
                 );
             case 'down':
                 return (
-                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400">
-                        <ThumbsDown className="w-3 h-3" />
+                    <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-800 dark:bg-red-900/30 dark:text-red-400">
+                        <ThumbsDown className="h-3 w-3" />
                         Negative
                     </span>
                 );
             case 'report':
                 return (
-                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
-                        <AlertTriangle className="w-3 h-3" />
+                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
+                        <AlertTriangle className="h-3 w-3" />
                         Report
                     </span>
                 );
-            default:
-                return null;
         }
     };
 
     return (
-        <div className="w-full max-w-5xl mx-auto md:pt-6 md:px-4 space-y-8 animate-in fade-in duration-500">
-            {/* Header */}
+        <div className="mx-auto w-full max-w-6xl space-y-8 animate-in fade-in duration-500 md:px-4 md:pt-6">
             <div>
                 <h1 className="text-2xl font-bold tracking-tight">User Feedback & Analytics</h1>
-                <p className="text-muted-foreground mt-1">
+                <p className="mt-1 text-muted-foreground">
                     Monitor user ratings, reported issues, and overall feedback sentiment.
                 </p>
             </div>
 
-            {/* Stats Cards - Full Width */}
-            <div className="grid grid-cols-2 gap-4 w-full md:grid-cols-4">
-                <StatsCard
-                    label="Total Feedback"
-                    value={totalFeedback}
-                    icon={MessageSquare}
-                    color="text-foreground"
-                    bg="bg-card"
-                />
-                <StatsCard
-                    label="Positive Ratings"
-                    value={thumbsUp}
-                    icon={ThumbsUp}
-                    color="text-green-500"
-                    bg="bg-green-500/10"
-                    borderColor="border-green-500/20"
-                />
-                <StatsCard
-                    label="Negative Ratings"
-                    value={thumbsDown}
-                    icon={ThumbsDown}
-                    color="text-red-500"
-                    bg="bg-red-500/10"
-                    borderColor="border-red-500/20"
-                />
-                <StatsCard
-                    label="General Reports"
-                    value={reports}
-                    icon={AlertTriangle}
-                    color="text-blue-500"
-                    bg="bg-blue-500/10"
-                    borderColor="border-blue-500/20"
-                />
+            <div className="grid w-full grid-cols-2 gap-4 md:grid-cols-4">
+                <StatsCard label="Total Feedback" value={totalFeedback} icon={MessageSquare} color="text-foreground" bg="bg-card" />
+                <StatsCard label="Positive Ratings" value={thumbsUp} icon={ThumbsUp} color="text-green-500" bg="bg-green-500/10" borderColor="border-green-500/20" />
+                <StatsCard label="Negative Ratings" value={thumbsDown} icon={ThumbsDown} color="text-red-500" bg="bg-red-500/10" borderColor="border-red-500/20" />
+                <StatsCard label="General Reports" value={reports} icon={AlertTriangle} color="text-blue-500" bg="bg-blue-500/10" borderColor="border-blue-500/20" />
             </div>
 
-            {/* Filters & Search - Combined Bar */}
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-
-                {/* Compact Icon-Only Filter Bar */}
-                <div className="flex w-full items-center gap-2 overflow-x-auto rounded-lg border border-border/50 bg-card p-1 shadow-sm md:w-fit">
+                <div className="hidden w-full items-center gap-2 overflow-x-auto rounded-lg border border-border/50 bg-card p-1 shadow-sm md:flex md:w-fit">
                     <button
                         onClick={() => setFilterRating('all')}
                         title="All Feedback"
-                        className={`p-2 rounded-md transition-all ${filterRating === 'all'
-                            ? 'bg-primary text-primary-foreground shadow-sm'
-                            : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-                            }`}
+                        className={`rounded-md p-2 transition-all ${filterRating === 'all' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
                     >
-                        <List className="w-4 h-4" />
+                        <List className="h-4 w-4" />
                     </button>
-                    <div className="w-px h-4 bg-border/50 mx-1" />
+                    <div className="mx-1 h-4 w-px bg-border/50" />
                     <button
                         onClick={() => setFilterRating('up')}
                         title="Positive Ratings"
-                        className={`p-2 rounded-md transition-all ${filterRating === 'up'
-                            ? 'bg-green-500 text-white shadow-sm'
-                            : 'text-muted-foreground hover:text-green-500 hover:bg-green-500/10'
-                            }`}
+                        className={`rounded-md p-2 transition-all ${filterRating === 'up' ? 'bg-green-500 text-white shadow-sm' : 'text-muted-foreground hover:bg-green-500/10 hover:text-green-500'}`}
                     >
-                        <ThumbsUp className="w-4 h-4" />
+                        <ThumbsUp className="h-4 w-4" />
                     </button>
                     <button
                         onClick={() => setFilterRating('down')}
                         title="Negative Ratings"
-                        className={`p-2 rounded-md transition-all ${filterRating === 'down'
-                            ? 'bg-red-500 text-white shadow-sm'
-                            : 'text-muted-foreground hover:text-red-500 hover:bg-red-500/10'
-                            }`}
+                        className={`rounded-md p-2 transition-all ${filterRating === 'down' ? 'bg-red-500 text-white shadow-sm' : 'text-muted-foreground hover:bg-red-500/10 hover:text-red-500'}`}
                     >
-                        <ThumbsDown className="w-4 h-4" />
+                        <ThumbsDown className="h-4 w-4" />
                     </button>
                     <button
                         onClick={() => setFilterRating('report')}
                         title="Reports"
-                        className={`p-2 rounded-md transition-all ${filterRating === 'report'
-                            ? 'bg-amber-500 text-white shadow-sm'
-                            : 'text-muted-foreground hover:text-amber-500 hover:bg-amber-500/10'
-                            }`}
+                        className={`rounded-md p-2 transition-all ${filterRating === 'report' ? 'bg-amber-500 text-white shadow-sm' : 'text-muted-foreground hover:bg-amber-500/10 hover:text-amber-500'}`}
                     >
-                        <AlertTriangle className="w-4 h-4" />
+                        <AlertTriangle className="h-4 w-4" />
                     </button>
                 </div>
 
-                {/* Desktop Search */}
-                <div className="relative hidden md:block w-full md:w-72">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <div className="relative hidden w-full md:block md:w-72">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                     <input
                         type="text"
                         placeholder="Search feedback..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-9 pr-4 py-2 bg-background border border-input rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all shadow-sm hover:border-primary/30"
+                        className="w-full rounded-lg border border-input bg-background py-2 pl-9 pr-4 text-sm shadow-sm transition-all hover:border-primary/30 focus:outline-none focus:ring-2 focus:ring-primary/20"
                     />
                 </div>
 
-                {/* Mobile Search Toggle */}
-                <div className="md:hidden w-full">
-                    {!showMobileSearch ? (
-                        <button onClick={() => setShowMobileSearch(true)} className="flex items-center gap-2 text-sm text-muted-foreground bg-background border border-input rounded-lg px-4 py-2 w-full transition-all hover:border-primary/30">
-                            <Search className="w-4 h-4 shrink-0" />
-                            <span>Search feedback...</span>
-                        </button>
-                    ) : (
-                        <div className="flex items-center gap-2 w-full bg-background border border-input rounded-lg px-4 py-2 focus-within:ring-2 focus-within:ring-primary/20 transition-all">
-                            <Search className="w-4 h-4 text-muted-foreground shrink-0" />
-                            <input
-                                autoFocus
-                                type="text"
-                                placeholder="Search feedback..."
-                                className="bg-transparent border-none outline-none text-sm w-full placeholder:text-muted-foreground/70 text-foreground"
-                                value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
-                                onBlur={() => !searchQuery && setShowMobileSearch(false)}
-                            />
-                            <button onClick={() => { setSearchQuery(''); setShowMobileSearch(false); }} className="text-muted-foreground hover:text-foreground shrink-0">
-                                <X className="w-4 h-4" />
+                <div className="w-full md:hidden">
+                    <div className="flex items-center gap-2">
+                        {!showMobileSearch ? (
+                            <button
+                                onClick={() => setShowMobileSearch(true)}
+                                className="flex h-11 flex-1 items-center gap-2 rounded-lg border border-input bg-background px-4 text-sm text-muted-foreground transition-all hover:border-primary/30"
+                            >
+                                <Search className="h-4 w-4 shrink-0" />
+                                <span>Search feedback...</span>
                             </button>
+                        ) : (
+                            <div className="flex h-11 flex-1 items-center gap-2 rounded-lg border border-input bg-background px-4 transition-all focus-within:ring-2 focus-within:ring-primary/20">
+                                <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                <input
+                                    autoFocus
+                                    type="text"
+                                    placeholder="Search feedback..."
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    onBlur={() => {
+                                        if (!searchQuery) setShowMobileSearch(false);
+                                    }}
+                                    className="w-full border-none bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/70"
+                                />
+                                <button
+                                    onClick={() => {
+                                        setSearchQuery('');
+                                        setShowMobileSearch(false);
+                                    }}
+                                    className="shrink-0 text-muted-foreground hover:text-foreground"
+                                >
+                                    <X className="h-4 w-4" />
+                                </button>
+                            </div>
+                        )}
+                        <div className="relative">
+                            <button
+                                type="button"
+                                onClick={() => setMobileFilterOpen((open) => !open)}
+                                className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-input bg-background text-muted-foreground transition-colors hover:text-foreground"
+                                aria-label="Filter feedback"
+                                aria-expanded={mobileFilterOpen}
+                            >
+                                <List className="h-4 w-4" />
+                            </button>
+                            {mobileFilterOpen ? (
+                                <div className="absolute right-0 top-12 z-20 w-40 rounded-lg border border-border bg-background p-1 shadow-lg">
+                                    <button onClick={() => { setFilterRating('all'); setMobileFilterOpen(false); }} className={`block w-full rounded-md px-3 py-2 text-left text-xs font-semibold ${filterRating === 'all' ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted'}`}>All</button>
+                                    <button onClick={() => { setFilterRating('up'); setMobileFilterOpen(false); }} className={`block w-full rounded-md px-3 py-2 text-left text-xs font-semibold ${filterRating === 'up' ? 'bg-green-500 text-white' : 'text-foreground hover:bg-muted'}`}>Positive</button>
+                                    <button onClick={() => { setFilterRating('down'); setMobileFilterOpen(false); }} className={`block w-full rounded-md px-3 py-2 text-left text-xs font-semibold ${filterRating === 'down' ? 'bg-red-500 text-white' : 'text-foreground hover:bg-muted'}`}>Negative</button>
+                                    <button onClick={() => { setFilterRating('report'); setMobileFilterOpen(false); }} className={`block w-full rounded-md px-3 py-2 text-left text-xs font-semibold ${filterRating === 'report' ? 'bg-amber-500 text-white' : 'text-foreground hover:bg-muted'}`}>Report</button>
+                                </div>
+                            ) : null}
                         </div>
-                    )}
+                    </div>
                 </div>
             </div>
 
-            {/* Table Card - Full Width */}
             <div className="space-y-4 md:hidden">
                 {isLoading ? (
                     Array.from({ length: 3 }).map((_, i) => (
@@ -312,7 +289,7 @@ export default function AdminFeedbackPage() {
                             <div className="flex items-start justify-between gap-3">
                                 <div>
                                     <p className="font-medium text-foreground">{item.display_name}</p>
-                                    {(item.profiles?.university || item.profiles?.level) ? (
+                                    {item.profiles?.university || item.profiles?.level ? (
                                         <p className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground">
                                             {[item.profiles?.university, item.profiles?.level].filter(Boolean).join(' • ')}
                                         </p>
@@ -338,13 +315,9 @@ export default function AdminFeedbackPage() {
 
                             {item.session_id ? (
                                 <div className="mt-4">
-                                    <Link
-                                        href={`/admin/chat/${item.session_id}?messageId=${item.message_id}&rating=${item.rating}`}
-                                        className="inline-flex items-center gap-1.5 rounded-md border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/15 hover:text-primary/80"
-                                    >
-                                        View Chat
-                                        <ArrowUpRight className="h-3 w-3" />
-                                    </Link>
+                                    <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted px-3 py-1.5 text-xs font-medium text-muted-foreground">
+                                        Chat inspection pending
+                                    </span>
                                 </div>
                             ) : null}
                         </article>
@@ -354,92 +327,80 @@ export default function AdminFeedbackPage() {
 
             <div className="hidden w-full overflow-hidden rounded-xl border border-border/50 bg-card shadow-sm md:block">
                 <div className="overflow-x-auto">
-                    <table className="w-full text-sm text-left">
-                        <thead className="text-xs text-muted-foreground uppercase bg-muted/40 border-b border-border/50">
+                    <table className="w-full text-left text-sm">
+                        <thead className="border-b border-border/50 bg-muted/40 text-xs uppercase text-muted-foreground">
                             <tr>
                                 <th className="px-6 py-4 font-medium">Date</th>
                                 <th className="px-6 py-4 font-medium">User</th>
                                 <th className="px-6 py-4 font-medium">Type</th>
                                 <th className="px-6 py-4 font-medium">Category</th>
-                                <th className="px-6 py-4 font-medium w-1/3">Comments</th>
-                                <th className="px-6 py-4 font-medium text-right">Actions</th>
+                                <th className="w-1/3 px-6 py-4 font-medium">Comments</th>
+                                <th className="px-6 py-4 text-right font-medium">Actions</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-border/50">
                             {isLoading ? (
-                                // Loading Skeletons
                                 Array.from({ length: 5 }).map((_, i) => (
                                     <tr key={i} className="animate-pulse">
-                                        <td className="px-6 py-4"><div className="h-4 w-24 bg-muted rounded"></div></td>
-                                        <td className="px-6 py-4"><div className="h-4 w-32 bg-muted rounded"></div></td>
-                                        <td className="px-6 py-4"><div className="h-6 w-20 bg-muted rounded-full"></div></td>
-                                        <td className="px-6 py-4"><div className="h-4 w-24 bg-muted rounded"></div></td>
-                                        <td className="px-6 py-4"><div className="h-4 w-full bg-muted rounded"></div></td>
-                                        <td className="px-6 py-4 text-right"><div className="h-8 w-8 bg-muted rounded ml-auto"></div></td>
+                                        <td className="px-6 py-4"><div className="h-4 w-24 rounded bg-muted" /></td>
+                                        <td className="px-6 py-4"><div className="h-4 w-32 rounded bg-muted" /></td>
+                                        <td className="px-6 py-4"><div className="h-6 w-20 rounded-full bg-muted" /></td>
+                                        <td className="px-6 py-4"><div className="h-4 w-24 rounded bg-muted" /></td>
+                                        <td className="px-6 py-4"><div className="h-4 w-full rounded bg-muted" /></td>
+                                        <td className="px-6 py-4 text-right"><div className="ml-auto h-8 w-8 rounded bg-muted" /></td>
                                     </tr>
                                 ))
                             ) : filteredFeedback.length === 0 ? (
-                                // Empty State
                                 <tr>
                                     <td colSpan={6} className="px-6 py-16 text-center text-muted-foreground">
                                         <div className="flex flex-col items-center justify-center gap-3">
-                                            <div className="w-16 h-16 rounded-full bg-muted/30 flex items-center justify-center mb-2">
-                                                <MessageSquare className="w-8 h-8 text-muted-foreground/50" />
+                                            <div className="mb-2 flex h-16 w-16 items-center justify-center rounded-full bg-muted/30">
+                                                <MessageSquare className="h-8 w-8 text-muted-foreground/50" />
                                             </div>
                                             <p className="text-lg font-medium text-foreground">No feedback found</p>
-                                            <p className="text-sm max-w-sm mx-auto text-muted-foreground/80">
-                                                {searchQuery
-                                                    ? `No results matching "${searchQuery}"`
-                                                    : "No feedback received yet. Keep checking back!"}
+                                            <p className="mx-auto max-w-sm text-sm text-muted-foreground/80">
+                                                {searchQuery ? `No results matching "${searchQuery}"` : 'No feedback received yet. Keep checking back!'}
                                             </p>
                                         </div>
                                     </td>
                                 </tr>
                             ) : (
                                 filteredFeedback.map((item) => (
-                                    <tr key={item.id} className="hover:bg-muted/5 transition-colors group">
-                                        <td className="px-6 py-4 whitespace-nowrap text-muted-foreground font-mono text-xs">
+                                    <tr key={item.id} className="group transition-colors hover:bg-muted/5">
+                                        <td className="whitespace-nowrap px-6 py-4 font-mono text-xs text-muted-foreground">
                                             {new Date(item.created_at).toLocaleDateString('en-US', {
                                                 month: 'short',
                                                 day: 'numeric',
-                                                year: 'numeric'
+                                                year: 'numeric',
                                             })}
                                         </td>
                                         <td className="px-6 py-4">
                                             <div className="flex flex-col">
-                                                <span className="font-medium text-foreground">
-                                                    {item.display_name}
-                                                </span>
-                                                {(item.profiles?.university || item.profiles?.level) && (
-                                                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground mt-0.5">
+                                                <span className="font-medium text-foreground">{item.display_name}</span>
+                                                {item.profiles?.university || item.profiles?.level ? (
+                                                    <span className="mt-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
                                                         {[item.profiles?.university, item.profiles?.level].filter(Boolean).join(' • ')}
                                                     </span>
-                                                )}
+                                                ) : null}
                                             </div>
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            {renderRatingBadge(item.rating)}
-                                        </td>
+                                        <td className="whitespace-nowrap px-6 py-4">{renderRatingBadge(item.rating)}</td>
                                         <td className="px-6 py-4">
-                                            <span className="inline-block px-2 py-0.5 rounded text-[11px] font-medium bg-muted text-muted-foreground border border-border/50">
+                                            <span className="inline-block rounded border border-border/50 bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
                                                 {item.category || 'General'}
                                             </span>
                                         </td>
                                         <td className="px-6 py-4">
-                                            <p className="line-clamp-2 text-sm text-foreground/80 group-hover:text-foreground transition-colors leading-relaxed" title={item.comments}>
+                                            <p className="line-clamp-2 text-sm leading-relaxed text-foreground/80 transition-colors group-hover:text-foreground" title={item.comments}>
                                                 {item.comments}
                                             </p>
                                         </td>
                                         <td className="px-6 py-4 text-right">
-                                            {item.session_id && (
-                                                <Link
-                                                    href={`/admin/chat/${item.session_id}?messageId=${item.message_id}&rating=${item.rating}`}
-                                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-primary hover:text-primary/80 bg-primary/5 hover:bg-primary/15 rounded-md transition-colors border border-primary/10 hover:border-primary/20"
-                                                >
-                                                    View Chat
-                                                    <ArrowUpRight className="w-3 h-3" />
-                                                </Link>
-                                            )}
+                                            {item.session_id ? (
+                                                <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted px-3 py-1.5 text-xs font-medium text-muted-foreground">
+                                                    Chat inspection pending
+                                                </span>
+                                            ) : null}
                                         </td>
                                     </tr>
                                 ))
@@ -452,15 +413,13 @@ export default function AdminFeedbackPage() {
     );
 }
 
-// --- Sub-components ---
-
 function StatsCard({
     label,
     value,
     icon: Icon,
     color,
     bg,
-    borderColor = "border-border/50"
+    borderColor = 'border-border/50',
 }: {
     label: string;
     value: number;
@@ -470,18 +429,17 @@ function StatsCard({
     borderColor?: string;
 }) {
     return (
-        <div className={`p-5 rounded-xl border ${borderColor} ${bg} shadow-sm flex flex-col justify-between h-28 relative overflow-hidden group hover:shadow-md transition-shadow`}>
-            <div className="flex justify-between items-start z-10">
+        <div className={`group relative overflow-hidden rounded-2xl border ${borderColor} ${bg} p-5 shadow-sm transition-shadow hover:shadow-md`}>
+            <div className="z-10 flex items-start justify-between">
                 <span className="text-sm font-medium text-muted-foreground">{label}</span>
-                <div className={`p-2 rounded-lg ${bg} brightness-110`}>
-                    <Icon className={`w-5 h-5 ${color}`} />
+                <div className={`rounded-lg p-2 ${bg} brightness-110`}>
+                    <Icon className={`h-5 w-5 ${color}`} />
                 </div>
             </div>
-            <div className="z-10">
+            <div className="z-10 mt-6">
                 <div className={`text-3xl font-bold tracking-tight ${color}`}>{value}</div>
             </div>
-            {/* Ambient Background Glow */}
-            <div className={`absolute -right-4 -bottom-4 w-24 h-24 rounded-full opacity-10 bg-current ${color} blur-2xl group-hover:opacity-20 transition-opacity`} />
+            <div className={`absolute -bottom-4 -right-4 h-24 w-24 rounded-full opacity-10 blur-2xl transition-opacity group-hover:opacity-20 ${color} bg-current`} />
         </div>
     );
 }

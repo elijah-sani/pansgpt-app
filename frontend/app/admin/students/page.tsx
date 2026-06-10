@@ -85,14 +85,14 @@ export default function StudentsPage() {
     const proCount = students.filter(s => s.subscription_tier === 'pro').length;
 
     return (
-        <div className="w-full max-w-5xl mx-auto md:pt-6 md:px-4">
+        <div className="mx-auto w-full max-w-6xl pb-12 md:px-4 md:pt-6">
             {/* Header */}
-            <div className="flex justify-between items-start mb-8">
-                <div>
+            <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
                     <h2 className="text-2xl font-bold text-foreground mb-1">Students</h2>
                     <p className="text-muted-foreground">Manage student subscriptions and view profiles.</p>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="grid grid-cols-2 gap-3 sm:flex sm:items-center">
                     <div className="text-center px-4 py-2 bg-card border border-border rounded-xl">
                         <p className="text-xl font-bold text-foreground">{students.length}</p>
                         <p className="text-xs text-muted-foreground">Total</p>
@@ -119,14 +119,13 @@ export default function StudentsPage() {
                 </div>
 
                 {/* Mobile Search Toggle */}
-                <div className="md:hidden flex-1 w-full">
+                <div className={`md:hidden flex ${showMobileSearch ? 'flex-1' : ''}`}>
                     {!showMobileSearch ? (
-                        <button onClick={() => setShowMobileSearch(true)} className="flex items-center gap-2 text-sm text-muted-foreground bg-card border border-border rounded-xl px-4 py-2.5 w-full transition-colors hover:border-primary/50">
+                        <button onClick={() => setShowMobileSearch(true)} className="flex items-center justify-center w-10 h-10 text-muted-foreground bg-card border border-border rounded-xl transition-colors hover:border-primary/50">
                             <Search className="w-4 h-4 shrink-0" />
-                            <span>Search students...</span>
                         </button>
                     ) : (
-                        <div className="flex items-center gap-2 w-full bg-card border border-border rounded-xl px-4 py-2.5 focus-within:border-primary/50 transition-colors">
+                        <div className="flex items-center gap-2 w-full bg-card border border-primary/50 rounded-xl px-4 py-2.5 focus-within:ring-2 focus-within:ring-primary/20 transition-all">
                             <Search className="w-4 h-4 text-muted-foreground shrink-0" />
                             <input
                                 autoFocus
@@ -207,7 +206,7 @@ export default function StudentsPage() {
                                 filteredStudents.map(student => (
                                     <tr key={student.id} className="hover:bg-muted/20 transition-colors">
                                         <td className="px-6 py-4">
-                                            <div className="flex items-center gap-3">
+                                            <div className="flex min-w-0 items-center gap-3">
                                                 <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
                                                     <User className="w-4 h-4 text-primary" />
                                                 </div>
@@ -274,15 +273,15 @@ export default function StudentsPage() {
                                     <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
                                         <User className="w-5 h-5 text-primary" />
                                     </div>
-                                    <div>
-                                        <span className="font-medium text-foreground block text-sm">{getDisplayName(student)}</span>
+                                    <div className="min-w-0">
+                                        <span className="block truncate text-sm font-medium text-foreground">{getDisplayName(student)}</span>
                                         <div className="flex items-center gap-1.5 text-muted-foreground mt-0.5">
                                             <GraduationCap className="w-3.5 h-3.5" />
                                             <span className="text-xs">{student.level || 'No level'}</span>
                                         </div>
                                     </div>
                                 </div>
-                                <div>
+                                <div className="shrink-0">
                                     {student.subscription_tier === 'pro' ? (
                                         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-[10px] font-bold">
                                             <Crown className="w-3 h-3" /> Pro
@@ -295,8 +294,8 @@ export default function StudentsPage() {
                                 </div>
                             </div>
                             
-                            <div className="flex items-center justify-between gap-4">
-                                <div className="text-muted-foreground text-xs truncate">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                <div className="truncate text-xs text-muted-foreground">
                                     {student.university || 'No university'}
                                 </div>
                                 <button

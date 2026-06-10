@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ArrowLeft, Eye, EyeOff, Loader2 } from 'lucide-react';
 import type { Dispatch, SetStateAction } from 'react';
 import { AuthMessage } from './AuthMessage';
-import { INPUT_CLASS_NAME, LEVELS, NIGERIAN_UNIVERSITIES, PRIMARY_BUTTON_CLASS_NAME } from './authConstants';
+import { INPUT_CLASS_NAME, LEVELS, PRIMARY_BUTTON_CLASS_NAME } from './authConstants';
 import type { AuthMessage as AuthMessageType, SignupFormData } from './types';
+import { fetchActiveUniversities, type UniversityOption } from '@/lib/universities';
 
 type SignupWizardProps = {
   formData: SignupFormData;
@@ -35,6 +36,40 @@ export function SignupWizard({
   submitSignup,
 }: SignupWizardProps) {
   const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [universities, setUniversities] = useState<UniversityOption[]>([]);
+  const [isLoadingUniversities, setIsLoadingUniversities] = useState(true);
+  const [universitiesError, setUniversitiesError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadUniversities = async () => {
+      try {
+        setIsLoadingUniversities(true);
+        setUniversitiesError(null);
+        const rows = await fetchActiveUniversities();
+        if (!active) {
+          return;
+        }
+        setUniversities(rows);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setUniversitiesError(error instanceof Error ? error.message : 'Unable to load universities right now.');
+      } finally {
+        if (active) {
+          setIsLoadingUniversities(false);
+        }
+      }
+    };
+
+    void loadUniversities();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -55,14 +90,38 @@ export function SignupWizard({
         <div className="space-y-4 animate-in slide-in-from-right duration-300">
           <div className="space-y-1.5">
             <label className="text-sm font-bold text-foreground">University</label>
-            <select autoFocus value={formData.university} onChange={(event) => setFormData((current) => ({ ...current, university: event.target.value }))} className={`${INPUT_CLASS_NAME} appearance-none`}>
-              <option value="">Select University</option>
-              {NIGERIAN_UNIVERSITIES.map((university) => <option key={university} value={university}>{university}</option>)}
+            <select
+              autoFocus
+              value={formData.universityId}
+              onChange={(event) => {
+                const selectedUniversity = universities.find((university) => university.id === event.target.value) || null;
+                setFormData((current) => ({
+                  ...current,
+                  universityId: selectedUniversity?.id || '',
+                  university: selectedUniversity?.name || '',
+                }));
+              }}
+              disabled={isLoadingUniversities || universities.length === 0}
+              className={`${INPUT_CLASS_NAME} appearance-none disabled:opacity-60`}
+            >
+              <option value="">
+                {isLoadingUniversities ? 'Loading universities...' : 'Select University'}
+              </option>
+              {universities.map((university) => (
+                <option key={university.id} value={university.id}>
+                  {university.name}
+                  {university.short_name ? ` (${university.short_name})` : ''}
+                </option>
+              ))}
             </select>
+            {universitiesError && <p className="text-xs text-destructive">{universitiesError}</p>}
+            {!isLoadingUniversities && !universitiesError && universities.length === 0 && (
+              <p className="text-xs text-destructive">No active universities are available right now.</p>
+            )}
           </div>
           <div className="flex gap-3">
             <button onClick={prevStep} className="px-4 py-3.5 rounded-xl border border-border text-muted-foreground hover:bg-surface-secondary font-bold text-sm"><ArrowLeft className="w-4 h-4" /></button>
-            <button onClick={nextStep} disabled={!formData.university} className={PRIMARY_BUTTON_CLASS_NAME.replace('w-full ', 'flex-1 ')}>Continue</button>
+            <button onClick={nextStep} disabled={!formData.universityId} className={PRIMARY_BUTTON_CLASS_NAME.replace('w-full ', 'flex-1 ')}>Continue</button>
           </div>
         </div>
       )}

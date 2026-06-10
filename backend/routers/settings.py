@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Header, Depends
 from pydantic import BaseModel
 from typing import Optional
 import logging
-from dependencies import get_current_admin, get_current_super_admin, get_current_user, require_super_admin_role, User
+from dependencies import get_current_global_admin, get_current_user, require_super_admin_role, User
 
 logger = logging.getLogger("PansGPT")
 
@@ -41,7 +41,7 @@ async def verify_super_admin(current_user: User = Depends(get_current_user)):
 # --- Endpoints ---
 
 @router.get("", dependencies=[Depends(verify_api_key)])
-async def get_system_config(current_user: User = Depends(get_current_admin)):
+async def get_system_config(current_user: User = Depends(get_current_global_admin)):
     """
     Fetch the current system configuration.
     Assumes a single row in 'system_settings' table (id=1).
@@ -70,7 +70,7 @@ async def get_system_config(current_user: User = Depends(get_current_admin)):
 async def update_system_config(
     config: SystemConfigUpdate,
     _: str = Depends(verify_api_key),
-    current_user: User = Depends(get_current_super_admin)
+    current_user: User = Depends(get_current_global_admin)
 ):
     """
     Update system configuration.

@@ -166,9 +166,7 @@ export default function AdminRestrictionsPage() {
     ];
 
     return (
-        <div className="w-full max-w-5xl mx-auto md:pt-6 md:px-4 pb-12">
-            <div className="space-y-6 md:grid md:grid-cols-12 md:gap-8 md:space-y-0">
-                <div className="space-y-6 md:col-span-10 md:col-start-2">
+        <div className="mx-auto w-full max-w-6xl space-y-6 pb-12 md:px-4 md:pt-6">
                     <header>
                         <h1 className="text-xl font-bold text-foreground md:text-3xl">Restrictions</h1>
                         <p className="mt-2 text-sm text-muted-foreground md:text-base">
@@ -386,9 +384,6 @@ export default function AdminRestrictionsPage() {
                             )}
                         </div>
                     </section>
-                </div>
-            </div>
-
             {cancelTarget && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
                     <div className="w-full max-w-lg rounded-2xl border border-border bg-background p-6 shadow-xl">

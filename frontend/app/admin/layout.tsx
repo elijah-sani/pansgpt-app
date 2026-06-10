@@ -7,25 +7,30 @@ import {
     BookOpenCheck,
     CalendarDays,
     FileCheck2,
+    GraduationCap,
     Home,
     LayoutDashboard,
     Library,
     Menu,
-    MessageSquareWarning,
     Search,
-    Settings,
     ShieldAlert,
-    ShieldCheck,
     UserCheck,
-    UserCog,
     Users,
     X,
     PanelLeftClose,
     PanelLeftOpen,
+    ShieldCheck,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { fetchBootstrap } from '@/lib/bootstrap-cache';
+import {
+    clearAdminWorkspaceUniversity,
+    getAdminWorkspaceUniversityId,
+    getAdminWorkspaceUniversityName,
+    setAdminWorkspaceUniversityId,
+} from '@/lib/admin-workspace';
 import { supabase } from '@/lib/supabase';
+import UniversitySuspendedBlocker from '@/components/UniversitySuspendedBlocker';
 
 type AdminNavItem = {
     icon: LucideIcon;
@@ -45,6 +50,7 @@ const navSections: AdminNavSection[] = [
             { icon: LayoutDashboard, label: 'Home', href: '/admin' },
             { icon: Library, label: 'Library', href: '/admin/library' },
             { icon: Users, label: 'Students', href: '/admin/students' },
+            { icon: ShieldCheck, label: 'Admins', href: '/admin/admins' },
         ],
     },
     {
@@ -55,14 +61,13 @@ const navSections: AdminNavSection[] = [
             { icon: ShieldAlert, label: 'Restrictions', href: '/admin/restrictions' },
             { icon: CalendarDays, label: 'Timetable', href: '/admin/timetable' },
             { icon: BookOpenCheck, label: 'Faculty Knowledge', href: '/admin/faculty-knowledge' },
+            { icon: CalendarDays, label: 'Academic Context', href: '/admin/settings' },
         ],
     },
     {
-        label: 'System',
+        label: 'Workspace',
         items: [
-            { icon: MessageSquareWarning, label: 'Feedback', href: '/admin/feedback' },
-            { icon: UserCog, label: 'Admin Users', href: '/admin/users' },
-            { icon: Settings, label: 'Settings', href: '/admin/settings' },
+            { icon: GraduationCap, label: 'Student App', href: '/main' },
         ],
     },
 ];
@@ -71,14 +76,14 @@ const mobileNavItems: AdminNavItem[] = [
     { icon: Home, label: 'Home', href: '/admin' },
     { icon: Library, label: 'Library', href: '/admin/library' },
     { icon: FileCheck2, label: 'Materials', href: '/admin/material-submissions' },
-    { icon: MessageSquareWarning, label: 'Feedback', href: '/admin/feedback' },
+    { icon: Users, label: 'Students', href: '/admin/students' },
 ];
 
 const mobileBottomNavItems: AdminNavItem[] = [
     { icon: Home, label: 'Home', href: '/admin' },
     { icon: Library, label: 'Library', href: '/admin/library' },
     { icon: FileCheck2, label: 'Materials', href: '/admin/material-submissions' },
-    { icon: MessageSquareWarning, label: 'Feedback', href: '/admin/feedback' },
+    { icon: Users, label: 'Students', href: '/admin/students' },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -86,9 +91,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     const pathname = usePathname();
     const [userEmail, setUserEmail] = useState<string | null>(null);
     const [userRole, setUserRole] = useState<string | null>(null);
+    const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+    const [workspaceName, setWorkspaceName] = useState('');
     const [mobileOpen, setMobileOpen] = useState(false);
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
     const [mobileHeaderLocked, setMobileHeaderLocked] = useState(false);
+    const [isUniversitySuspended, setIsUniversitySuspended] = useState(false);
     const mobileHeaderSentinelRef = useRef<HTMLDivElement | null>(null);
 
     useEffect(() => {
@@ -119,8 +127,29 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 return;
             }
 
+            if (data?.is_global_admin && !data?.is_super_admin && !data?.is_university_admin) {
+                router.replace('/super-admin');
+                return;
+            }
+
+            if (data?.is_super_admin && !getAdminWorkspaceUniversityId()) {
+                router.replace('/super-admin');
+                return;
+            }
+
             setUserEmail(email);
+            setIsSuperAdmin(Boolean(data?.is_super_admin));
+            if (!data?.is_super_admin) {
+                setAdminWorkspaceUniversityId('');
+            }
+            setWorkspaceName(data?.is_super_admin ? getAdminWorkspaceUniversityName() : (data?.university_name || data?.profile?.university || 'University Workspace'));
             setUserRole(data?.is_super_admin ? 'Super Admin' : 'Admin');
+
+            // University suspension gate for university admins.
+            // Super admins can still access the admin panel to manage universities.
+            if (data?.is_university_suspended && !data?.is_super_admin) {
+                setIsUniversitySuspended(true);
+            }
         };
 
         void checkAuth();
@@ -158,30 +187,45 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         );
     }
 
+    if (isUniversitySuspended) {
+        const handleLogout = async () => {
+            clearAdminWorkspaceUniversity();
+            await supabase.auth.signOut();
+            window.location.replace('/login');
+        };
+        return <UniversitySuspendedBlocker onLogout={() => void handleLogout()} />;
+    }
+
     const userInitial = userEmail.charAt(0).toUpperCase();
     const mobileTitle = getAdminMobileTitle(pathname);
     const isSearchPage = pathname.startsWith('/admin/search');
     const hideMobileHeader = isSearchPage;
     const hideMobileNav = isSearchPage;
     const headerButtonClass = mobileHeaderLocked
-        ? 'flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-foreground'
-        : 'flex h-10 w-10 items-center justify-center rounded-full border border-border/80 bg-background/70 text-foreground';
+        ? 'flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-foreground transition-transform duration-200'
+        : 'flex h-10 w-10 items-center justify-center rounded-full border border-border/80 bg-background/70 text-foreground transition-transform duration-200';
     const profileButtonClass = mobileHeaderLocked
         ? 'flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-xs font-semibold text-foreground shadow-sm transition-colors hover:bg-white/10'
         : 'flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border/80 bg-background/70 text-xs font-semibold text-foreground shadow-sm transition-colors hover:bg-muted';
     const mobileHeaderClass = [
-        'sticky top-0 z-50 -mx-4 mb-6 min-h-[4.75rem] bg-background/95 backdrop-blur-md transition-shadow duration-200 sm:-mx-5 md:hidden',
+        'fixed inset-x-0 top-0 z-50 min-h-[4.75rem] bg-background/95 backdrop-blur-md transition-shadow duration-200 md:hidden',
         mobileHeaderLocked ? 'shadow-[0_4px_20px_rgba(0,0,0,0.35)]' : 'shadow-none',
     ].join(' ');
+    const mobileDrawerWidthClass = 'translate-x-[min(19rem,86vw)]';
     const mainClass = [
-        'ml-0 flex flex-1 flex-col scroll-smooth overflow-visible px-4 pt-2 transition-[margin] duration-200 sm:px-5',
+        'ml-0 flex flex-1 flex-col scroll-smooth overflow-x-hidden overflow-y-visible px-4 pt-2 transition-[margin] duration-200 sm:px-5',
         hideMobileNav ? 'pb-0' : 'pb-28',
-        'md:h-screen md:overflow-y-auto md:p-8 md:pb-8 md:pt-8',
+        'md:min-h-screen md:overflow-y-visible md:p-8 md:pb-8 md:pt-8',
         sidebarCollapsed ? 'md:ml-20' : 'md:ml-64',
     ].join(' ');
 
+    const handleExitWorkspace = () => {
+        clearAdminWorkspaceUniversity();
+        router.push('/super-admin');
+    };
+
     return (
-        <div className="flex min-h-screen bg-background font-sans text-foreground selection:bg-primary/30">
+        <div className="relative flex min-h-screen overflow-x-hidden bg-background font-sans text-foreground selection:bg-primary/30">
             <aside className={`fixed left-0 top-0 z-20 hidden h-full flex-col border-r border-border bg-card transition-[width] duration-200 md:flex ${sidebarCollapsed ? 'w-20' : 'w-64'}`}>
                 <AdminSidebarContent
                     pathname={pathname}
@@ -192,50 +236,52 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 />
             </aside>
 
-            {mobileOpen ? (
-                <div className="fixed inset-0 z-[70] md:hidden">
-                    <button
-                        type="button"
-                        aria-label="Close admin navigation"
-                        className="absolute inset-0 bg-black/45"
-                        onClick={() => setMobileOpen(false)}
+            <div className={`fixed inset-0 z-[70] md:hidden transition-opacity duration-300 ${mobileOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'}`}>
+                <button
+                    type="button"
+                    aria-label="Close admin navigation"
+                    className="absolute inset-0 bg-transparent"
+                    onClick={() => setMobileOpen(false)}
+                />
+                <aside className={`absolute left-0 top-0 h-full w-[19rem] max-w-[86vw] border-r border-border bg-card/98 shadow-2xl transition-transform duration-300 ease-out ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+                    <AdminSidebarContent
+                        pathname={pathname}
+                        userEmail={userEmail}
+                        userRole={userRole}
+                        mobile
+                        onNavigate={() => setMobileOpen(false)}
                     />
-                    <aside className="absolute left-0 top-0 h-full w-[19rem] max-w-[86vw] border-r border-border bg-card shadow-xl">
-                        <div className="absolute right-3 top-3">
-                            <button
-                                type="button"
-                                onClick={() => setMobileOpen(false)}
-                                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-                                aria-label="Close admin navigation"
-                            >
-                                <X className="h-4 w-4" />
+                </aside>
+            </div>
+
+            <main className={`${mainClass} transition-transform duration-300 ease-out md:translate-x-0 ${mobileOpen ? mobileDrawerWidthClass : 'translate-x-0'}`}>
+                {isSuperAdmin ? (
+                    <div className="mb-4 hidden rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200 md:flex md:items-center md:justify-between">
+                        <span>Viewing {workspaceName || 'selected university'} as Super Admin</span>
+                        <div className="flex items-center gap-2">
+                            <Link href="/super-admin/universities" className="rounded-lg border border-amber-500/30 px-3 py-1.5 text-xs font-bold hover:bg-amber-500/10">
+                                Change University
+                            </Link>
+                            <button type="button" onClick={handleExitWorkspace} className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white">
+                                Exit Workspace
                             </button>
                         </div>
-                        <AdminSidebarContent
-                            pathname={pathname}
-                            userEmail={userEmail}
-                            userRole={userRole}
-                            mobile
-                            onNavigate={() => setMobileOpen(false)}
-                        />
-                    </aside>
-                </div>
-            ) : null}
-
-            <main className={mainClass}>
+                    </div>
+                ) : null}
                 {hideMobileHeader ? null : (
                     <>
                         <div ref={mobileHeaderSentinelRef} className="h-3 md:hidden" />
+                        <div className="h-[4.75rem] md:hidden" />
                         <div className={mobileHeaderClass}>
-                        <div className="flex min-h-[4.75rem] items-center px-4 py-3 sm:px-5">
+                        <div className="mx-auto flex min-h-[4.75rem] max-w-[48rem] items-center px-4 py-3 sm:px-5">
                                 <div className="flex h-10 w-full items-center justify-between gap-3">
                                     <button
                                         type="button"
-                                        onClick={() => setMobileOpen(true)}
-                                        aria-label="Open admin navigation"
+                                        onClick={() => setMobileOpen((value) => !value)}
+                                        aria-label={mobileOpen ? 'Close admin navigation' : 'Open admin navigation'}
                                         className={headerButtonClass}
                                     >
-                                        <Menu className="h-4 w-4" />
+                                        {mobileOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
                                     </button>
                                     <h1 className="truncate text-sm font-semibold tracking-wide text-foreground">{mobileTitle}</h1>
                                     <Link href="/admin/settings" aria-label="Open admin profile" className={profileButtonClass}>
@@ -252,9 +298,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
             {hideMobileNav ? null : (
                 <>
-                    <div className="pointer-events-none fixed inset-x-0 bottom-0 z-30 h-20 bg-gradient-to-t from-background/95 via-background/60 to-transparent backdrop-blur-[4px] [mask-image:linear-gradient(to_top,black_0%,black_50%,transparent_100%)] md:hidden" />
-                    <nav className="fixed inset-x-0 bottom-0 z-40 px-4 pb-[calc(env(safe-area-inset-bottom)+0.85rem)] pt-2 md:hidden">
-                    <div className="mx-auto flex max-w-[30rem] items-center justify-center gap-3.5">
+                    <div className={`pointer-events-none fixed inset-x-0 bottom-0 z-30 h-20 bg-gradient-to-t from-background/95 via-background/60 to-transparent backdrop-blur-[4px] [mask-image:linear-gradient(to_top,black_0%,black_50%,transparent_100%)] transition-transform duration-300 md:hidden ${mobileOpen ? 'translate-y-24' : 'translate-y-0'}`} />
+                    <nav className={`fixed bottom-0 left-1/2 z-40 w-[calc(100%-2rem)] max-w-[30rem] -translate-x-1/2 pb-[calc(env(safe-area-inset-bottom)+0.85rem)] pt-2 transition-transform duration-300 md:hidden ${mobileOpen ? 'translate-y-28' : 'translate-y-0'}`}>
+                    <div className="mx-auto flex items-center justify-center gap-3.5">
                         <div className="flex items-center gap-1.5 rounded-[2rem] border border-border/40 bg-background/95 px-2.5 py-2 backdrop-blur-xl">
                             {mobileBottomNavItems.map((item) => (
                                 <AdminMobileNavItem
@@ -307,7 +353,7 @@ function AdminSidebarContent({
             ...section,
             items: section.items.filter((item) => {
                 if (!mobile) return true;
-                return !['/admin', '/admin/library', '/admin/material-submissions', '/admin/feedback'].includes(item.href);
+                return !['/admin', '/admin/library', '/admin/material-submissions', '/admin/students'].includes(item.href);
             }),
         }))
         .filter((section) => section.items.length > 0);
@@ -460,8 +506,6 @@ function getAdminMobileTitle(pathname: string) {
     if (pathname.startsWith('/admin/restrictions')) return 'Restrictions';
     if (pathname.startsWith('/admin/timetable')) return 'Timetable';
     if (pathname.startsWith('/admin/faculty-knowledge')) return 'Faculty Knowledge';
-    if (pathname.startsWith('/admin/feedback')) return 'Feedback';
-    if (pathname.startsWith('/admin/users')) return 'Admin Users';
-    if (pathname.startsWith('/admin/settings')) return 'Settings';
+    if (pathname.startsWith('/admin/settings')) return 'University Settings';
     return 'Admin';
 }

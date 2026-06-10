@@ -5,8 +5,9 @@ create table if not exists public.user_roles (
   id uuid default gen_random_uuid() primary key,
   user_id uuid references auth.users(id) on delete cascade,
   email text unique not null,
-  role text not null check (role in ('admin', 'super_admin')),
+  role text not null check (role in ('admin', 'super_admin', 'global_admin', 'university_admin')),
   is_admin boolean default true,
+  university_id uuid references public.universities(id) on delete set null,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
@@ -21,6 +22,12 @@ where lower(ur.email) = lower(au.email)
 create unique index if not exists user_roles_user_id_uidx
 on public.user_roles (user_id)
 where user_id is not null;
+
+create index if not exists user_roles_university_id_idx
+on public.user_roles (university_id);
+
+create index if not exists user_roles_role_idx
+on public.user_roles (role);
 
 -- 2. Enable RLS
 alter table public.user_roles enable row level security;
@@ -45,7 +52,10 @@ as $$
     select 1
     from public.user_roles ur
     where ur.user_id = auth.uid()
-      and ur.role = 'super_admin'
+      and (
+        ur.role in ('super_admin', 'global_admin')
+        or (ur.role = 'admin' and ur.university_id is null)
+      )
   );
 $$;
 

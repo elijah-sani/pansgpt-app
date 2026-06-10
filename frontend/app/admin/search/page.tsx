@@ -175,20 +175,16 @@ function AdminSearchContent() {
                 </form>
 
                 <div className="pt-4 md:pt-6">
-                    {error ? (
-                        <section className="rounded-2xl border border-rose-500/20 bg-rose-500/10 p-4">
-                            <p className="text-sm font-medium text-rose-200">Unable to load search data</p>
-                            <p className="mt-2 text-sm text-rose-100/90">{error}</p>
-                        </section>
-                    ) : isLoading ? (
-                        <div className="flex min-h-[35vh] items-center justify-center">
-                            <Loader2 className="h-7 w-7 animate-spin text-primary" />
-                        </div>
-                    ) : hasQuery ? (
+                    {hasQuery ? (
                         groupedResults.length === 0 ? (
                             <div className="pt-6">
                                 <p className="text-sm font-medium text-foreground">No matches found.</p>
                                 <p className="mt-2 text-sm leading-6 text-muted-foreground">Try searching for home, library, students, lecturers, or restrictions.</p>
+                                {error && (
+                                    <div className="mt-4 rounded-xl border border-rose-500/20 bg-rose-500/10 p-4">
+                                        <p className="text-xs text-rose-200">API Error: {error}</p>
+                                    </div>
+                                )}
                             </div>
                         ) : (
                             <div className="space-y-5">
@@ -213,10 +209,27 @@ function AdminSearchContent() {
                                         </div>
                                     </section>
                                 ))}
+                                {error && (
+                                    <div className="mt-4 rounded-xl border border-rose-500/20 bg-rose-500/10 p-4">
+                                        <p className="text-xs text-rose-200">API Error: {error}</p>
+                                    </div>
+                                )}
                             </div>
                         )
                     ) : (
                         <div className="space-y-6">
+                            {error && (
+                                <section className="rounded-2xl border border-rose-500/20 bg-rose-500/10 p-4">
+                                    <p className="text-sm font-medium text-rose-200">Unable to load full search data</p>
+                                    <p className="mt-2 text-sm text-rose-100/90">{error}</p>
+                                </section>
+                            )}
+                            {isLoading && !error && (
+                                <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                                    Loading search index...
+                                </div>
+                            )}
                             {recentSearches.length > 0 ? (
                                 <section>
                                     <div className="flex items-center justify-between gap-3">

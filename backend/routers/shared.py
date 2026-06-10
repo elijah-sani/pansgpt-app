@@ -26,6 +26,7 @@ from dependencies import (
     get_current_user,
     require_super_admin_role,
     User,
+    UNIVERSITY_SUSPENDED_MESSAGE,
 )
 from restrictions import build_university_candidates, normalize_university_name
 
@@ -64,7 +65,14 @@ def _clean_generated_title(raw_title: str) -> str:
     """
     Normalize model output into a single-line title.
     """
-    title = (raw_title or "").strip().strip('"').strip("'")
+    title = (raw_title or "")
+    # Strip <thought> and <think> blocks and contents
+    title = re.sub(r"<thought>.*?</thought>", "", title, flags=re.IGNORECASE | re.DOTALL)
+    title = re.sub(r"<think>.*?</think>", "", title, flags=re.IGNORECASE | re.DOTALL)
+    title = re.sub(r"<thought>.*", "", title, flags=re.IGNORECASE | re.DOTALL)
+    title = re.sub(r"<think>.*", "", title, flags=re.IGNORECASE | re.DOTALL)
+    
+    title = title.strip().strip('"').strip("'")
     title = re.sub(r"[\r\n\t]+", " ", title)
     title = re.sub(r"\s{2,}", " ", title).strip()
     return title
@@ -96,7 +104,7 @@ def _is_generic_title(title: str) -> bool:
         return True
 
     words = [w for w in re.split(r"\s+", lower) if w]
-    if len(words) < 3:
+    if len(words) < 1:
         return True
 
     weak_words = {
@@ -104,7 +112,7 @@ def _is_generic_title(title: str) -> bool:
         "topic", "general", "new", "conversation", "session"
     }
     meaningful = [w for w in words if w not in weak_words]
-    if len(meaningful) < 2:
+    if len(meaningful) < 1:
         return True
 
     return False
@@ -379,14 +387,14 @@ def _is_ai_retrievable_document(document_row: Optional[dict]) -> bool:
     )
 
 
-async def _resolve_active_university_by_text(sb, university_text: Optional[str]) -> Optional[dict]:
+async def _resolve_university_by_text(sb, university_text: Optional[str]) -> Optional[dict]:
     candidates = build_university_candidates(university_text)
     if not candidates:
         return None
 
     res = await _execute_with_retry(
-        lambda: sb.table("universities").select("id,name,short_name,status").eq("status", "active").execute(),
-        "Resolve active university by text",
+        lambda: sb.table("universities").select("id,name,short_name,status").execute(),
+        "Resolve university by text",
     )
     candidate_set = set(candidates)
     matches = [
@@ -403,8 +411,6 @@ async def _resolve_active_university_by_text(sb, university_text: Optional[str])
 
 async def resolve_student_university_context(current_user: User, *, persist_resolution: bool = True) -> dict:
     cache_key = current_user.id
-    if cache_key in _student_scope_cache:
-        return _student_scope_cache[cache_key]
 
     sb = supabase_service_client or supabase_client
     if not sb:
@@ -438,16 +444,27 @@ async def resolve_student_university_context(current_user: User, *, persist_reso
             "Validate student university_id",
         )
         university_row = (university_res.data or [None])[0]
-        if university_row and (university_row.get("status") or "").strip().lower() == "active":
+        university_status = (university_row.get("status") or "").strip().lower() if university_row else None
+        if university_status == "suspended":
+            _student_scope_cache.pop(cache_key, None)
+            raise HTTPException(status_code=400, detail=UNIVERSITY_SUSPENDED_MESSAGE)
+        if university_row and university_status == "active":
             university_name = _normalize_optional_text(university_row.get("name")) or university_name
         else:
             logger.warning("Student user_id=%s has missing or inactive university_id=%s", current_user.id, explicit_university_id)
             resolved_university_id = None
     elif university_name:
-        matched_university = await _resolve_active_university_by_text(sb, university_name)
+        matched_university = await _resolve_university_by_text(sb, university_name)
         if matched_university:
-            resolved_university_id = _normalize_optional_text(matched_university.get("id"))
-            university_name = _normalize_optional_text(matched_university.get("name")) or university_name
+            university_status = (matched_university.get("status") or "").strip().lower()
+            if university_status == "suspended":
+                _student_scope_cache.pop(cache_key, None)
+                raise HTTPException(status_code=400, detail=UNIVERSITY_SUSPENDED_MESSAGE)
+            if university_status != "active":
+                logger.info("Student user_id=%s matched non-active university by text", current_user.id)
+            else:
+                resolved_university_id = _normalize_optional_text(matched_university.get("id"))
+                university_name = _normalize_optional_text(matched_university.get("name")) or university_name
             if persist_resolution and resolved_university_id:
                 try:
                     await _execute_with_retry(
@@ -744,8 +761,6 @@ async def _build_student_profile_text(current_user: User) -> tuple[str, str]:
     Build a compact student profile block for system-prompt personalization.
     """
     cache_key = current_user.id
-    if cache_key in _profile_cache:
-        return _profile_cache[cache_key]
 
     first_name = ""
     other_names = ""
@@ -758,6 +773,8 @@ async def _build_student_profile_text(current_user: User) -> tuple[str, str]:
         other_names = (profile.get("other_names") or "").strip()
         level = (student_context.get("level") or "").strip()
         university = (student_context.get("university_name") or profile.get("university") or "").strip()
+    except HTTPException:
+        raise
     except Exception as profile_err:
         logger.warning(f"Could not fetch user profile context: {profile_err}")
 
@@ -788,6 +805,8 @@ async def get_relevant_context(
     academic_session: Optional[str] = None,
     semester: Optional[str] = None,
     rag_match_count: Optional[int] = None,  # [AGENTIC LAYER] — planner-supplied chunk count overrides heuristic
+    *,
+    _out_rpc_rows: Optional[list] = None,
 ) -> tuple[str, list[dict]]:
     """
     RAG Helper: Embed user question and retrieve relevant chunks via vector search.
@@ -968,6 +987,8 @@ async def get_relevant_context(
                     def __init__(self, data): self.data = data
                 response = _MergedResponse(condensed_chunks)
                 logger.info(f"Fetched {len(condensed_chunks)} condensed chunks for exhaustive listing")
+                if _out_rpc_rows is not None:
+                    _out_rpc_rows.extend(condensed_chunks)
             else:
                 # Normal focused query — use vector similarity search
                 response = await _execute_with_retry(
@@ -982,6 +1003,8 @@ async def get_relevant_context(
                     ).execute(),
                     "Match document embeddings",
                 )
+                if _out_rpc_rows is not None:
+                    _out_rpc_rows.extend(response.data or [])
 
             # Step 3: Build enhanced context with metadata + chunks
             context_parts = []
@@ -1041,6 +1064,8 @@ async def get_relevant_context(
                         fallback_chunks = fb_response.data or []
                         if fallback_chunks:
                             logger.info(f"Text search fallback found {len(fallback_chunks)} chunks")
+                            if _out_rpc_rows is not None:
+                                _out_rpc_rows.extend(fallback_chunks)
                 except Exception as fb_err:
                     logger.warning(f"Text search fallback failed: {fb_err}")
 
@@ -1169,6 +1194,8 @@ async def get_relevant_context(
         )
 
         rows = rpc_response.data or []
+        if _out_rpc_rows is not None:
+            _out_rpc_rows.extend(rows)
         if not rows:
             logger.warning(
                 f"RAG returned no chunks for global search. "
@@ -1269,6 +1296,7 @@ async def determine_pipeline_parameters(
         "run_web_search": False,
         "fetch_timetable": True,
         "fetch_faculty": True,
+        "search_queries": [],
     }
 
     try:
@@ -1298,13 +1326,23 @@ ROUTING RULES:
    faculty rules, department policies, or anything that requires knowledge of their specific programme.
    Set false for pure greetings, simple maths, general world-knowledge questions, or small talk
    that has nothing to do with their degree programme.
+5. search_queries — if and only if fetch_faculty or RAG is needed, include a list of 1 to 3 distinct search queries to query the document database. Each item in the list must be a JSON object with:
+   - "query": a concise keyword search string (max 4-5 words) to find matching documents.
+   - "status": a short, student-friendly status action string that describes what is being searched (max 100 characters). Follow safety rules: do not mention database/RAG/AI jargon (e.g. "RAG", "chunks", "embeddings", "vector database"), file IDs, lecturer names, page numbers, or private reasoning.
+   Example:
+   "search_queries": [
+     {{"query": "aspirin COX inhibition", "status": "Searching for relevant material on aspirin and COX inhibition..."}}
+   ]
 
 OUTPUT — respond with ONLY this JSON (no extra text, no markdown):
 {{
   "rag_chunk_count": <3|6|10>,
   "run_web_search": <true|false>,
   "fetch_timetable": <true|false>,
-  "fetch_faculty": <true|false>
+  "fetch_faculty": <true|false>,
+  "search_queries": [
+    {{"query": "<keywords>", "status": "<custom status action message>"}}
+  ]
 }}"""
 
         response = await llm_engine_instance.generate_completion_with_failover(
@@ -1335,26 +1373,15 @@ OUTPUT — respond with ONLY this JSON (no extra text, no markdown):
             raise ValueError(f"No JSON object found in planner output: {clean_text[:200]!r}")
 
         parsed = json.loads(json_match.group())
-
-        result = {
-            "rag_chunk_count": int(parsed.get("rag_chunk_count", _PLANNER_DEFAULTS["rag_chunk_count"])),
-            "run_web_search": bool(parsed.get("run_web_search", _PLANNER_DEFAULTS["run_web_search"])),
-            "fetch_timetable": bool(parsed.get("fetch_timetable", _PLANNER_DEFAULTS["fetch_timetable"])),
-            "fetch_faculty": bool(parsed.get("fetch_faculty", _PLANNER_DEFAULTS["fetch_faculty"])),
-        }
-
-        # Clamp rag_chunk_count to allowed values
-        if result["rag_chunk_count"] not in (3, 6, 10):
-            closest = min((3, 6, 10), key=lambda v: abs(v - result["rag_chunk_count"]))
-            logger.debug("Planner returned rag_chunk_count=%d; clamping to %d", result["rag_chunk_count"], closest)
-            result["rag_chunk_count"] = closest
+        result = _validate_pipeline_plan(parsed)
 
         logger.info(
-            "Agentic planner decision: rag_chunks=%d web_search=%s timetable=%s faculty=%s",
+            "Agentic planner decision: rag_chunks=%d web_search=%s timetable=%s faculty=%s queries=%d",
             result["rag_chunk_count"],
             result["run_web_search"],
             result["fetch_timetable"],
             result["fetch_faculty"],
+            len(result["search_queries"]),
         )
         return result
 
@@ -1368,17 +1395,28 @@ STREAMING_PLANNER_DEFAULTS = {
     "run_web_search": False,
     "fetch_timetable": True,
     "fetch_faculty": True,
+    "enable_deep_final_reasoning": False,
+    "search_queries": [],
+}
+
+FAST_MODE_DEFAULTS = {
+    "rag_chunk_count": 4,
+    "run_web_search": False,
+    "fetch_timetable": False,
+    "fetch_faculty": True,
+    "enable_deep_final_reasoning": False,
+    "search_queries": [],
 }
 PUBLIC_PLANNER_FALLBACK = (
-    "The question is clear and focused. The most useful approach is to identify the main concept "
-    "and organise the explanation in a simple, relevant structure."
+    "The question is clear and focused. I will retrieve the relevant academic material "
+    "and organise the key points into a clear, easy-to-follow explanation."
 )
 _PUBLIC_PLANNER_LEAK_MARKERS = (
     "role:",
     "constraints:",
+    "system prompt",
     "system:",
     "context:",
-    "checked",
     "no headings",
     "student profile",
     "<think",
@@ -1388,10 +1426,13 @@ _PUBLIC_PLANNER_LEAK_MARKERS = (
     "run_web_search",
     "fetch_timetable",
     "fetch_faculty",
-    "course code",
-    "lecturer",
+    "internal instruction",
+    "hidden instruction",
+    "lecturer name",
     "page number",
     "model name",
+    "vector search",
+    "embedding",
     "database",
     "chunk",
     "json",
@@ -1406,9 +1447,27 @@ def _validate_pipeline_plan(parsed: dict[str, Any]) -> dict:
         "run_web_search": bool(parsed.get("run_web_search", STREAMING_PLANNER_DEFAULTS["run_web_search"])),
         "fetch_timetable": bool(parsed.get("fetch_timetable", STREAMING_PLANNER_DEFAULTS["fetch_timetable"])),
         "fetch_faculty": bool(parsed.get("fetch_faculty", STREAMING_PLANNER_DEFAULTS["fetch_faculty"])),
+        "enable_deep_final_reasoning": bool(parsed.get("enable_deep_final_reasoning", STREAMING_PLANNER_DEFAULTS["enable_deep_final_reasoning"])),
     }
-    if result["rag_chunk_count"] not in (3, 6, 10):
+    if result["rag_chunk_count"] not in (3, 4, 6, 10):
         result["rag_chunk_count"] = STREAMING_PLANNER_DEFAULTS["rag_chunk_count"]
+
+    # Validate search_queries: must be a list of dicts/strings, max 3
+    raw_queries = parsed.get("search_queries", [])
+    search_queries = []
+    if isinstance(raw_queries, list):
+        for q in raw_queries[:3]:
+            if isinstance(q, dict) and "query" in q:
+                search_queries.append({
+                    "query": str(q["query"]).strip(),
+                    "status": str(q.get("status") or f"Searching for {q['query']}...").strip()
+                })
+            elif isinstance(q, str) and q.strip():
+                search_queries.append({
+                    "query": q.strip(),
+                    "status": f"Searching for {q.strip()}..."
+                })
+    result["search_queries"] = search_queries
     return result
 
 
@@ -1562,20 +1621,38 @@ Your public reasoning should state what information needs to be checked or retri
 - whether current schedule information, curriculum details, or recent external information needs to be checked or retrieved
 
 GUIDELINE EXAMPLES:
-- For a standard academic question:
-  "The student is asking for the different types of ergot alkaloids. This is a standard academic question that will be clearer as a structured classification rather than a long explanation. I will retrieve the relevant academic material and organise the alkaloids into their major classes with suitable examples. No timetable check or recent external information is needed for this question."
+- For a standard academic question (after retrieving material):
+  "The student is asking for the different routes of administration for local anaesthetics. This is a standard academic question that is best answered using a structured classification.
+
+I will retrieve the relevant pharmacological information and organise the routes of administration — such as topical, infiltration, and regional blocks — into a clear, easy-to-follow list with brief explanations for each.
+
+No timetable check or recent external information is required for this request. I found the relevant details in PCH 412 — Local Anaesthetics and will use them to prepare a focused explanation."
 - For a timetable or schedule question:
   "The student is asking about today's classes. The answer depends on the current schedule, so I will check the available timetable before responding."
 - For a question depending on recent or external information:
   "This question depends on recent information, so I will check current sources before preparing the response."
 - For a complex academic question:
-  "This question involves several connected concepts. I will retrieve the relevant academic material and build the explanation step by step so the relationship between the concepts is clear."
+  "This question involves several connected concepts. I will retrieve the relevant academic material and build the explanation step by step so the relationship between the concepts is clear. I found the relevant details in [Course — Topic] and will use them to structure the response."
+
+After you state your plan, always end with ONE of these conclusions:
+- "No timetable check or recent external information is required for this request." (for standard academic questions)
+- "I will check the available class schedule before responding." (for timetable questions)
+- "I will check current external sources before responding." (for web search questions)
+- "I will check the curriculum details before responding." (for faculty/programme questions)
 
 Do not provide the complete final answer.
 Do not expose hidden chain-of-thought.
 Do NOT mention internal implementation details, such as: "planner", "routing", "pipeline", "RAG", "chunks", "vector search", "embeddings", "database", "model names", "JSON", "system prompts", "hidden instructions", "roles", "constraints", "context blocks", "profile formatting", "source metadata", "lecturer names", "course codes", or "page numbers".
 
-Then output the internal routing decisions privately in the required routing block.
+Then output the internal routing decisions privately in the required routing block. 
+
+Under "search_queries", if and only if fetch_faculty or RAG is needed, include a list of 1 to 3 distinct search queries to query the document database. Each item in the list must be a JSON object with:
+- "query": a concise keyword search string (max 4-5 words) to find matching documents.
+- "status": a short, student-friendly status action string that describes what is being searched (max 100 characters). Follow safety rules: do not mention database/RAG/AI jargon (e.g. "RAG", "chunks", "embeddings", "vector database"), file IDs, lecturer names, page numbers, or private reasoning.
+Example:
+"search_queries": [
+  {{"query": "aspirin COX inhibition", "status": "Searching for relevant material on aspirin and COX inhibition..."}}
+]
 
 Return exactly:
 
@@ -1583,7 +1660,7 @@ Return exactly:
 2-5 short natural paragraphs.
 </public_thought>
 <routing>
-{{"rag_chunk_count": <3|6|10>, "run_web_search": <bool>, "fetch_timetable": <bool>, "fetch_faculty": <bool>}}
+{{"rag_chunk_count": <3|6|10>, "run_web_search": <bool>, "fetch_timetable": <bool>, "fetch_faculty": <bool>, "enable_deep_final_reasoning": <bool>, "search_queries": [{{"query": "<keywords>", "status": "<custom status action message>"}}]}}
 </routing>
 
 For simple questions, use 2-3 short paragraphs.
@@ -1668,6 +1745,293 @@ Student question:
         yield {"thinking_update": PUBLIC_PLANNER_FALLBACK}
         yield {"pipeline_params": STREAMING_PLANNER_DEFAULTS.copy()}
 
+
+
+def sanitize_status_message(status: str, default_fallback: str = "Reviewing the relevant course material...") -> str:
+    if not status or not isinstance(status, str):
+        return default_fallback
+    
+    status = status.strip()
+    # Enforce 100 character limit
+    if len(status) > 100:
+        return default_fallback
+        
+    # Check for banned database/RAG/AI/internal jargon
+    _BANNED_WORDS = {
+        "rag", "embedding", "embeddings", "vector", "chunk", "chunks", 
+        "database", "db", "model", "planner", "pipeline", "routing", 
+        "parameter", "parameters", "json", "llm", "ai", "retrieve", 
+        "retrieval", "supabase", "postgres", "sql"
+    }
+    
+    # We also check for signs of private reasoning tags or file paths/lecturers
+    status_lower = status.lower()
+    
+    # Simple check for forbidden words
+    words = re.findall(r'\b\w+\b', status_lower)
+    for word in words:
+        if word in _BANNED_WORDS:
+            return default_fallback
+            
+    # Check for file extension patterns (e.g. .pdf, .docx, file_123, uuid patterns)
+    if ".pdf" in status_lower or ".docx" in status_lower:
+        return default_fallback
+        
+    # Check for uuid-like patterns or large numbers of digits
+    if re.search(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}', status_lower):
+        return default_fallback
+        
+    # Check for html or private tags
+    if "<" in status or ">" in status:
+        return default_fallback
+        
+    return status
+
+
+def safe_topic_from_query(query: str) -> str:
+    """
+    Extract/format a safe, concise topic string from a search query to be used in student-facing status messages.
+    """
+    if not query:
+        return ""
+    # Strip quotes, question marks, standard punctuation
+    topic = query.strip().strip('"\'?.')
+    # Limit size so "Refining the search around {topic}..." fits in 100 chars
+    # "Refining the search around " is 27 chars, "..." is 3. Max topic length = 100 - 30 = 70.
+    if len(topic) > 65:
+        topic = topic[:62] + "..."
+    return topic
+
+
+async def agentic_rag_loop(
+    user_text: str,
+    document_id: Optional[str],
+    student_level: str,
+    current_user: User,
+    academic_session: Optional[str],
+    semester: Optional[str],
+    rag_match_count: int,
+    search_queries: list[dict],
+    llm_engine,
+) -> AsyncIterator[dict]:
+    # If search_queries is empty, default to user_text
+    if not search_queries:
+        search_queries = [{"query": user_text, "status": "Reviewing the relevant course material..."}]
+
+    # Fetch dynamic settings for threshold
+    settings = await get_cached_settings()
+    match_threshold = float(settings.get("rag_threshold", 0.50)) if settings and settings.get("rag_threshold") is not None else float(os.getenv("RAG_MATCH_THRESHOLD", "0.50"))
+
+    all_citations = []
+    all_chunks = []
+    
+    # Track the outcome of each search query: either "good" (found vector chunks above threshold),
+    # "partial" (found keyword chunks or below-threshold chunks after retry), or "none" (found nothing).
+    query_outcomes = []
+
+    for item in search_queries:
+        query_str = item.get("query", "").strip()
+        custom_status = item.get("status", "").strip()
+        
+        if not query_str:
+            continue
+            
+        sanitized_status = sanitize_status_message(custom_status, "Reviewing the relevant course material...")
+        yield {"status": sanitized_status}
+
+        # Step 1: Search using get_relevant_context with _out_rpc_rows
+        retrieved_rows = []
+        context_text, citations_list = await get_relevant_context(
+            user_question=query_str,
+            document_id=document_id,
+            user_level=None if student_level == "Unknown" else student_level,
+            current_user=current_user,
+            academic_session=academic_session,
+            semester=semester,
+            rag_match_count=rag_match_count,
+            _out_rpc_rows=retrieved_rows,
+        )
+
+        # Step 2: Evaluate retrieved rows using pgvector similarity score
+        # A row is considered valid if it has similarity and similarity >= threshold.
+        # Fallback keyword chunks won't have a 'similarity' field (or it will be missing/None).
+        # We need to distinguish between vector result vs fallback keyword result.
+        vector_chunks = []
+        keyword_fallback_chunks = []
+
+        for row in retrieved_rows:
+            sim = row.get("similarity")
+            if sim is not None:
+                # Vector match
+                if float(sim) >= match_threshold:
+                    vector_chunks.append(row)
+            else:
+                # Fallback keyword match or other result without similarity
+                keyword_fallback_chunks.append(row)
+
+        # Step 3: Check confidence and retry if needed
+        if vector_chunks:
+            # We found good vector chunks!
+            all_chunks.extend(vector_chunks)
+            all_citations.extend(citations_list)
+            query_outcomes.append("good")
+        elif keyword_fallback_chunks:
+            # We found keyword chunks without similarity score.
+            # "keyword fallback without similarity → treat cautiously as partial, not good"
+            all_chunks.extend(keyword_fallback_chunks)
+            all_citations.extend(citations_list)
+            query_outcomes.append("partial")
+        else:
+            # No chunks above threshold or found at all. Retry once!
+            topic = safe_topic_from_query(query_str)
+            retry_status = f"Refining the search around {topic}..." if topic else "Refining the search..."
+            sanitized_retry = sanitize_status_message(retry_status, "Refining the search...")
+            yield {"status": sanitized_retry}
+
+            # LLM rephrase using the fast model (non-streaming)
+            rephrase_prompt = (
+                f"You are a pharmacy search assistant. Rephrase the following search query to find better matches "
+                f"in a lecture note / curriculum database: '{query_str}'. "
+                f"Respond with ONLY the new rephrased query string (max 5 words), no markdown, no other text."
+            )
+            try:
+                rephrase_res = await llm_engine.generate_completion_with_failover(
+                    messages=[{"role": "user", "content": rephrase_prompt}],
+                    temperature=0.1,
+                    max_tokens=50,
+                    has_images=False,
+                    stream=False,
+                )
+                rephrased_query = rephrase_res.choices[0].message.content.strip().strip('"\'') if rephrase_res else query_str
+            except Exception as e:
+                logger.warning(f"Failed to rephrase query '{query_str}': {e}")
+                rephrased_query = query_str
+
+            # Run retrieval again with rephrased query
+            retry_rows = []
+            context_text_r, citations_list_r = await get_relevant_context(
+                user_question=rephrased_query,
+                document_id=document_id,
+                user_level=None if student_level == "Unknown" else student_level,
+                current_user=current_user,
+                academic_session=academic_session,
+                semester=semester,
+                rag_match_count=rag_match_count,
+                _out_rpc_rows=retry_rows,
+            )
+
+            # Evaluate retry chunks
+            retry_vector = []
+            retry_keyword = []
+            for row in retry_rows:
+                sim = row.get("similarity")
+                if sim is not None:
+                    if float(sim) >= match_threshold:
+                        retry_vector.append(row)
+                else:
+                    retry_keyword.append(row)
+
+            if retry_vector:
+                all_chunks.extend(retry_vector)
+                all_citations.extend(citations_list_r)
+                query_outcomes.append("partial") # Since it required a retry, we classify as partial/caution
+            elif retry_keyword:
+                all_chunks.extend(retry_keyword)
+                all_citations.extend(citations_list_r)
+                query_outcomes.append("partial")
+            else:
+                query_outcomes.append("none")
+
+    # Step 4: Merge and Deduplicate chunks by ID (or content hash if ID is missing)
+    unique_chunks = []
+    seen_chunk_ids = set()
+    seen_content = set()
+    for chunk in all_chunks:
+        c_id = chunk.get("id")
+        c_content = (chunk.get("content") or "").strip()
+        if not c_content:
+            continue
+            
+        content_hash = hash(c_content)
+        if c_id is not None:
+            if c_id not in seen_chunk_ids:
+                seen_chunk_ids.add(c_id)
+                unique_chunks.append(chunk)
+        else:
+            if content_hash not in seen_content:
+                seen_content.add(content_hash)
+                unique_chunks.append(chunk)
+
+    # Reconstruct merged context text and citations
+    unique_doc_ids = list({c.get("document_id") for c in unique_chunks if c.get("document_id")})
+    
+    # Build context string
+    context_parts = []
+    if unique_chunks:
+        # Fetch metadata for the docs
+        meta_by_id = {}
+        if unique_doc_ids:
+            try:
+                meta_res = await _execute_with_retry(
+                    lambda: supabase_client.table("pans_library")
+                    .select("id,file_name,course_code,lecturer_name,topic")
+                    .in_("id", unique_doc_ids)
+                    .execute(),
+                    "Fetch global source metadata",
+                )
+                meta_by_id = {item.get("id"): item for item in (meta_res.data or [])}
+            except Exception as e:
+                logger.error(f"Failed to fetch metadata for agentic RAG loop: {e}")
+
+        # If study mode (document_id is set), we can put a nice metadata header once
+        if document_id and unique_chunks:
+            doc_meta = meta_by_id.get(document_id) or {}
+            metadata_text = "DOCUMENT INFORMATION:\n"
+            if doc_meta.get('file_name'):
+                metadata_text += f"Title: {doc_meta['file_name']}\n"
+            if doc_meta.get('topic'):
+                metadata_text += f"Topic: {doc_meta['topic']}\n"
+            if doc_meta.get('lecturer_name'):
+                metadata_text += f"Lecturer: {doc_meta['lecturer_name']}\n"
+            if doc_meta.get('course_code'):
+                metadata_text += f"Course Code: {doc_meta['course_code']}\n"
+            context_parts.append(metadata_text)
+            
+            context_parts.append("RELEVANT CONTENT FROM LECTURE:")
+            context_parts.append("\n\n---\n\n".join(c.get("content", "") for c in unique_chunks))
+        else:
+            # Global RAG multi-source format
+            for chunk in unique_chunks:
+                chunk_text = chunk.get("content", "").strip()
+                doc_uuid = chunk.get("document_id")
+                source_meta = meta_by_id.get(doc_uuid, {})
+                file_name = source_meta.get("file_name") or "Unknown Document"
+                course_code = source_meta.get("course_code") or "N/A"
+                lecturer_name = source_meta.get("lecturer_name") or "N/A"
+                context_parts.append(
+                    f"--- Source: {file_name} (Course: {course_code}) | Lecturer: {lecturer_name} ---\n{chunk_text}"
+                )
+    
+    merged_context = "\n\n".join(context_parts)
+    
+    # Deduplicate citations list
+    deduplicated_citations = []
+    seen_citation_keys = set()
+    for cite in all_citations:
+        cite_key = (cite.get("document_id"), cite.get("title"))
+        if cite_key not in seen_citation_keys:
+            seen_citation_keys.add(cite_key)
+            deduplicated_citations.append(cite)
+
+    # Determine final context_quality
+    if not unique_chunks:
+        context_quality = "none"
+    elif "partial" in query_outcomes or "none" in query_outcomes:
+        context_quality = "partial"
+    else:
+        context_quality = "good"
+
+    yield {"final_result": (merged_context, deduplicated_citations, context_quality)}
 
 
 # Function to set dependencies (called from main api.py)

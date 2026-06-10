@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { clearAdminWorkspaceUniversity, getAdminWorkspaceUniversityId } from './admin-workspace';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 const API_KEY = process.env.NEXT_PUBLIC_API_KEY || '';
@@ -23,6 +24,39 @@ async function buildHeaders(options: FetchOptions, token?: string): Promise<Reco
 /** Wait ms milliseconds before resolving. */
 function delay(ms: number) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
+const ADMIN_WORKSPACE_ENDPOINTS = [
+    '/admin/dashboard',
+    '/admin/chat',
+    '/admin/students',
+    '/admin/documents',
+    '/admin/academic-context',
+    '/admin/faculty-knowledge',
+    '/admin/timetable',
+    '/admin/lecturers',
+    '/admin/material-submissions',
+    '/admin/restrictions',
+];
+
+function withAdminWorkspaceUniversity(endpoint: string): string {
+    const workspaceUniversityId = getAdminWorkspaceUniversityId();
+    if (!workspaceUniversityId) return endpoint;
+
+    const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    const [pathname, queryString = ''] = normalizedEndpoint.split('?');
+    const shouldAttachWorkspace = ADMIN_WORKSPACE_ENDPOINTS.some(
+        (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
+    );
+
+    if (!shouldAttachWorkspace) return endpoint;
+
+    const params = new URLSearchParams(queryString);
+    if (!params.has('university_id')) {
+        params.set('university_id', workspaceUniversityId);
+    }
+
+    return `${pathname}?${params.toString()}`;
+}
+
 async function handleExpiredSession(): Promise<void> {
     console.warn('[API] Session expired - attempting one final refresh before redirect...');
 
@@ -39,26 +73,28 @@ async function handleExpiredSession(): Promise<void> {
 
     // Truly dead - sign out and redirect
     console.warn('[API] Session confirmed expired - signing out and redirecting to login.');
+    clearAdminWorkspaceUniversity();
     await supabase.auth.signOut();
     window.location.replace('/login');
 }
 
 export const api = {
     fetch: async (endpoint: string, options: FetchOptions = {}): Promise<Response> => {
+        const scopedEndpoint = withAdminWorkspaceUniversity(endpoint);
         // 1. Get current session
         const { data: { session } } = await supabase.auth.getSession();
         const token = session?.access_token;
 
         // 2. Build headers + make request
         const headers = await buildHeaders(options, token);
-        const url = `${API_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+        const url = `${API_URL}${scopedEndpoint.startsWith('/') ? scopedEndpoint : `/${scopedEndpoint}`}`;
 
         const response = await fetch(url, { ...options, headers });
 
         // Only try a refresh when the request was actually authenticated.
         if (response.status === 401 && !options._isRetry) {
             if (!token) {
-                console.warn(`[API] 401 received without a session token for ${endpoint}; skipping refresh/redirect.`);
+                console.warn(`[API] 401 received without a session token for ${scopedEndpoint}; skipping refresh/redirect.`);
                 return response;
             }
 
@@ -81,7 +117,7 @@ export const api = {
         // 4. Log non-OK responses for debugging (never expose raw errors to UI)
         if (!response.ok) {
             const rawText = await response.clone().text();
-            console.error(`[API Error] ${response.status} ${response.statusText} - ${endpoint}`);
+            console.error(`[API Error] ${response.status} ${response.statusText} - ${scopedEndpoint}`);
             try {
                 console.error('[API Error] Details:', JSON.parse(rawText));
             } catch {

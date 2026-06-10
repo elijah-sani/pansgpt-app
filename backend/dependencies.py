@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import uuid
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from urllib.error import URLError
@@ -12,6 +13,8 @@ from fastapi import Depends, Header, HTTPException
 from pydantic import BaseModel
 
 logger = logging.getLogger("PansGPT")
+
+UNIVERSITY_SUSPENDED_MESSAGE = "Your university workspace is temporarily unavailable."
 
 def _create_jwks_client(url: str, headers: Dict[str, str]) -> PyJWKClient:
     try:
@@ -89,10 +92,12 @@ class LecturerProfile(BaseModel):
 
 class UserRoleInfo(BaseModel):
     role: Optional[str] = None
+    admin_level: Optional[str] = None
     is_admin: bool = False
     is_super_admin: bool = False
     is_global_admin: bool = False
     is_university_admin: bool = False
+    is_senior_university_admin: bool = False
     university_id: Optional[str] = None
 
 
@@ -153,18 +158,22 @@ def _build_role_info(row: Optional[Dict[str, Any]]) -> UserRoleInfo:
         return UserRoleInfo()
 
     role = (row.get("role") or "").strip().lower() or None
+    admin_level = (row.get("admin_level") or "").strip().lower() or None
     university_id = (row.get("university_id") or "").strip() or None
     is_super_admin = role == "super_admin"
     is_global_admin = is_global_admin_role(role, university_id)
     is_university_admin = is_university_admin_role(role, university_id)
+    is_senior_university_admin = is_university_admin and admin_level == "senior"
     is_admin = role in {"admin", "super_admin", "global_admin", "university_admin"}
 
     return UserRoleInfo(
         role=role,
+        admin_level=admin_level,
         is_admin=is_admin,
         is_super_admin=is_super_admin,
         is_global_admin=is_global_admin,
         is_university_admin=is_university_admin,
+        is_senior_university_admin=is_senior_university_admin,
         university_id=university_id,
     )
 
@@ -306,15 +315,58 @@ async def get_current_user_role_info(current_user: User) -> UserRoleInfo:
         if current_user.email:
             normalized_email = current_user.email.strip().lower()
             res = await _run_role_query(
-                lambda: sb.table("user_roles").select("role,email,university_id,created_at").ilike("email", normalized_email).execute(),
+                lambda: sb.table("user_roles")
+                .select("id,user_id,role,email,university_id,created_at,admin_level")
+                .ilike("email", normalized_email)
+                .execute(),
                 operation_name="role lookup by email",
                 user_id=current_user.id,
             )
             rows = res.data or []
+            
+            if rows:
+                first_row = rows[0]
+                db_user_id = first_row.get("user_id")
+                if not db_user_id:
+                    logger.info("Email match found in user_roles with NULL user_id. Calling claim_pending_admin_access RPC for %s...", normalized_email)
+                    try:
+                        rpc_res = await _run_role_query(
+                            lambda: sb.rpc("claim_pending_admin_access", {
+                                "p_email": normalized_email,
+                                "p_user_id": current_user.id
+                            }).execute(),
+                            operation_name="claim pending admin access RPC",
+                            user_id=current_user.id,
+                        )
+                        rpc_rows = rpc_res.data or []
+                        if rpc_rows:
+                            rows = rpc_rows
+                            logger.info("Successfully bound/confirmed role for user %s (%s)", current_user.id, normalized_email)
+                        else:
+                            logger.warning("claim_pending_admin_access RPC returned empty for email %s", normalized_email)
+                    except Exception as rpc_exc:
+                        msg = str(rpc_exc).lower()
+                        if "unsafe overwrite blocked" in msg or "already claimed" in msg:
+                            logger.error("Unsafe overwrite conflict in RPC for %s: %s", normalized_email, rpc_exc)
+                            raise HTTPException(
+                                status_code=409,
+                                detail="This admin email access is already claimed by another account."
+                            )
+                        logger.error("claim_pending_admin_access RPC failed: %s", rpc_exc)
+                        raise
+                elif db_user_id != current_user.id:
+                    logger.warning("Unsafe access: email %s already claimed by different user_id %s, caller is %s", normalized_email, db_user_id, current_user.id)
+                    raise HTTPException(
+                        status_code=409,
+                        detail="This admin email access is already claimed by another account."
+                    )
 
         if not rows:
             res = await _run_role_query(
-                lambda: sb.table("user_roles").select("role,user_id,university_id,created_at").eq("user_id", current_user.id).execute(),
+                lambda: sb.table("user_roles")
+                .select("id,user_id,role,email,university_id,created_at,admin_level")
+                .eq("user_id", current_user.id)
+                .execute(),
                 operation_name="role lookup by user_id",
                 user_id=current_user.id,
             )
@@ -487,8 +539,89 @@ async def get_admin_university_scope(current_user: User = Depends(get_current_us
     raise HTTPException(status_code=403, detail="University admin scope is not configured")
 
 
+async def _validate_active_workspace_university(university_id: str) -> str:
+    try:
+        uuid.UUID(str(university_id))
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=400, detail="university_id must be a valid UUID")
+
+    sb = _role_db()
+    if not sb:
+        raise HTTPException(status_code=503, detail="Database not active")
+
+    res = await _run_role_query(
+        lambda: sb.table("universities")
+        .select("id,status")
+        .eq("id", str(university_id))
+        .limit(1)
+        .execute(),
+        operation_name="validate admin workspace university",
+    )
+    row = (res.data or [None])[0]
+    if not row:
+        raise HTTPException(status_code=404, detail="University not found")
+    status = (row.get("status") or "").strip().lower()
+    if status == "suspended":
+        raise HTTPException(status_code=400, detail=UNIVERSITY_SUSPENDED_MESSAGE)
+    elif status != "active":
+        raise HTTPException(status_code=400, detail="University workspace is not active")
+    return str(row["id"])
+
+
+async def resolve_admin_workspace_university(
+    current_user: User,
+    requested_university_id: Optional[str] = None,
+) -> str:
+    """
+    Resolve the university for school-owned admin operations.
+
+    Canonical roles:
+    - super_admin: platform owner; must explicitly select a university workspace.
+    - university_admin: school operator; always uses the university from user_roles.
+
+    Legacy transition:
+    - global_admin and admin without university_id are platform-only.
+    - admin with university_id behaves like university_admin.
+    """
+    role_info = await get_current_user_role_info(current_user)
+    if not role_info.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    requested = (requested_university_id or "").strip() or None
+
+    if role_info.is_university_admin:
+        own_university_id = (role_info.university_id or "").strip()
+        if not own_university_id:
+            raise HTTPException(status_code=403, detail="University admin scope is not configured")
+        if requested and requested != own_university_id:
+            raise HTTPException(status_code=403, detail="You cannot access another university")
+        return await _validate_active_workspace_university(own_university_id)
+
+    if role_info.is_super_admin:
+        if not requested:
+            raise HTTPException(status_code=400, detail="university_id is required for super-admin university workspace actions")
+        return await _validate_active_workspace_university(requested)
+
+    if role_info.role in {"global_admin", "admin"} or role_info.is_global_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="Use a university-admin account or a super-admin university workspace.",
+        )
+
+    raise HTTPException(status_code=403, detail="Admin access required")
+
+
 async def get_current_super_admin(current_user: User = Depends(get_current_user)) -> User:
     await require_super_admin_role(current_user)
+    return current_user
+
+
+async def get_current_senior_university_admin(current_user: User = Depends(get_current_user)) -> User:
+    role_info = await get_current_user_role_info(current_user)
+    if role_info.role == "super_admin":
+        return current_user
+    if not role_info.is_university_admin or not role_info.is_senior_university_admin or not role_info.university_id:
+        raise HTTPException(status_code=403, detail="Senior university admin access required")
     return current_user
 
 
@@ -507,6 +640,9 @@ async def get_current_active_lecturer(current_user: User = Depends(get_current_u
     # Only block if the university status is explicitly known to be inactive.
     # If university_status is None (join returned no data), allow through — the
     # lecturer's own status is the authoritative gate.
+    if lecturer_profile.university_status == "suspended":
+        raise HTTPException(status_code=400, detail=UNIVERSITY_SUSPENDED_MESSAGE)
+
     if lecturer_profile.university_status is not None and lecturer_profile.university_status != "active":
         raise HTTPException(status_code=403, detail="Active university access required")
 

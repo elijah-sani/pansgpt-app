@@ -217,7 +217,7 @@ export default function AdminLecturersPage() {
     };
 
     return (
-        <div className="w-full max-w-5xl mx-auto md:pt-6 md:px-4 space-y-8 animate-in fade-in duration-500">
+        <div className="mx-auto w-full max-w-6xl space-y-8 pb-12 md:px-4 md:pt-6 animate-in fade-in duration-500">
                     <header className="mb-6 md:mb-8">
                         <h1 className="text-xl md:text-3xl font-bold text-foreground">Lecturer Approvals</h1>
                         <p className="mt-2 text-muted-foreground">
@@ -264,12 +264,12 @@ export default function AdminLecturersPage() {
                                     </div>
                                 )}
                             </div>
-                            <div className="flex items-center gap-2 self-end md:self-auto">
+                            <div className="flex items-center justify-between gap-2 md:justify-start md:self-auto">
                                 <div className="relative">
                                     <button
                                         type="button"
                                         onClick={() => setFilterMenuOpen((open) => !open)}
-                                        className="inline-flex h-11 items-center justify-center rounded-xl border border-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+                                        className="inline-flex h-11 min-w-11 items-center justify-center rounded-xl border border-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted"
                                         aria-haspopup="menu"
                                         aria-expanded={filterMenuOpen}
                                         aria-label="Filter lecturers"
@@ -314,7 +314,7 @@ export default function AdminLecturersPage() {
                                         void fetchLecturers(true);
                                     }}
                                     disabled={isRefreshing}
-                                    className="inline-flex h-11 items-center justify-center rounded-xl border border-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-60"
+                                    className="inline-flex h-11 min-w-11 items-center justify-center rounded-xl border border-border bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-60"
                                     aria-label="Refresh lecturers"
                                 >
                                     <RefreshCcw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
@@ -434,22 +434,22 @@ export default function AdminLecturersPage() {
                                     {filteredLecturers.map((lecturer) => (
                                         <article key={lecturer.id} className="rounded-2xl border border-border bg-background p-4">
                                             <div className="flex items-start justify-between gap-3">
-                                                <div>
-                                                    <h3 className="font-semibold text-foreground">
+                                                <div className="min-w-0">
+                                                    <h3 className="truncate font-semibold text-foreground">
                                                         {lecturer.title ? `${lecturer.title} ` : ''}{lecturer.full_name}
                                                     </h3>
-                                                    <p className="mt-1 text-sm text-muted-foreground">{lecturer.university_name || 'Unknown university'}</p>
+                                                    <p className="mt-1 truncate text-sm text-muted-foreground">{lecturer.university_name || 'Unknown university'}</p>
                                                 </div>
                                                 <StatusBadge status={lecturer.status} />
                                             </div>
                                             <div className="mt-4 space-y-2 text-sm text-muted-foreground">
                                                 <div className="flex items-center gap-2">
                                                     <Mail className="h-4 w-4" />
-                                                    <span>{lecturer.email}</span>
+                                                    <span className="truncate">{lecturer.email}</span>
                                                 </div>
                                                 <div className="flex items-center gap-2">
                                                     <Phone className="h-4 w-4" />
-                                                    <span>{lecturer.phone_number || 'Not provided'}</span>
+                                                    <span className="truncate">{lecturer.phone_number || 'Not provided'}</span>
                                                 </div>
                                                 <p>Submitted {formatDate(lecturer.created_at)}</p>
                                             </div>

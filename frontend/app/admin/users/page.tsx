@@ -98,10 +98,10 @@ export default function UsersPage() {
     const canManageUsers = isGlobalAdmin;
 
     return (
-        <div className="w-full max-w-5xl mx-auto md:pt-6 md:px-4">
+        <div className="mx-auto w-full max-w-6xl pb-12 md:px-4 md:pt-6">
             {/* Header */}
-            <header className="flex justify-between items-start mb-8">
-                <div>
+            <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
                     <div className="flex items-center gap-3 mb-1">
                         <h2 className="text-2xl font-bold text-foreground">Users Management</h2>
                         {!canManageUsers && currentUserRole && (
@@ -116,7 +116,7 @@ export default function UsersPage() {
                 {canManageUsers && (
                     <button
                         onClick={() => setIsInviteModalOpen(true)}
-                        className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-yellow-500 to-amber-500 hover:from-yellow-400 hover:to-amber-400 text-white rounded-xl text-sm font-bold shadow-lg shadow-amber-500/20 transition-all"
+                        className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-yellow-500 to-amber-500 px-4 py-2 text-sm font-bold text-white shadow-lg shadow-amber-500/20 transition-all hover:from-yellow-400 hover:to-amber-400 sm:w-auto"
                     >
                         <Plus className="w-4 h-4" />
                         Add New User
@@ -139,11 +139,10 @@ export default function UsersPage() {
                 </div>
 
                 {/* Mobile Search Toggle */}
-                <div className="md:hidden flex-1">
+                <div className={`md:hidden ${showMobileSearch ? 'flex-1' : ''}`}>
                     {!showMobileSearch ? (
-                        <button onClick={() => setShowMobileSearch(true)} className="flex items-center gap-2 text-sm text-muted-foreground bg-card border border-border rounded-xl px-4 py-2.5 w-full transition-colors hover:border-primary/50">
+                        <button onClick={() => setShowMobileSearch(true)} className="flex items-center justify-center w-10 h-10 text-muted-foreground bg-card border border-border rounded-xl transition-colors hover:border-primary/50">
                             <Search className="w-4 h-4" />
-                            <span>Search users...</span>
                         </button>
                     ) : (
                         <div className="flex items-center gap-2 w-full bg-card border border-border rounded-xl px-4 py-2.5 focus-within:border-primary/50 transition-colors">
@@ -272,7 +271,7 @@ export default function UsersPage() {
             </div>
 
             {/* Mobile Cards */}
-            <div className="grid grid-cols-1 gap-4 lg:hidden">
+            <div className="grid grid-cols-1 gap-4 md:hidden">
                 {isLoading ? (
                     <div className="p-8 text-center text-muted-foreground bg-card border border-border rounded-2xl text-sm">
                         Loading users...
@@ -305,7 +304,7 @@ export default function UsersPage() {
                                 </div>
                             </div>
                             
-                            <div className="flex items-center justify-between gap-4">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                 <div className="flex flex-wrap gap-2">
                                     <div>
                                         {user.role === 'super_admin' ? (

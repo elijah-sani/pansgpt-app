@@ -1,4 +1,5 @@
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, Query
+from uuid import uuid4
 import shutil
 import subprocess
 
@@ -62,7 +63,13 @@ from .shared import (
     uuid,
     verify_api_key,
 )
-from dependencies import get_current_admin, get_current_user_role
+from dependencies import (
+    get_admin_university_scope,
+    get_current_admin,
+    get_current_global_admin,
+    get_current_user_role,
+    resolve_admin_workspace_university,
+)
 from restrictions import build_restriction_select, restriction_row_to_response
 
 router = APIRouter(tags=["admin"])
@@ -80,6 +87,20 @@ class MaterialSubmissionReviewRequest(BaseModel):
     reason: Optional[str] = None
 
 
+class AcademicContextUpdateRequest(BaseModel):
+    university_id: Optional[str] = None
+    current_academic_session: str
+    current_semester: str
+
+
+class AcademicContextRolloverRequest(BaseModel):
+    university_id: Optional[str] = None
+    new_academic_session: str
+    new_semester: str
+    archive_previous_active_materials: bool = True
+    dry_run: bool = False
+
+
 SUPPORTED_CONVERSION_INPUT_TYPES = {"doc", "docx", "ppt", "pptx"}
 PDF_CONVERSION_UNAVAILABLE_MESSAGE = "PDF conversion is not available on this server yet."
 
@@ -87,10 +108,35 @@ PDF_CONVERSION_UNAVAILABLE_MESSAGE = "PDF conversion is not available on this se
 MATERIAL_SUBMISSION_SELECT = (
     "id,university_id,lecturer_id,course_code,course_title,level,material_type,title,"
     "description,file_name,file_url,storage_provider,file_type,mime_type,is_supported_file,"
-    "status,reviewed_by,reviewed_at,review_note,pans_library_id,created_at,updated_at,"
+    "status,reviewed_by,reviewed_at,review_note,pans_library_id,cancelled_at,cancelled_by,"
+    "cancellation_reason,drive_file_id,original_drive_file_id,converted_drive_file_id,created_at,updated_at,"
     "lecturer:lecturer_profiles!lecturer_material_submissions_lecturer_id_fkey(id,user_id,university_id,title,full_name,email,status),"
     "university:universities(id,name,status)"
 )
+
+
+async def _get_admin_scope(current_user: User) -> Optional[str]:
+    return await get_admin_university_scope(current_user)
+
+
+async def _resolve_workspace_scope(current_user: User, requested_university_id: Optional[str] = None) -> str:
+    return await resolve_admin_workspace_university(current_user, requested_university_id)
+
+
+def _resolve_requested_university_scope(requested_university_id: Optional[str], admin_scope: Optional[str]) -> Optional[str]:
+    normalized_requested = (requested_university_id or "").strip() or None
+    if admin_scope is None:
+        return normalized_requested
+    if normalized_requested and normalized_requested != admin_scope:
+        raise HTTPException(status_code=403, detail="You cannot access another university")
+    return admin_scope
+
+
+def _assert_scope_match(record: Optional[dict], admin_scope: Optional[str], *, field: str = "university_id", resource_name: str = "record") -> None:
+    if not record:
+        raise HTTPException(status_code=404, detail=f"{resource_name.capitalize()} not found")
+    if admin_scope and (record.get(field) or None) != admin_scope:
+        raise HTTPException(status_code=403, detail=f"You do not have access to this {resource_name}")
 
 
 def _lecturer_row_to_response(row: dict, include_university_details: bool = False) -> dict:
@@ -173,6 +219,12 @@ def _material_submission_to_response(row: dict) -> dict:
         "reviewed_at": row.get("reviewed_at"),
         "review_note": row.get("review_note"),
         "pans_library_id": row.get("pans_library_id"),
+        "cancelled_at": row.get("cancelled_at"),
+        "cancelled_by": row.get("cancelled_by"),
+        "cancellation_reason": row.get("cancellation_reason"),
+        "drive_file_id": row.get("drive_file_id"),
+        "original_drive_file_id": row.get("original_drive_file_id"),
+        "converted_drive_file_id": row.get("converted_drive_file_id"),
         "library_embedding_status": None,
         "library_embedding_progress": None,
         "library_embedding_error": None,
@@ -216,7 +268,7 @@ async def _enrich_material_submissions_with_library_state(sb, rows: list[dict]) 
     return enriched_rows
 
 
-async def _get_material_submission_row(sb, submission_id: str) -> dict:
+async def _get_material_submission_row(sb, submission_id: str, *, admin_scope: Optional[str] = None) -> dict:
     res = await _execute_with_retry(
         lambda: sb.table("lecturer_material_submissions")
         .select(MATERIAL_SUBMISSION_SELECT)
@@ -227,8 +279,7 @@ async def _get_material_submission_row(sb, submission_id: str) -> dict:
     )
     rows = res.data or []
     row = rows[0] if rows else None
-    if not row:
-        raise HTTPException(status_code=404, detail="Material submission not found")
+    _assert_scope_match(row, admin_scope, resource_name="material submission")
     return row
 
 
@@ -243,7 +294,242 @@ def _normalize_reason(value: Optional[str], *, required: bool = False) -> Option
     return normalized or None
 
 
-async def _get_lecturer_row_by_id(sb, lecturer_id: str, *, include_university_details: bool = False) -> dict:
+def _academic_context_payload(row: Optional[dict]) -> Optional[dict]:
+    if not row:
+        return None
+    return {
+        "id": row.get("id"),
+        "university_id": row.get("university_id"),
+        "current_academic_session": row.get("current_academic_session"),
+        "current_semester": shared.normalize_semester(row.get("current_semester")),
+        "updated_at": row.get("updated_at"),
+        "updated_by": row.get("updated_by"),
+    }
+
+
+async def _fetch_academic_context_row(sb, university_id: str) -> Optional[dict]:
+    res = await _execute_with_retry(
+        lambda: sb.table("academic_contexts")
+        .select("id,university_id,current_academic_session,current_semester,updated_at,updated_by")
+        .eq("university_id", university_id)
+        .limit(1)
+        .execute(),
+        "Fetch academic context row",
+    )
+    rows = res.data or []
+    return rows[0] if rows else None
+
+
+async def _count_previous_active_materials(
+    sb,
+    *,
+    university_id: str,
+    academic_session: str,
+    semester: str,
+) -> int:
+    res = await _execute_with_retry(
+        lambda: sb.table("pans_library")
+        .select("id")
+        .eq("university_id", university_id)
+        .eq("academic_session", academic_session)
+        .eq("semester", semester)
+        .eq("material_status", "active")
+        .execute(),
+        "Count previous active materials for rollover",
+    )
+    return len(res.data or [])
+
+
+async def _validate_academic_context_university(sb, university_id: str) -> None:
+    try:
+        uuid.UUID(university_id)
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=400, detail="university_id must be a valid UUID")
+
+    res = await _execute_with_retry(
+        lambda: sb.table("universities")
+        .select("id")
+        .eq("id", university_id)
+        .limit(1)
+        .execute(),
+        "Validate academic context university",
+    )
+    if not (res.data or []):
+        raise HTTPException(status_code=404, detail="University not found")
+
+
+@router.get("/admin/academic-context", dependencies=[Depends(verify_api_key)])
+async def get_academic_context(
+    university_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_admin),
+):
+    if not shared.supabase_client:
+        raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
+
+    scoped_university_id = await _resolve_workspace_scope(current_user, university_id)
+
+    sb = shared.supabase_service_client or shared.supabase_client
+    await _validate_academic_context_university(sb, scoped_university_id)
+    return {"context": await shared.get_current_academic_context(scoped_university_id)}
+
+
+@router.put("/admin/academic-context", dependencies=[Depends(verify_api_key)])
+async def upsert_academic_context(
+    payload: AcademicContextUpdateRequest,
+    current_user: User = Depends(get_current_admin),
+):
+    if not shared.supabase_client:
+        raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
+
+    scoped_university_id = await _resolve_workspace_scope(current_user, payload.university_id)
+
+    current_academic_session = (payload.current_academic_session or "").strip()
+    if not current_academic_session:
+        raise HTTPException(status_code=400, detail="current_academic_session is required")
+
+    current_semester = shared.normalize_semester(payload.current_semester)
+    if not current_semester:
+        raise HTTPException(status_code=400, detail="current_semester is required")
+
+    sb = shared.supabase_service_client or shared.supabase_client
+    await _validate_academic_context_university(sb, scoped_university_id)
+    try:
+        res = await _execute_with_retry(
+            lambda: sb.table("academic_contexts")
+            .upsert(
+                {
+                    "university_id": scoped_university_id,
+                    "current_academic_session": current_academic_session,
+                    "current_semester": current_semester,
+                    "updated_by": current_user.id,
+                },
+                on_conflict="university_id",
+            )
+            .execute(),
+            "Upsert academic context",
+        )
+        shared.invalidate_academic_context_cache(scoped_university_id)
+        row = (res.data or [None])[0]
+        return {"context": _academic_context_payload(row) or await shared.get_current_academic_context(scoped_university_id)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Academic context update failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Unable to update academic context. Please try again.")
+
+
+@router.post("/admin/academic-context/rollover", dependencies=[Depends(verify_api_key)])
+async def rollover_academic_context(
+    payload: AcademicContextRolloverRequest,
+    current_user: User = Depends(get_current_admin),
+):
+    if not shared.supabase_client:
+        raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
+
+    scoped_university_id = await _resolve_workspace_scope(current_user, payload.university_id)
+
+    new_academic_session = (payload.new_academic_session or "").strip()
+    if not new_academic_session:
+        raise HTTPException(status_code=400, detail="new_academic_session is required")
+
+    new_semester = shared.normalize_semester(payload.new_semester)
+    if not new_semester:
+        raise HTTPException(status_code=400, detail="new_semester is required")
+
+    sb = shared.supabase_service_client or shared.supabase_client
+    await _validate_academic_context_university(sb, scoped_university_id)
+
+    try:
+        rpc_res = await _execute_with_retry(
+            lambda: sb.rpc(
+                "rollover_academic_context",
+                {
+                    "p_university_id": scoped_university_id,
+                    "p_new_academic_session": new_academic_session,
+                    "p_new_semester": new_semester,
+                    "p_archive_previous_active_materials": payload.archive_previous_active_materials,
+                    "p_updated_by": current_user.id,
+                    "p_dry_run": payload.dry_run,
+                },
+            ).execute(),
+            "Rollover academic context RPC",
+        )
+        rpc_rows = rpc_res.data or []
+        rpc_row = rpc_rows[0] if rpc_rows else None
+        if not rpc_row:
+            raise HTTPException(status_code=500, detail="Rollover did not return a result")
+
+        previous_context = None
+        if rpc_row.get("previous_academic_session") or rpc_row.get("previous_semester"):
+            previous_context = {
+                "university_id": rpc_row.get("university_id"),
+                "current_academic_session": rpc_row.get("previous_academic_session"),
+                "current_semester": rpc_row.get("previous_semester"),
+            }
+        new_context = {
+            "university_id": rpc_row.get("university_id"),
+            "current_academic_session": rpc_row.get("new_academic_session"),
+            "current_semester": rpc_row.get("new_semester"),
+        }
+        archived_count = int(rpc_row.get("archived_count") or 0)
+
+        if not payload.dry_run:
+            shared.invalidate_academic_context_cache(scoped_university_id)
+            actor_role = await get_current_user_role(current_user) or "admin"
+            try:
+                await _execute_with_retry(
+                    lambda: sb.table("access_control_audit_logs")
+                    .insert({
+                        "actor_user_id": current_user.id,
+                        "actor_role": actor_role,
+                        "university_id": scoped_university_id,
+                        "action": "academic_context_rollover",
+                        "target_type": "academic_context",
+                        "target_id": scoped_university_id,
+                        "metadata": {
+                            "previous_context": previous_context,
+                            "new_context": new_context,
+                            "archive_previous_active_materials": payload.archive_previous_active_materials,
+                            "archived_count": archived_count,
+                        },
+                    })
+                    .execute(),
+                    "Insert academic rollover audit log",
+                )
+            except Exception as audit_exc:
+                logger.warning("Academic rollover audit log failed for university_id=%s: %s", scoped_university_id, audit_exc)
+
+        return {
+            "dry_run": bool(rpc_row.get("dry_run")),
+            "university_id": scoped_university_id,
+            "previous_context": previous_context,
+            "new_context": new_context,
+            "archive_previous_active_materials": payload.archive_previous_active_materials,
+            "archived_count": archived_count,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        message = str(exc) or "Unable to rollover academic context. Please try again."
+        if "matches the current context" in message:
+            raise HTTPException(status_code=400, detail="New academic context matches the current context")
+        if "new_academic_session is required" in message:
+            raise HTTPException(status_code=400, detail="new_academic_session is required")
+        if "new_semester must be first or second" in message:
+            raise HTTPException(status_code=400, detail="new_semester must be first or second")
+        if "University not found" in message:
+            raise HTTPException(status_code=404, detail="University not found")
+        logger.error("Academic context rollover failed: %s", exc)
+        raise HTTPException(status_code=500, detail=message)
+
+
+async def _get_lecturer_row_by_id(
+    sb,
+    lecturer_id: str,
+    *,
+    include_university_details: bool = False,
+    admin_scope: Optional[str] = None,
+) -> dict:
     university_select = "id,name,status"
     if include_university_details:
         university_select = "id,name,short_name,country,state,status"
@@ -262,8 +548,7 @@ async def _get_lecturer_row_by_id(sb, lecturer_id: str, *, include_university_de
     )
     rows = res.data or []
     row = rows[0] if rows else None
-    if not row:
-        raise HTTPException(status_code=404, detail="Lecturer profile not found")
+    _assert_scope_match(row, admin_scope, resource_name="lecturer")
     return row
 
 
@@ -480,6 +765,7 @@ async def _update_lecturer_status(
     *,
     lecturer_id: str,
     current_user: User,
+    university_id: Optional[str] = None,
     allowed_statuses: set[str],
     new_status: str,
     action: str,
@@ -492,7 +778,8 @@ async def _update_lecturer_status(
         raise HTTPException(status_code=500, detail="Database not active")
 
     sb = shared.supabase_service_client or shared.supabase_client
-    lecturer_row = await _get_lecturer_row_by_id(sb, lecturer_id)
+    scoped_university_id = await _resolve_workspace_scope(current_user, university_id)
+    lecturer_row = await _get_lecturer_row_by_id(sb, lecturer_id, admin_scope=scoped_university_id)
     previous_status = (lecturer_row.get("status") or "").strip().lower()
     if previous_status not in allowed_statuses:
         raise HTTPException(status_code=400, detail=f"Cannot change lecturer status from {previous_status} to {new_status}")
@@ -522,7 +809,7 @@ async def _update_lecturer_status(
     if not rows:
         raise HTTPException(status_code=404, detail="Lecturer profile not found")
 
-    updated_row = await _get_lecturer_row_by_id(sb, lecturer_id)
+    updated_row = await _get_lecturer_row_by_id(sb, lecturer_id, admin_scope=scoped_university_id)
     actor_role = await get_current_user_role(current_user) or "admin"
     await _insert_lecturer_audit_log(
         sb,
@@ -538,16 +825,20 @@ async def _update_lecturer_status(
 
 
 @router.get("/admin/faculty-knowledge", dependencies=[Depends(verify_api_key)])
-async def list_faculty_knowledge(current_user: User = Depends(get_current_user)):
+async def list_faculty_knowledge(
+    university_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_admin),
+):
     if not shared.supabase_client:
         raise HTTPException(status_code=500, detail="Database not active")
 
-    await _assert_super_admin(current_user)
     sb = shared.supabase_service_client or shared.supabase_client
+    scoped_university_id = await _resolve_workspace_scope(current_user, university_id)
 
     try:
+        query = sb.table("faculty_knowledge").select("*").eq("university_id", scoped_university_id)
         res = await _execute_with_retry(
-            lambda: sb.table("faculty_knowledge").select("*").order("level", desc=False).execute(),
+            lambda: query.order("level", desc=False).execute(),
             "List faculty knowledge",
         )
         return {"data": res.data or []}
@@ -559,16 +850,19 @@ async def list_faculty_knowledge(current_user: User = Depends(get_current_user))
 async def list_admin_timetable(
     level: Optional[str] = None,
     day: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
+    university_id: Optional[str] = None,
+    current_user: User = Depends(get_current_admin),
 ):
     if not shared.supabase_client:
         raise HTTPException(status_code=500, detail="Database not active")
 
-    await _assert_super_admin(current_user)
     sb = shared.supabase_service_client or shared.supabase_client
+    scoped_university_id = await _resolve_workspace_scope(current_user, university_id)
 
     try:
         query = sb.table("timetables").select("*")
+        if scoped_university_id:
+            query = query.eq("university_id", scoped_university_id)
 
         if level:
             normalized_level = level.strip()
@@ -602,13 +896,14 @@ async def list_admin_timetable(
 async def upload_timetable_csv(
     file: UploadFile = File(...),
     level: str = Form(...),
-    current_user: User = Depends(get_current_user),
+    university_id: Optional[str] = Form(None),
+    current_user: User = Depends(get_current_admin),
 ):
     if not shared.supabase_client:
         raise HTTPException(status_code=500, detail="Database not active")
 
-    await _assert_super_admin(current_user)
     sb = shared.supabase_service_client or shared.supabase_client
+    scoped_university_id = await _resolve_workspace_scope(current_user, university_id)
 
     if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV files are supported")
@@ -655,6 +950,7 @@ async def upload_timetable_csv(
             continue
 
         rows_to_insert.append({
+            "university_id": scoped_university_id,
             "level": normalized_level,
             "day": day,
             "time_slot": time_slot,
@@ -670,7 +966,7 @@ async def upload_timetable_csv(
         upsert_res = await _execute_with_retry(
             lambda: sb.table("timetables").upsert(
                 rows_to_insert,
-                on_conflict="level,day,time_slot,course_code"
+                on_conflict="university_id,level,day,time_slot,course_code"
             ).execute(),
             "Upsert timetable CSV",
         )
@@ -688,13 +984,24 @@ async def upload_timetable_csv(
 async def update_timetable_entry(
     id: str,
     payload: TimetableUpdateRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin),
 ):
     if not shared.supabase_client:
         raise HTTPException(status_code=500, detail="Database not active")
 
-    await _assert_super_admin(current_user)
     sb = shared.supabase_service_client or shared.supabase_client
+    scoped_university_id = await _resolve_workspace_scope(current_user, payload.university_id)
+
+    try:
+        existing = await _execute_with_retry(
+            lambda: sb.table("timetables").select("id,university_id").eq("id", id).limit(1).execute(),
+            "Fetch timetable for scoped update",
+        )
+    except Exception as e:
+        logger.error(f"Timetable scope lookup failed for id={id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update timetable entry")
+    existing_row = (existing.data or [None])[0]
+    _assert_scope_match(existing_row, scoped_university_id, resource_name="timetable entry")
 
     update_data = {}
     if payload.day is not None:
@@ -722,6 +1029,7 @@ async def update_timetable_entry(
         if not course_title:
             raise HTTPException(status_code=400, detail="course_title cannot be empty")
         update_data["course_title"] = course_title
+    update_data["university_id"] = scoped_university_id
 
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields provided for update")
@@ -743,25 +1051,31 @@ async def update_timetable_entry(
 
 
 @router.delete("/admin/timetable/level/{level}", dependencies=[Depends(verify_api_key)])
-async def clear_timetable_level(level: str, current_user: User = Depends(get_current_user)):
+async def clear_timetable_level(
+    level: str,
+    university_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_admin),
+):
     if not shared.supabase_client:
         raise HTTPException(status_code=500, detail="Database not active")
 
-    await _assert_super_admin(current_user)
     sb = shared.supabase_service_client or shared.supabase_client
+    scoped_university_id = await _resolve_workspace_scope(current_user, university_id)
     normalized_level = level.strip()
     if not normalized_level:
         raise HTTPException(status_code=400, detail="level is required")
 
     try:
+        query = sb.table("timetables").select("id").eq("level", normalized_level).eq("university_id", scoped_university_id)
         existing = await _execute_with_retry(
-            lambda: sb.table("timetables").select("id").eq("level", normalized_level).execute(),
+            lambda: query.execute(),
             "Fetch timetable rows for level clear",
         )
         delete_count = len(existing.data or [])
 
+        delete_query = sb.table("timetables").delete().eq("level", normalized_level).eq("university_id", scoped_university_id)
         await _execute_with_retry(
-            lambda: sb.table("timetables").delete().eq("level", normalized_level).execute(),
+            lambda: delete_query.execute(),
             "Clear timetable for level",
         )
         _timetable_cache.clear()
@@ -772,20 +1086,24 @@ async def clear_timetable_level(level: str, current_user: User = Depends(get_cur
 
 
 @router.delete("/admin/timetable/{id}", dependencies=[Depends(verify_api_key)])
-async def delete_timetable_entry(id: str, current_user: User = Depends(get_current_user)):
+async def delete_timetable_entry(
+    id: str,
+    university_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_admin),
+):
     if not shared.supabase_client:
         raise HTTPException(status_code=500, detail="Database not active")
 
-    await _assert_super_admin(current_user)
     sb = shared.supabase_service_client or shared.supabase_client
+    scoped_university_id = await _resolve_workspace_scope(current_user, university_id)
 
     try:
         existing = await _execute_with_retry(
-            lambda: sb.table("timetables").select("id").eq("id", id).execute(),
+            lambda: sb.table("timetables").select("id,university_id").eq("id", id).limit(1).execute(),
             "Fetch timetable for delete",
         )
-        if not (existing.data or []):
-            raise HTTPException(status_code=404, detail="Timetable entry not found")
+        existing_row = (existing.data or [None])[0]
+        _assert_scope_match(existing_row, scoped_university_id, resource_name="timetable entry")
 
         await _execute_with_retry(
             lambda: sb.table("timetables").delete().eq("id", id).execute(),
@@ -803,13 +1121,13 @@ async def delete_timetable_entry(id: str, current_user: User = Depends(get_curre
 @router.post("/admin/faculty-knowledge", dependencies=[Depends(verify_api_key)])
 async def create_faculty_knowledge(
     payload: FacultyKnowledgeCreateRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin),
 ):
     if not shared.supabase_client:
         raise HTTPException(status_code=500, detail="Database not active")
 
-    await _assert_super_admin(current_user)
     sb = shared.supabase_service_client or shared.supabase_client
+    scoped_university_id = await _resolve_workspace_scope(current_user, payload.university_id)
 
     level = (payload.level or "").strip()
     knowledge_text = (payload.knowledge_text or "").strip()
@@ -821,7 +1139,7 @@ async def create_faculty_knowledge(
     try:
         res = await _execute_with_retry(
             lambda: sb.table("faculty_knowledge")
-            .insert({"level": level, "knowledge_text": knowledge_text})
+            .insert({"level": level, "knowledge_text": knowledge_text, "university_id": scoped_university_id})
             .execute(),
             "Create faculty knowledge",
         )
@@ -836,13 +1154,20 @@ async def create_faculty_knowledge(
 async def update_faculty_knowledge(
     id: str,
     payload: FacultyKnowledgeUpdateRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin),
 ):
     if not shared.supabase_client:
         raise HTTPException(status_code=500, detail="Database not active")
 
-    await _assert_super_admin(current_user)
     sb = shared.supabase_service_client or shared.supabase_client
+    scoped_university_id = await _resolve_workspace_scope(current_user, payload.university_id)
+
+    existing = await _execute_with_retry(
+        lambda: sb.table("faculty_knowledge").select("id,university_id").eq("id", id).limit(1).execute(),
+        "Fetch faculty knowledge for scoped update",
+    )
+    existing_row = (existing.data or [None])[0]
+    _assert_scope_match(existing_row, scoped_university_id, resource_name="faculty knowledge entry")
 
     update_data = {}
     if payload.level is not None:
@@ -855,6 +1180,7 @@ async def update_faculty_knowledge(
         if not knowledge_text:
             raise HTTPException(status_code=400, detail="knowledge_text cannot be empty")
         update_data["knowledge_text"] = knowledge_text
+    update_data["university_id"] = scoped_university_id
 
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields provided for update")
@@ -876,20 +1202,24 @@ async def update_faculty_knowledge(
 
 
 @router.delete("/admin/faculty-knowledge/{id}", dependencies=[Depends(verify_api_key)])
-async def delete_faculty_knowledge(id: str, current_user: User = Depends(get_current_user)):
+async def delete_faculty_knowledge(
+    id: str,
+    university_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_admin),
+):
     if not shared.supabase_client:
         raise HTTPException(status_code=500, detail="Database not active")
 
-    await _assert_super_admin(current_user)
     sb = shared.supabase_service_client or shared.supabase_client
+    scoped_university_id = await _resolve_workspace_scope(current_user, university_id)
 
     try:
         existing = await _execute_with_retry(
-            lambda: sb.table("faculty_knowledge").select("id").eq("id", id).execute(),
+            lambda: sb.table("faculty_knowledge").select("id,university_id").eq("id", id).limit(1).execute(),
             "Fetch faculty knowledge for delete",
         )
-        if not (existing.data or []):
-            raise HTTPException(status_code=404, detail="Faculty knowledge entry not found")
+        existing_row = (existing.data or [None])[0]
+        _assert_scope_match(existing_row, scoped_university_id, resource_name="faculty knowledge entry")
 
         await _execute_with_retry(
             lambda: sb.table("faculty_knowledge").delete().eq("id", id).execute(),
@@ -905,14 +1235,12 @@ async def delete_faculty_knowledge(id: str, current_user: User = Depends(get_cur
 
 
 @router.get("/admin/feedback", dependencies=[Depends(verify_api_key)])
-async def get_admin_feedback(current_user: User = Depends(get_current_user)):
+async def get_admin_feedback(current_user: User = Depends(get_current_global_admin)):
     """
     Admin feedback list enriched with robust display-name fallback.
     """
     if not shared.supabase_client:
         raise HTTPException(status_code=500, detail="Database not active")
-
-    await _assert_super_admin(current_user)
 
     try:
         feedback_res = await _execute_with_retry(
@@ -1012,6 +1340,7 @@ async def list_admin_lecturers(
         raise HTTPException(status_code=500, detail="Database not active")
 
     sb = shared.supabase_service_client or shared.supabase_client
+    scoped_university_id = await _resolve_workspace_scope(current_user, university_id)
 
     try:
         query = sb.table("lecturer_profiles").select(
@@ -1026,9 +1355,7 @@ async def list_admin_lecturers(
                 raise HTTPException(status_code=400, detail="Invalid lecturer status filter")
             query = query.eq("status", normalized_status)
 
-        normalized_university_id = (university_id or "").strip()
-        if normalized_university_id:
-            query = query.eq("university_id", normalized_university_id)
+        query = query.eq("university_id", scoped_university_id)
 
         normalized_search = (search or "").strip()
         if normalized_search:
@@ -1061,20 +1388,19 @@ async def list_admin_material_submissions(
         raise HTTPException(status_code=500, detail="Database not active")
 
     sb = shared.supabase_service_client or shared.supabase_client
+    scoped_university_id = await _resolve_workspace_scope(current_user, university_id)
 
     try:
         query = sb.table("lecturer_material_submissions").select(MATERIAL_SUBMISSION_SELECT)
 
         normalized_status = (status or "").strip().lower()
         if normalized_status:
-            allowed_statuses = {"pending_review", "approved", "rejected", "ingesting", "ingested", "failed"}
+            allowed_statuses = {"pending_review", "approved", "rejected", "cancelled"}
             if normalized_status not in allowed_statuses:
                 raise HTTPException(status_code=400, detail="Invalid material submission status filter")
             query = query.eq("status", normalized_status)
 
-        normalized_university_id = (university_id or "").strip()
-        if normalized_university_id:
-            query = query.eq("university_id", normalized_university_id)
+        query = query.eq("university_id", scoped_university_id)
 
         normalized_lecturer_id = (lecturer_id or "").strip()
         if normalized_lecturer_id:
@@ -1122,75 +1448,88 @@ async def list_admin_material_submissions(
 async def approve_material_submission(
     submission_id: str,
     background_tasks: BackgroundTasks,
+    university_id: Optional[str] = Query(None),
     current_user: User = Depends(get_current_admin),
 ):
     if not shared.supabase_client:
         raise HTTPException(status_code=500, detail="Database not active")
 
     sb = shared.supabase_service_client or shared.supabase_client
+    scoped_university_id = await _resolve_workspace_scope(current_user, university_id)
 
     try:
-        submission_row = await _get_material_submission_row(sb, submission_id)
-        previous_status = (submission_row.get("status") or "").strip().lower()
-        if previous_status != "pending_review":
-            raise HTTPException(status_code=400, detail="Only pending submissions can be approved")
-
+        submission_row = await _get_material_submission_row(sb, submission_id, admin_scope=scoped_university_id)
         submission_payload = _material_submission_to_response(submission_row)
-        if not submission_payload.get("is_supported_file"):
+        if (submission_payload.get("status") or "").strip().lower() == "pending_review" and not submission_payload.get("is_supported_file"):
             raise HTTPException(
                 status_code=400,
                 detail="Only PDF materials can be approved for ingestion. Please convert this file to PDF first.",
             )
 
-        drive_file_id = library_router.extract_drive_file_id(submission_payload.get("file_url"))
-        if not drive_file_id:
-            raise HTTPException(status_code=400, detail="Submitted material does not have a valid Drive file link")
-
-        title = _normalize_reason(submission_payload.get("title"))
-        course_code = _normalize_reason(submission_payload.get("course_code"))
-        if not title:
-            raise HTTPException(status_code=400, detail="Submitted material is missing a topic/title")
-        if not course_code:
-            raise HTTPException(status_code=400, detail="Submitted material is missing a course code")
-
-        lecturer_name = _normalize_reason(submission_payload.get("lecturer_name")) or "Lecturer"
-        file_name = _normalize_reason(submission_payload.get("file_name")) or "lecturer-material.pdf"
-        target_levels = library_router.build_library_target_levels(submission_payload.get("level"))
-
-        library_result = await library_router.create_library_document_from_existing_drive_file(
-            background_tasks=background_tasks,
-            drive_file_id=drive_file_id,
-            title=title,
-            course_code=course_code,
-            lecturer_name=lecturer_name,
-            topic=title,
-            file_name=file_name,
-            university_id=submission_payload.get("university_id"),
-            uploaded_by_email=submission_payload.get("lecturer_email"),
-            target_levels=target_levels,
+        rpc_res = await _execute_with_retry(
+            lambda: sb.rpc(
+                "approve_lecturer_material_submission",
+                {
+                    "p_submission_id": submission_id,
+                    "p_reviewed_by": current_user.id,
+                    "p_review_note": None,
+                    "p_academic_session": None,
+                    "p_semester": None,
+                },
+            ).execute(),
+            "Approve lecturer material submission RPC",
         )
-        library_document_id = library_result.get("document_id")
-        if not library_document_id:
-            raise HTTPException(status_code=500, detail="Material was approved but could not be linked to the library")
+        rpc_rows = rpc_res.data or []
+        rpc_row = rpc_rows[0] if rpc_rows else None
+        if not rpc_row:
+            raise HTTPException(status_code=500, detail="Approval did not return a result")
 
-        reviewed_at = datetime.now(timezone.utc).isoformat()
-        update_res = await _execute_with_retry(
-            lambda: sb.table("lecturer_material_submissions")
-            .update({
-                "status": "approved",
-                "reviewed_by": current_user.id,
-                "reviewed_at": reviewed_at,
-                "pans_library_id": library_document_id,
-            })
-            .eq("id", submission_id)
-            .execute(),
-            "Approve material submission",
-        )
-        if not (update_res.data or []):
-            raise HTTPException(status_code=404, detail="Material submission not found")
+        library_document_id = rpc_row.get("pans_library_id")
+        drive_file_id = rpc_row.get("drive_file_id")
+        should_queue_ingestion = bool(rpc_row.get("should_queue_ingestion"))
+        already_approved = bool(rpc_row.get("already_approved"))
 
-        updated_row = await _get_material_submission_row(sb, submission_id)
+        if should_queue_ingestion:
+            file_name = _normalize_reason(submission_payload.get("file_name")) or "lecturer-material.pdf"
+            try:
+                file_content = await asyncio.to_thread(library_router.drive_service.download_file_bytes, drive_file_id)
+                if not file_content:
+                    raise ValueError("Downloaded file is empty")
+                claim_res = await _execute_with_retry(
+                    lambda: sb.rpc(
+                        "claim_document_ingestion",
+                        {
+                            "p_document_id": library_document_id,
+                            "p_delete_existing_embeddings": True,
+                        },
+                    ).execute(),
+                    f"Claim lecturer library doc ingestion before queue ({library_document_id})",
+                )
+                claim_rows = claim_res.data or []
+                claim_row = claim_rows[0] if claim_rows else None
+                ingestion_run_id = str((claim_row or {}).get("ingestion_run_id") or "").strip()
+                if not ingestion_run_id:
+                    raise RuntimeError("Ingestion claim did not return a run token")
+                ingestion_worker_id = str(uuid4())
+                background_tasks.add_task(
+                    library_router.process_document_background,
+                    file_content,
+                    library_document_id,
+                    ingestion_run_id,
+                    ingestion_worker_id,
+                    file_name,
+                    submission_payload.get("lecturer_email"),
+                )
+            except Exception as queue_exc:
+                logger.error("Failed to queue ingestion after approval for submission %s: %s", submission_id, queue_exc)
+                raise HTTPException(
+                    status_code=500,
+                    detail="Material was linked but ingestion could not be queued. Please retry ingestion from Library.",
+                )
+
+        updated_row = await _get_material_submission_row(sb, submission_id, admin_scope=scoped_university_id)
         actor_role = await get_current_user_role(current_user) or "admin"
+        previous_status = (submission_row.get("status") or "").strip().lower()
         await _insert_admin_material_audit_log(
             sb,
             actor_user_id=current_user.id,
@@ -1198,29 +1537,46 @@ async def approve_material_submission(
             submission_row=submission_row,
             action="material_approved",
             previous_status=previous_status,
-            reason=f"pans_library_id={library_document_id}; ingestion_status={library_result.get('status')}",
+            reason=f"pans_library_id={library_document_id}; queued={should_queue_ingestion}; already_approved={already_approved}",
         )
 
         return {"data": _material_submission_to_response(updated_row)}
     except HTTPException:
         raise
     except Exception as exc:
+        message = str(exc) or "Failed to approve material submission"
+        if "Material submission not found" in message:
+            raise HTTPException(status_code=404, detail="Material submission not found")
+        if "Rejected submissions cannot be approved directly" in message:
+            raise HTTPException(status_code=400, detail="Rejected submissions cannot be approved directly")
+        if "Only pending submissions can be approved" in message:
+            raise HTTPException(status_code=400, detail="Only pending submissions can be approved")
+        if "valid Drive file link" in message:
+            raise HTTPException(status_code=400, detail="Submitted material does not have a valid Drive file link")
+        if "missing a topic/title" in message:
+            raise HTTPException(status_code=400, detail="Submitted material is missing a topic/title")
+        if "missing a course code" in message:
+            raise HTTPException(status_code=400, detail="Submitted material is missing a course code")
+        if "different university" in message or "incompatible source" in message or "manual review required" in message or "already linked to another submission" in message:
+            raise HTTPException(status_code=409, detail=message)
         logger.error("Material submission approval failed for %s: %s", submission_id, exc)
-        raise HTTPException(status_code=500, detail="Failed to approve material submission")
+        raise HTTPException(status_code=500, detail=message)
 
 
 @router.post("/admin/material-submissions/{submission_id}/convert-to-pdf", dependencies=[Depends(verify_api_key)])
 async def convert_material_submission_to_pdf(
     submission_id: str,
+    university_id: Optional[str] = Query(None),
     current_user: User = Depends(get_current_admin),
 ):
     if not shared.supabase_client:
         raise HTTPException(status_code=500, detail="Database not active")
 
     sb = shared.supabase_service_client or shared.supabase_client
+    scoped_university_id = await _resolve_workspace_scope(current_user, university_id)
 
     try:
-        submission_row = await _get_material_submission_row(sb, submission_id)
+        submission_row = await _get_material_submission_row(sb, submission_id, admin_scope=scoped_university_id)
         previous_status = (submission_row.get("status") or "").strip().lower()
         if previous_status != "pending_review":
             raise HTTPException(status_code=400, detail="Only pending submissions can be converted")
@@ -1239,10 +1595,16 @@ async def convert_material_submission_to_pdf(
         drive_service = library_router.drive_service
         if not drive_service:
             raise HTTPException(status_code=503, detail="The file service is temporarily unavailable. Please try again in a moment.")
+        if not (library_router.GOOGLE_DRIVE_FOLDER_ID or "").strip():
+            raise HTTPException(status_code=503, detail="Google Drive upload folder is not configured.")
 
-        drive_file_id = library_router.extract_drive_file_id(submission_payload.get("file_url"))
+        drive_file_id = (
+            _normalize_reason(submission_payload.get("drive_file_id"))
+            or library_router.extract_drive_file_id(submission_payload.get("file_url"))
+        )
         if not drive_file_id:
             raise HTTPException(status_code=400, detail="Submitted material does not have a valid Drive file link")
+        original_drive_file_id = _normalize_reason(submission_payload.get("original_drive_file_id")) or drive_file_id
 
         try:
             source_bytes = await asyncio.to_thread(drive_service.download_file_bytes, drive_file_id)
@@ -1275,23 +1637,72 @@ async def convert_material_submission_to_pdf(
             raise HTTPException(status_code=500, detail="Unable to store converted PDF. Please try again.")
 
         converted_file_url = f"https://drive.google.com/file/d/{converted_drive_file_id}/view"
-        update_res = await _execute_with_retry(
-            lambda: sb.table("lecturer_material_submissions")
-            .update({
-                "file_name": converted_file_name,
-                "file_url": converted_file_url,
-                "file_type": "pdf",
-                "mime_type": "application/pdf",
-                "is_supported_file": True,
-            })
-            .eq("id", submission_id)
-            .execute(),
-            "Convert material submission to PDF",
-        )
+        try:
+            update_res = await _execute_with_retry(
+                lambda: sb.table("lecturer_material_submissions")
+                .update({
+                    "file_name": converted_file_name,
+                    "file_url": converted_file_url,
+                    "file_type": "pdf",
+                    "mime_type": "application/pdf",
+                    "is_supported_file": True,
+                    "drive_file_id": converted_drive_file_id,
+                    "original_drive_file_id": original_drive_file_id,
+                    "converted_drive_file_id": converted_drive_file_id,
+                })
+                .eq("id", submission_id)
+                .eq("status", "pending_review")
+                .execute(),
+                "Convert material submission to PDF",
+            )
+        except Exception as exc:
+            try:
+                await asyncio.to_thread(drive_service.delete_file, converted_drive_file_id)
+            except Exception as cleanup_exc:
+                logger.warning(
+                    "Converted PDF cleanup failed after DB update error for submission %s file %s: %s",
+                    submission_id,
+                    converted_drive_file_id,
+                    cleanup_exc,
+                )
+                await _insert_admin_material_audit_log(
+                    sb,
+                    actor_user_id=current_user.id,
+                    actor_role=await get_current_user_role(current_user) or "admin",
+                    submission_row=submission_row,
+                    action="material_conversion_drive_cleanup_failed",
+                    previous_status=previous_status,
+                    metadata_extra={
+                        "converted_drive_file_id": converted_drive_file_id,
+                        "error": str(cleanup_exc),
+                    },
+                )
+            raise exc
         if not (update_res.data or []):
-            raise HTTPException(status_code=404, detail="Material submission not found")
+            try:
+                await asyncio.to_thread(drive_service.delete_file, converted_drive_file_id)
+            except Exception as cleanup_exc:
+                logger.warning(
+                    "Converted PDF cleanup failed after stale conversion race for submission %s file %s: %s",
+                    submission_id,
+                    converted_drive_file_id,
+                    cleanup_exc,
+                )
+                await _insert_admin_material_audit_log(
+                    sb,
+                    actor_user_id=current_user.id,
+                    actor_role=await get_current_user_role(current_user) or "admin",
+                    submission_row=submission_row,
+                    action="material_conversion_drive_cleanup_failed",
+                    previous_status=previous_status,
+                    metadata_extra={
+                        "converted_drive_file_id": converted_drive_file_id,
+                        "error": str(cleanup_exc),
+                    },
+                )
+            raise HTTPException(status_code=409, detail="Submission status changed before conversion finished. No PDF changes were saved.")
 
-        updated_row = await _get_material_submission_row(sb, submission_id)
+        updated_row = await _get_material_submission_row(sb, submission_id, admin_scope=scoped_university_id)
         actor_role = await get_current_user_role(current_user) or "admin"
         await _insert_admin_material_audit_log(
             sb,
@@ -1321,17 +1732,24 @@ async def convert_material_submission_to_pdf(
 async def reject_material_submission(
     submission_id: str,
     payload: MaterialSubmissionReviewRequest,
+    university_id: Optional[str] = Query(None),
     current_user: User = Depends(get_current_admin),
 ):
     if not shared.supabase_client:
         raise HTTPException(status_code=500, detail="Database not active")
 
     sb = shared.supabase_service_client or shared.supabase_client
+    scoped_university_id = await _resolve_workspace_scope(current_user, university_id)
     reason = _normalize_reason(payload.reason, required=True)
 
     try:
-        submission_row = await _get_material_submission_row(sb, submission_id)
+        submission_row = await _get_material_submission_row(sb, submission_id, admin_scope=scoped_university_id)
         previous_status = (submission_row.get("status") or "").strip().lower()
+        if previous_status == "approved":
+            raise HTTPException(status_code=400, detail="Approved submissions cannot be rejected")
+        if previous_status == "rejected":
+            updated_row = await _get_material_submission_row(sb, submission_id, admin_scope=scoped_university_id)
+            return {"data": _material_submission_to_response(updated_row)}
         if previous_status != "pending_review":
             raise HTTPException(status_code=400, detail="Only pending submissions can be rejected")
 
@@ -1351,7 +1769,7 @@ async def reject_material_submission(
         if not (update_res.data or []):
             raise HTTPException(status_code=404, detail="Material submission not found")
 
-        updated_row = await _get_material_submission_row(sb, submission_id)
+        updated_row = await _get_material_submission_row(sb, submission_id, admin_scope=scoped_university_id)
         actor_role = await get_current_user_role(current_user) or "admin"
         await _insert_admin_material_audit_log(
             sb,
@@ -1383,6 +1801,7 @@ async def list_admin_restrictions(
         raise HTTPException(status_code=500, detail="Database not active")
 
     sb = shared.supabase_service_client or shared.supabase_client
+    scoped_university_id = await _resolve_workspace_scope(current_user, university_id)
 
     try:
         query = sb.table("exam_restrictions").select(build_restriction_select())
@@ -1392,9 +1811,7 @@ async def list_admin_restrictions(
             if normalized_status not in {"scheduled", "active", "completed", "cancelled"}:
                 raise HTTPException(status_code=400, detail="Invalid restriction status filter")
 
-        normalized_university_id = (university_id or "").strip()
-        if normalized_university_id:
-            query = query.eq("university_id", normalized_university_id)
+        query = query.eq("university_id", scoped_university_id)
 
         normalized_level = (level or "").strip()
         if normalized_level:
@@ -1439,12 +1856,14 @@ async def list_admin_restrictions(
 async def cancel_admin_restriction(
     restriction_id: str,
     payload: RestrictionCancelRequest,
+    university_id: Optional[str] = Query(None),
     current_user: User = Depends(get_current_admin),
 ):
     if not shared.supabase_client:
         raise HTTPException(status_code=500, detail="Database not active")
 
     sb = shared.supabase_service_client or shared.supabase_client
+    scoped_university_id = await _resolve_workspace_scope(current_user, university_id)
     reason = _normalize_reason(payload.reason)
 
     try:
@@ -1458,8 +1877,7 @@ async def cancel_admin_restriction(
         )
         restriction_rows = restriction_res.data or []
         restriction_row = restriction_rows[0] if restriction_rows else None
-        if not restriction_row:
-            raise HTTPException(status_code=404, detail="Restriction not found")
+        _assert_scope_match(restriction_row, scoped_university_id, resource_name="restriction")
 
         previous_status = restriction_row_to_response(restriction_row).get("status")
         if previous_status not in {"scheduled", "active"}:
@@ -1510,13 +1928,23 @@ async def cancel_admin_restriction(
 
 
 @router.get("/admin/lecturers/{lecturer_id}", dependencies=[Depends(verify_api_key)])
-async def get_admin_lecturer(lecturer_id: str, current_user: User = Depends(get_current_admin)):
+async def get_admin_lecturer(
+    lecturer_id: str,
+    university_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_admin),
+):
     if not shared.supabase_client:
         raise HTTPException(status_code=500, detail="Database not active")
 
     sb = shared.supabase_service_client or shared.supabase_client
+    scoped_university_id = await _resolve_workspace_scope(current_user, university_id)
     try:
-        lecturer_row = await _get_lecturer_row_by_id(sb, lecturer_id, include_university_details=True)
+        lecturer_row = await _get_lecturer_row_by_id(
+            sb,
+            lecturer_id,
+            include_university_details=True,
+            admin_scope=scoped_university_id,
+        )
         return _lecturer_row_to_response(lecturer_row, include_university_details=True)
     except HTTPException:
         raise
@@ -1526,10 +1954,15 @@ async def get_admin_lecturer(lecturer_id: str, current_user: User = Depends(get_
 
 
 @router.patch("/admin/lecturers/{lecturer_id}/approve", dependencies=[Depends(verify_api_key)])
-async def approve_lecturer(lecturer_id: str, current_user: User = Depends(get_current_admin)):
+async def approve_lecturer(
+    lecturer_id: str,
+    university_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_admin),
+):
     return await _update_lecturer_status(
         lecturer_id=lecturer_id,
         current_user=current_user,
+        university_id=university_id,
         allowed_statuses={"pending", "rejected", "suspended"},
         new_status="active",
         action="lecturer_approved",
@@ -1542,12 +1975,14 @@ async def approve_lecturer(lecturer_id: str, current_user: User = Depends(get_cu
 async def reject_lecturer(
     lecturer_id: str,
     payload: LecturerDecisionRequest,
+    university_id: Optional[str] = Query(None),
     current_user: User = Depends(get_current_admin),
 ):
     reason = _normalize_reason(payload.reason, required=True)
     return await _update_lecturer_status(
         lecturer_id=lecturer_id,
         current_user=current_user,
+        university_id=university_id,
         allowed_statuses={"pending"},
         new_status="rejected",
         action="lecturer_rejected",
@@ -1560,12 +1995,14 @@ async def reject_lecturer(
 async def suspend_lecturer(
     lecturer_id: str,
     payload: LecturerDecisionRequest,
+    university_id: Optional[str] = Query(None),
     current_user: User = Depends(get_current_admin),
 ):
     reason = _normalize_reason(payload.reason)
     return await _update_lecturer_status(
         lecturer_id=lecturer_id,
         current_user=current_user,
+        university_id=university_id,
         allowed_statuses={"active"},
         new_status="suspended",
         action="lecturer_suspended",
@@ -1578,12 +2015,14 @@ async def suspend_lecturer(
 async def revoke_lecturer(
     lecturer_id: str,
     payload: LecturerDecisionRequest,
+    university_id: Optional[str] = Query(None),
     current_user: User = Depends(get_current_admin),
 ):
     reason = _normalize_reason(payload.reason)
     return await _update_lecturer_status(
         lecturer_id=lecturer_id,
         current_user=current_user,
+        university_id=university_id,
         allowed_statuses={"active", "suspended"},
         new_status="revoked",
         action="lecturer_revoked",
@@ -1593,10 +2032,15 @@ async def revoke_lecturer(
 
 
 @router.patch("/admin/lecturers/{lecturer_id}/reactivate", dependencies=[Depends(verify_api_key)])
-async def reactivate_lecturer(lecturer_id: str, current_user: User = Depends(get_current_admin)):
+async def reactivate_lecturer(
+    lecturer_id: str,
+    university_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_admin),
+):
     return await _update_lecturer_status(
         lecturer_id=lecturer_id,
         current_user=current_user,
+        university_id=university_id,
         allowed_statuses={"suspended"},
         new_status="active",
         action="lecturer_reactivated",

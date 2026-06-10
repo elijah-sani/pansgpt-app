@@ -71,17 +71,24 @@ async def get_today_timetable(
 
     try:
         profile_level = (level or "").strip()
+        student_context = await shared.resolve_student_university_context(current_user)
+        student_university_id = student_context.get("university_id")
         if not profile_level:
-            profile_res = await _execute_with_retry(
-                lambda: sb.table("profiles").select("level").eq("id", current_user.id).limit(1).execute(),
-                "Fetch user level for timetable",
-            )
-            if profile_res.data and len(profile_res.data) > 0:
-                profile_level = (profile_res.data[0].get("level") or "").strip()
+            profile_level = (student_context.get("level") or "").strip()
 
         level_digits = "".join(filter(str.isdigit, profile_level))
         nigeria_now = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=1)))
         current_day = nigeria_now.strftime("%A")
+
+        if not student_university_id:
+            logger.info("Returning empty today timetable for user_id=%s because university_id is missing", current_user.id)
+            return {
+                "day": current_day,
+                "level": profile_level or None,
+                "level_digits": None,
+                "classes": [],
+                "detail": "Complete your profile with your university to see your timetable.",
+            }
 
         if not level_digits:
             return {
@@ -89,12 +96,14 @@ async def get_today_timetable(
                 "level": profile_level or None,
                 "level_digits": None,
                 "classes": [],
+                "university_id": student_university_id,
             }
 
         try:
             timetable_res = await _execute_with_retry(
                 lambda: sb.table("timetables")
                 .select("*")
+                .eq("university_id", student_university_id)
                 .eq("day", current_day)
                 .ilike("level", f"%{level_digits}%")
                 .order("start_time", desc=False)
@@ -105,6 +114,7 @@ async def get_today_timetable(
             timetable_res = await _execute_with_retry(
                 lambda: sb.table("timetables")
                 .select("*")
+                .eq("university_id", student_university_id)
                 .eq("day", current_day)
                 .ilike("level", f"%{level_digits}%")
                 .order("time_slot", desc=False)
@@ -116,8 +126,11 @@ async def get_today_timetable(
             "day": current_day,
             "level": profile_level or None,
             "level_digits": level_digits,
+            "university_id": student_university_id,
             "classes": timetable_res.data or [],
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to fetch today's timetable: {e}")
         raise HTTPException(status_code=500, detail="Unable to load today's timetable. Please try again.")
@@ -135,13 +148,10 @@ async def get_week_timetable(
 
     try:
         profile_level = (level or "").strip()
+        student_context = await shared.resolve_student_university_context(current_user)
+        student_university_id = student_context.get("university_id")
         if not profile_level:
-            profile_res = await _execute_with_retry(
-                lambda: sb.table("profiles").select("level").eq("id", current_user.id).limit(1).execute(),
-                "Fetch user level for weekly timetable",
-            )
-            if profile_res.data and len(profile_res.data) > 0:
-                profile_level = (profile_res.data[0].get("level") or "").strip()
+            profile_level = (student_context.get("level") or "").strip()
 
         level_digits = "".join(filter(str.isdigit, profile_level))
         grouped = {
@@ -154,6 +164,10 @@ async def get_week_timetable(
             "Sunday": [],
         }
 
+        if not student_university_id:
+            logger.info("Returning empty weekly timetable for user_id=%s because university_id is missing", current_user.id)
+            return grouped
+
         if not level_digits:
             return grouped
 
@@ -161,6 +175,7 @@ async def get_week_timetable(
             timetable_res = await _execute_with_retry(
                 lambda: sb.table("timetables")
                 .select("*")
+                .eq("university_id", student_university_id)
                 .ilike("level", f"%{level_digits}%")
                 .order("start_time", desc=False)
                 .execute(),
@@ -170,6 +185,7 @@ async def get_week_timetable(
             timetable_res = await _execute_with_retry(
                 lambda: sb.table("timetables")
                 .select("*")
+                .eq("university_id", student_university_id)
                 .ilike("level", f"%{level_digits}%")
                 .order("time_slot", desc=False)
                 .execute(),
@@ -182,6 +198,8 @@ async def get_week_timetable(
                 grouped[day].append(row)
 
         return grouped
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to fetch weekly timetable: {e}")
         raise HTTPException(status_code=500, detail="Unable to load your weekly timetable. Please try again.")

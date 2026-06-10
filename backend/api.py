@@ -1,13 +1,15 @@
-from fastapi import FastAPI, HTTPException, Header, Depends, status, Request, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Header, Depends, status, Request, BackgroundTasks, Query
 from starlette.concurrency import iterate_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional
 import asyncio
+import uuid
 import os
 import time
 import httpx
+from pathlib import Path
 from dotenv import load_dotenv
 from google_drive import GoogleDriveService, get_drive_service
 from restrictions import (
@@ -24,11 +26,15 @@ from dependencies import (
     get_current_user_role_info,
     get_current_global_admin,
     get_admin_university_scope,
+    resolve_admin_workspace_university,
     get_lecturer_profile_for_user,
     require_admin_role,
     require_super_admin_role,
     set_role_dependencies,
     User,
+    get_current_super_admin,
+    get_current_senior_university_admin,
+    UNIVERSITY_SUSPENDED_MESSAGE,
 )
 
 import logging
@@ -46,8 +52,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("PansGPT")
 
-# Load environment variables
-load_dotenv()
+# Load backend environment variables from a stable source path, independent of
+# the process working directory.
+BACKEND_DIR = Path(__file__).resolve().parent
+BACKEND_ENV_PATH = BACKEND_DIR / ".env"
+load_dotenv(dotenv_path=BACKEND_ENV_PATH)
 
 is_production = os.getenv("ENVIRONMENT", "development").lower() == "production"
 
@@ -91,6 +100,30 @@ async def _resolve_university_name_by_id(sb, university_id: Optional[str]) -> Op
     if not university_row:
         return None
     return (university_row.get("name") or "").strip() or None
+
+
+async def _resolve_university_lifecycle_by_id(sb, university_id: Optional[str]) -> dict:
+    normalized_university_id = (university_id or "").strip()
+    if not normalized_university_id:
+        return {"status": None, "name": None}
+
+    university_res = await _run_db(
+        lambda: sb.table("universities")
+        .select("id,name,status")
+        .eq("id", normalized_university_id)
+        .limit(1)
+        .execute(),
+        operation_name="resolve university lifecycle",
+    )
+    university_row = _first_row(university_res)
+    if not university_row:
+        return {"status": None, "name": None}
+
+    status_value = (university_row.get("status") or "").strip().lower() or None
+    return {
+        "status": status_value,
+        "name": (university_row.get("name") or "").strip() or None,
+    }
 
 
 async def _resolve_profile_university_payload(
@@ -248,17 +281,14 @@ def _document_matches_level(doc: dict, user_tokens: set[str]) -> bool:
 
 def _is_student_visible_document(doc: dict) -> bool:
     material_status = str(doc.get("material_status") or "active").strip().lower()
-    visibility = str(doc.get("visibility") or "visible").strip().lower()
-    approval_status = str(doc.get("approval_status") or "approved").strip().lower()
-    return (
-        material_status == "active"
-        and visibility == "visible"
-        and approval_status == "approved"
-    )
+    return material_status in {"active", "archived"}
 
 
 async def _can_user_access_library_document(sb, current_user: User, db_record: dict) -> bool:
     role_info = await get_current_user_role_info(current_user)
+    if role_info.is_university_admin:
+        await resolve_admin_workspace_university(current_user)
+
     if role_info.is_admin:
         return True
 
@@ -284,6 +314,11 @@ async def _can_user_access_library_document(sb, current_user: User, db_record: d
         return True
 
     user_university_id = await _resolve_profile_university_id(sb, profile_row)
+    if user_university_id:
+        lifecycle = await _resolve_university_lifecycle_by_id(sb, user_university_id)
+        if lifecycle.get("status") == "suspended":
+            raise HTTPException(status_code=400, detail=UNIVERSITY_SUSPENDED_MESSAGE)
+
     return bool(user_university_id and user_university_id == document_university_id)
 
 sentry_sdk.init(
@@ -292,7 +327,7 @@ sentry_sdk.init(
     profiles_sample_rate=0.1 if is_production else 1.0,
 )
 
-from routers import settings, system, library, chat, quiz, lecturer
+from routers import settings, system, library, chat, quiz, lecturer, shared
 from routers.chat_core import router as chat_core_router
 from routers.chat_core import chat_limiter
 from routers.chat_sessions import router as chat_sessions_router
@@ -332,7 +367,10 @@ app.include_router(system.router)
 
 # Security Configuration
 API_KEYS = os.getenv("API_KEYS", "").split(",")
-GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
+GOOGLE_DRIVE_FOLDER_ID = (os.getenv("GOOGLE_DRIVE_FOLDER_ID") or "").strip()
+if not GOOGLE_DRIVE_FOLDER_ID:
+    logger.critical("GOOGLE_DRIVE_FOLDER_ID is not configured. Refusing to start because uploads would go to My Drive root.")
+    raise RuntimeError("GOOGLE_DRIVE_FOLDER_ID is not configured.")
 # Initialize dual-provider LLM clients through service layer
 llm_engine.initialize_clients()
 
@@ -460,6 +498,14 @@ class UniversityAdminAssignmentRequest(BaseModel):
     university_id: str
 
 
+class SuperAdminSeniorAdminAssignmentRequest(BaseModel):
+    email: str
+
+
+class WorkspaceAdminAssignmentRequest(BaseModel):
+    email: str
+
+
 def _db():
     return supabase_service_client or supabase_client
 
@@ -483,6 +529,38 @@ async def _run_db(execute_fn, operation_name: str = "Supabase query", user_id: O
                 continue
             raise
     raise last_error
+
+
+async def _insert_audit_log(
+    *,
+    actor_user_id: str,
+    actor_role: str,
+    university_id: Optional[str],
+    action: str,
+    target_type: str,
+    target_id: Optional[str] = None,
+    metadata: dict = {},
+) -> None:
+    sb = _db()
+    if not sb:
+        return
+    try:
+        await _run_db(
+            lambda: sb.table("access_control_audit_logs")
+            .insert({
+                "actor_user_id": actor_user_id,
+                "actor_role": actor_role,
+                "university_id": university_id,
+                "action": action,
+                "target_type": target_type,
+                "target_id": target_id,
+                "metadata": metadata,
+            })
+            .execute(),
+            operation_name="insert audit log",
+        )
+    except Exception as exc:
+        logger.warning("Access control audit log failed for action %s: %s", action, exc)
 
 
 def _is_retryable_db_error(exc: Exception) -> bool:
@@ -542,8 +620,8 @@ def _normalize_university_payload(payload: dict) -> dict:
 
     if not name:
         raise HTTPException(status_code=400, detail="name is required")
-    if status_value not in {"active", "inactive"}:
-        raise HTTPException(status_code=400, detail="status must be active or inactive")
+    if status_value not in {"active", "suspended"}:
+        raise HTTPException(status_code=400, detail="status must be active or suspended")
 
     return {
         "name": name,
@@ -646,6 +724,7 @@ async def get_me_bootstrap(current_user: User = Depends(get_current_user)):
     academic_role = None
     university_id = None
     university_name = None
+    assigned_university_id = None
 
     if lecturer_profile:
         is_lecturer = True
@@ -653,6 +732,7 @@ async def get_me_bootstrap(current_user: User = Depends(get_current_user)):
         academic_role = "lecturer"
         university_id = lecturer_profile.university_id
         university_name = lecturer_profile.university_name
+        assigned_university_id = lecturer_profile.university_id
         lecturer_payload = {
             "id": lecturer_profile.id,
             "user_id": lecturer_profile.user_id,
@@ -665,28 +745,49 @@ async def get_me_bootstrap(current_user: User = Depends(get_current_user)):
             "email": lecturer_profile.email,
             "phone_number": lecturer_profile.phone_number,
         }
+    elif role_info and role_info.is_university_admin and role_info.university_id:
+        academic_role = "university_admin"
+        university_id = role_info.university_id
+        assigned_university_id = role_info.university_id
+        university_name = await _resolve_university_name_by_id(sb, role_info.university_id)
     else:
-        profile_university_id = profile.get("university_id") if profile else None
-        if profile_university_id:
-            university_id = profile_university_id
-            university_name = await _resolve_university_name_by_id(sb, profile_university_id)
-        elif profile:
-            university_id = await _resolve_profile_university_id(sb, profile)
-            university_name = await _resolve_university_name_by_id(sb, university_id)
+        is_platform_admin = bool(role_info and (role_info.is_super_admin or role_info.is_global_admin or role_info.is_admin))
+        if not is_platform_admin:
+            profile_university_id = profile.get("university_id") if profile else None
+            if profile_university_id:
+                university_id = profile_university_id
+                assigned_university_id = profile_university_id
+                university_name = await _resolve_university_name_by_id(sb, profile_university_id)
+            elif profile:
+                university_id = await _resolve_profile_university_id(sb, profile)
+                assigned_university_id = university_id
+                university_name = await _resolve_university_name_by_id(sb, university_id)
+
+    university_lifecycle = await _resolve_university_lifecycle_by_id(sb, assigned_university_id)
+    university_status = university_lifecycle.get("status")
+    if university_lifecycle.get("name"):
+        university_name = university_lifecycle.get("name")
+
+    academic_context = await shared.get_current_academic_context(assigned_university_id)
 
     return {
         "profile": profile,
         "role": role_info.role if role_info else None,
+        "admin_level": role_info.admin_level if role_info else None,
         "is_admin": bool(role_info.is_admin) if role_info else False,
         "is_super_admin": bool(role_info.is_super_admin) if role_info else False,
         "is_global_admin": bool(role_info.is_global_admin) if role_info else False,
         "is_university_admin": bool(role_info.is_university_admin) if role_info else False,
+        "is_senior_university_admin": bool(role_info.is_senior_university_admin) if role_info else False,
         "is_lecturer": is_lecturer,
         "lecturer_status": lecturer_status,
         "lecturer_profile": lecturer_payload,
         "academic_role": academic_role,
         "university_id": university_id,
         "university_name": university_name,
+        "university_status": university_status,
+        "is_university_suspended": university_status == "suspended",
+        "academic_context": academic_context,
         "system_settings": system_settings,
         "file_count": file_count,
     }
@@ -879,17 +980,17 @@ async def list_admin_users(current_user: User = Depends(get_current_global_admin
 
 
 @app.post("/admin/users")
-async def create_admin_user(payload: dict, current_user: User = Depends(get_current_global_admin)):
+async def create_admin_user(payload: dict, current_user: User = Depends(get_current_super_admin)):
     sb = _db()
     if not sb:
         raise HTTPException(status_code=503, detail="Database not active")
 
     email = (payload.get("email") or "").strip().lower()
-    target_role = (payload.get("role") or "admin").strip().lower()
-    if not email:
-        raise HTTPException(status_code=400, detail="email is required")
-    if target_role not in {"admin", "super_admin"}:
-        raise HTTPException(status_code=400, detail="role must be admin or super_admin")
+    target_role = (payload.get("role") or "super_admin").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="A valid email is required")
+    if target_role != "super_admin":
+        raise HTTPException(status_code=400, detail="Only super_admin creation is allowed via this endpoint")
 
     existing = await _run_db(
         lambda: sb.table("user_roles").select("id").eq("email", email).limit(1).execute()
@@ -904,15 +1005,28 @@ async def create_admin_user(payload: dict, current_user: User = Depends(get_curr
     res = await _run_db(
         lambda: sb.table("user_roles").insert({
             "email": email,
-            "role": target_role,
+            "role": "super_admin",
             "is_admin": True,
+            "university_id": None,
+            "admin_level": None,
         }).execute()
     )
-    return {"data": res.data[0] if res.data else None}
+    
+    bound_row = _first_row(res)
+    await _insert_audit_log(
+        actor_user_id=current_user.id,
+        actor_role="super_admin",
+        university_id=None,
+        action="super_admin_created",
+        target_type="user_roles",
+        target_id=bound_row.get("id") if bound_row else None,
+        metadata={"email": email},
+    )
+    return {"data": bound_row}
 
 
 @app.delete("/admin/users")
-async def delete_admin_user(target_email: str, current_user: User = Depends(get_current_global_admin)):
+async def delete_admin_user(target_email: str, current_user: User = Depends(get_current_super_admin)):
     sb = _db()
     if not sb:
         raise HTTPException(status_code=503, detail="Database not active")
@@ -923,12 +1037,37 @@ async def delete_admin_user(target_email: str, current_user: User = Depends(get_
     if current_user.email and normalized_email == current_user.email.strip().lower():
         raise HTTPException(status_code=400, detail="You cannot remove yourself")
 
+    target_res = await _run_db(
+        lambda: sb.table("user_roles").select("*").eq("email", normalized_email).limit(1).execute()
+    )
+    target_row = _first_row(target_res)
+    if not target_row:
+        raise HTTPException(status_code=404, detail="Admin assignment not found")
+
+    if target_row.get("role") == "super_admin":
+        supers_res = await _run_db(
+            lambda: sb.table("user_roles").select("id").eq("role", "super_admin").execute()
+        )
+        supers = supers_res.data or []
+        if len(supers) <= 1:
+            raise HTTPException(status_code=400, detail="Cannot delete the final remaining Super Admin account")
+
     if not supabase_service_client:
         logger.error("[ERROR] Service role client unavailable for admin operation — skipping")
         raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
     await _run_db(
         lambda: sb.table("user_roles").delete().eq("email", normalized_email).execute()
+    )
+    
+    await _insert_audit_log(
+        actor_user_id=current_user.id,
+        actor_role="super_admin",
+        university_id=None,
+        action="super_admin_deleted",
+        target_type="user_roles",
+        target_id=target_row.get("id"),
+        metadata={"email": normalized_email},
     )
     return {"status": "success", "email": normalized_email}
 
@@ -1020,16 +1159,26 @@ async def assign_university_admin(
     payload: UniversityAdminAssignmentRequest,
     current_user: User = Depends(get_current_global_admin),
 ):
+    raise HTTPException(
+        status_code=400,
+        detail="This endpoint is deprecated and disabled. Use /super-admin/universities/{university_id}/senior-admins or /admin/admins instead."
+    )
+
+
+@app.post("/super-admin/universities/{university_id}/senior-admins")
+async def assign_university_senior_admin(
+    university_id: str,
+    payload: SuperAdminSeniorAdminAssignmentRequest,
+    current_user: User = Depends(get_current_super_admin),
+):
     sb = _db()
     if not sb:
         raise HTTPException(status_code=503, detail="Database not active")
 
-    email = (payload.email or "").strip().lower()
-    university_id = (payload.university_id or "").strip()
-    if not email:
-        raise HTTPException(status_code=400, detail="email is required")
-    if not university_id:
-        raise HTTPException(status_code=400, detail="university_id is required")
+    try:
+        uuid.UUID(str(university_id))
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=400, detail="university_id must be a valid UUID")
 
     university_res = await _run_db(
         lambda: sb.table("universities").select("id,name,status").eq("id", university_id).limit(1).execute()
@@ -1037,19 +1186,191 @@ async def assign_university_admin(
     university_row = _first_row(university_res)
     if not university_row:
         raise HTTPException(status_code=404, detail="University not found")
+    if (university_row.get("status") or "").strip().lower() != "active":
+        raise HTTPException(status_code=400, detail="University is not active")
+
+    email = (payload.email or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="A valid email is required")
 
     existing_res = await _run_db(
         lambda: sb.table("user_roles").select("*").eq("email", email).limit(1).execute()
     )
     existing_row = _first_row(existing_res)
-    existing_role = ((existing_row or {}).get("role") or "").strip().lower()
-    if existing_role in {"super_admin", "global_admin"}:
-        raise HTTPException(status_code=400, detail="Global admins cannot be reassigned with this endpoint")
+    if existing_row:
+        existing_role = ((existing_row or {}).get("role") or "").strip().lower()
+        if existing_role == "super_admin":
+            raise HTTPException(status_code=400, detail="Cannot demote or modify super_admin roles")
+        if existing_row.get("university_id") and str(existing_row.get("university_id")) != university_id:
+            raise HTTPException(status_code=400, detail="This admin belongs to another university")
+
+    if not supabase_service_client:
+        logger.error("[ERROR] Service role client unavailable for admin operation — skipping")
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+
     payload_data = {
         "email": email,
         "role": "university_admin",
         "is_admin": True,
         "university_id": university_id,
+        "admin_level": "senior",
+    }
+
+    if existing_row:
+        res = await _run_db(
+            lambda: sb.table("user_roles")
+            .update(payload_data)
+            .eq("id", existing_row["id"])
+            .execute()
+        )
+    else:
+        res = await _run_db(
+            lambda: sb.table("user_roles").insert(payload_data).execute()
+        )
+
+    bound_row = _first_row(res)
+
+    await _insert_audit_log(
+        actor_user_id=current_user.id,
+        actor_role="super_admin",
+        university_id=university_id,
+        action="senior_admin_assigned",
+        target_type="user_roles",
+        target_id=bound_row.get("id") if bound_row else None,
+        metadata={"email": email},
+    )
+
+    return {"data": bound_row}
+
+
+@app.delete("/super-admin/universities/{university_id}/senior-admins/{admin_role_id}")
+async def remove_university_senior_admin(
+    university_id: str,
+    admin_role_id: str,
+    current_user: User = Depends(get_current_super_admin),
+):
+    sb = _db()
+    if not sb:
+        raise HTTPException(status_code=503, detail="Database not active")
+
+    try:
+        uuid.UUID(str(university_id))
+        uuid.UUID(str(admin_role_id))
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=400, detail="Invalid UUID format")
+
+    target_res = await _run_db(
+        lambda: sb.table("user_roles").select("*").eq("id", admin_role_id).limit(1).execute()
+    )
+    target_row = _first_row(target_res)
+    if not target_row:
+        raise HTTPException(status_code=404, detail="Admin assignment not found")
+
+    if str(target_row.get("university_id")) != university_id:
+        raise HTTPException(status_code=400, detail="Admin assignment does not belong to this university")
+
+    if target_row.get("role") != "university_admin" or target_row.get("admin_level") != "senior":
+        raise HTTPException(status_code=400, detail="Target is not a senior university admin")
+
+    seniors_res = await _run_db(
+        lambda: sb.table("user_roles")
+        .select("id")
+        .eq("university_id", university_id)
+        .eq("role", "university_admin")
+        .eq("admin_level", "senior")
+        .execute()
+    )
+    seniors = seniors_res.data or []
+    if len(seniors) <= 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot remove the final remaining senior admin for this university"
+        )
+
+    if not supabase_service_client:
+        logger.error("[ERROR] Service role client unavailable for admin operation — skipping")
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+
+    await _run_db(
+        lambda: sb.table("user_roles").delete().eq("id", admin_role_id).execute()
+    )
+
+    await _insert_audit_log(
+        actor_user_id=current_user.id,
+        actor_role="super_admin",
+        university_id=university_id,
+        action="senior_admin_removed",
+        target_type="user_roles",
+        target_id=admin_role_id,
+        metadata={"email": target_row.get("email")},
+    )
+
+    return {"status": "success", "id": admin_role_id}
+
+
+@app.get("/admin/admins")
+async def list_workspace_admins(
+    university_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_user),
+):
+    resolved_university_id = await resolve_admin_workspace_university(current_user, university_id)
+    role_info = await get_current_user_role_info(current_user)
+    if not role_info.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    sb = _db()
+    if not sb:
+        raise HTTPException(status_code=503, detail="Database not active")
+
+    res = await _run_db(
+        lambda: sb.table("user_roles")
+        .select("id,user_id,email,role,is_admin,university_id,admin_level,created_at")
+        .eq("university_id", resolved_university_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return {"data": res.data or []}
+
+
+@app.post("/admin/admins")
+async def create_workspace_admin(
+    payload: WorkspaceAdminAssignmentRequest,
+    university_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_user),
+):
+    resolved_university_id = await resolve_admin_workspace_university(current_user, university_id)
+    role_info = await get_current_user_role_info(current_user)
+
+    if role_info.is_university_admin and role_info.admin_level != "senior":
+        raise HTTPException(status_code=403, detail="Only senior admins can manage admin access.")
+
+    email = (payload.email or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="A valid email is required")
+
+    sb = _db()
+    if not sb:
+        raise HTTPException(status_code=503, detail="Database not active")
+
+    existing_res = await _run_db(
+        lambda: sb.table("user_roles").select("*").eq("email", email).limit(1).execute()
+    )
+    existing_row = _first_row(existing_res)
+    if existing_row:
+        existing_role = ((existing_row or {}).get("role") or "").strip().lower()
+        if existing_role == "super_admin":
+            raise HTTPException(status_code=400, detail="Cannot modify a super admin role")
+        if existing_row.get("university_id") and str(existing_row.get("university_id")) != resolved_university_id:
+            raise HTTPException(status_code=400, detail="This admin belongs to another university")
+        if existing_row.get("admin_level") == "senior":
+            raise HTTPException(status_code=400, detail="Cannot modify or downgrade an existing senior admin")
+
+    payload_data = {
+        "email": email,
+        "role": "university_admin",
+        "is_admin": True,
+        "university_id": resolved_university_id,
+        "admin_level": "standard",
     }
 
     if not supabase_service_client:
@@ -1068,17 +1389,93 @@ async def assign_university_admin(
             lambda: sb.table("user_roles").insert(payload_data).execute()
         )
 
-    return {"data": _first_row(res)}
+    bound_row = _first_row(res)
+
+    await _insert_audit_log(
+        actor_user_id=current_user.id,
+        actor_role=role_info.role or "university_admin",
+        university_id=resolved_university_id,
+        action="standard_admin_assigned",
+        target_type="user_roles",
+        target_id=bound_row.get("id") if bound_row else None,
+        metadata={"email": email},
+    )
+
+    return {"data": bound_row}
+
+
+@app.delete("/admin/admins/{admin_role_id}")
+async def delete_workspace_admin(
+    admin_role_id: str,
+    university_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_user),
+):
+    resolved_university_id = await resolve_admin_workspace_university(current_user, university_id)
+    role_info = await get_current_user_role_info(current_user)
+
+    if role_info.is_university_admin and role_info.admin_level != "senior":
+        raise HTTPException(status_code=403, detail="Only senior admins can manage admin access.")
+
+    sb = _db()
+    if not sb:
+        raise HTTPException(status_code=503, detail="Database not active")
+
+    try:
+        uuid.UUID(str(admin_role_id))
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=400, detail="Invalid admin_role_id format")
+
+    target_res = await _run_db(
+        lambda: sb.table("user_roles").select("*").eq("id", admin_role_id).limit(1).execute()
+    )
+    target_row = _first_row(target_res)
+    if not target_row:
+        raise HTTPException(status_code=404, detail="Admin assignment not found")
+
+    if str(target_row.get("university_id")) != resolved_university_id:
+        raise HTTPException(status_code=400, detail="Admin assignment does not belong to this university workspace")
+
+    if target_row.get("role") == "super_admin":
+        raise HTTPException(status_code=400, detail="Cannot remove a super admin from the workspace")
+
+    if current_user.email and target_row.get("email") and target_row.get("email").strip().lower() == current_user.email.strip().lower():
+        raise HTTPException(status_code=400, detail="You cannot remove yourself")
+
+    if target_row.get("admin_level") == "senior":
+        raise HTTPException(status_code=400, detail="Senior admins can only be removed by platform super admins")
+
+    if not supabase_service_client:
+        logger.error("[ERROR] Service role client unavailable for admin operation — skipping")
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+
+    await _run_db(
+        lambda: sb.table("user_roles").delete().eq("id", admin_role_id).execute()
+    )
+
+    await _insert_audit_log(
+        actor_user_id=current_user.id,
+        actor_role=role_info.role or "university_admin",
+        university_id=resolved_university_id,
+        action="standard_admin_removed",
+        target_type="user_roles",
+        target_id=admin_role_id,
+        metadata={"email": target_row.get("email")},
+    )
+
+    return {"status": "success", "id": admin_role_id}
 
 
 @app.get("/admin/students")
-async def list_students(current_user: User = Depends(get_current_user)):
+async def list_students(
+    university_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_user),
+):
     await _require_admin(current_user)
     sb = _db()
     if not sb:
         raise HTTPException(status_code=503, detail="Database not active")
 
-    admin_scope = await get_admin_university_scope(current_user)
+    admin_scope = await resolve_admin_workspace_university(current_user, university_id)
 
     query = sb.table("profiles").select("id,first_name,other_names,level,university,university_id,subscription_tier,updated_at")
     query = _apply_university_scope_to_query(query, admin_scope)
@@ -1087,13 +1484,18 @@ async def list_students(current_user: User = Depends(get_current_user)):
 
 
 @app.patch("/admin/students/{student_id}")
-async def update_student_profile(student_id: str, payload: dict, current_user: User = Depends(get_current_user)):
+async def update_student_profile(
+    student_id: str,
+    payload: dict,
+    university_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_user),
+):
     await _require_admin(current_user)
     sb = _db()
     if not sb:
         raise HTTPException(status_code=503, detail="Database not active")
 
-    admin_scope = await get_admin_university_scope(current_user)
+    admin_scope = await resolve_admin_workspace_university(current_user, university_id)
 
     allowed_fields = {"subscription_tier", "level", "university", "first_name", "other_names", "avatar_url"}
     update_data = {key: value for key, value in payload.items() if key in allowed_fields}
@@ -1117,27 +1519,25 @@ async def update_student_profile(student_id: str, payload: dict, current_user: U
 
 
 @app.get("/admin/dashboard")
-async def get_admin_dashboard(current_user: User = Depends(get_current_user)):
+async def get_admin_dashboard(
+    university_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_user),
+):
     await _require_admin(current_user)
     sb = _db()
     if not sb:
         raise HTTPException(status_code=503, detail="Database not active")
 
-    admin_scope = await get_admin_university_scope(current_user)
+    admin_scope = await resolve_admin_workspace_university(current_user, university_id)
 
-    if admin_scope is None:
-        users_res = await _run_db(lambda: sb.table("user_roles").select("email,created_at", count="exact").order("created_at", desc=True).limit(5).execute())
-        recent_users = users_res.data or []
-        user_count = users_res.count or 0
-    else:
-        scoped_profiles_res = await _run_db(
-            lambda: sb.table("profiles")
-            .select("id", count="exact")
-            .eq("university_id", admin_scope)
-            .execute()
-        )
-        user_count = scoped_profiles_res.count or 0
-        recent_users = []
+    scoped_profiles_res = await _run_db(
+        lambda: sb.table("profiles")
+        .select("id", count="exact")
+        .eq("university_id", admin_scope)
+        .execute()
+    )
+    user_count = scoped_profiles_res.count or 0
+    recent_users = []
 
     docs_query = sb.table("pans_library").select("id,file_size,created_at,title,uploaded_by_email").order("created_at", desc=True)
     docs_query = _apply_university_scope_to_query(docs_query, admin_scope)
@@ -1163,13 +1563,17 @@ async def get_admin_dashboard(current_user: User = Depends(get_current_user)):
 
 
 @app.get("/admin/chat/{session_id}")
-async def get_admin_chat_session(session_id: str, current_user: User = Depends(get_current_user)):
+async def get_admin_chat_session(
+    session_id: str,
+    university_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_user),
+):
     await _require_admin(current_user)
     sb = _db()
     if not sb:
         raise HTTPException(status_code=503, detail="Database not active")
 
-    admin_scope = await get_admin_university_scope(current_user)
+    admin_scope = await resolve_admin_workspace_university(current_user, university_id)
 
     session_res = await _run_db(
         lambda: sb.table("chat_sessions").select("id,title,created_at,user_id").eq("id", session_id).limit(1).execute()
@@ -1264,6 +1668,9 @@ async def list_documents(level: Optional[str] = None, current_user: User = Depen
             else:
                 raise
 
+        if role_info and role_info.is_university_admin:
+            await resolve_admin_workspace_university(current_user)
+
         # 1. Fetch the user's academic level from the profiles table
         profile_resp = await _run_db(
             lambda: sb.table("profiles").select("level,university,university_id").eq("id", current_user.id).limit(1).execute(),
@@ -1279,6 +1686,10 @@ async def list_documents(level: Optional[str] = None, current_user: User = Depen
         user_university_id = None
         if profile_row:
             user_university_id = await _resolve_profile_university_id(sb, profile_row)
+            if user_university_id:
+                lifecycle = await _resolve_university_lifecycle_by_id(sb, user_university_id)
+                if lifecycle.get("status") == "suspended":
+                    raise HTTPException(status_code=400, detail=UNIVERSITY_SUSPENDED_MESSAGE)
 
         # 2. Fetch all records from 'pans_library'
         response = await _run_db(
@@ -1338,7 +1749,10 @@ async def get_document_metadata(file_id: str, current_user: User = Depends(get_c
                     "lecturer_name": db_record.get('lecturer_name'),
                     "course_code": db_record.get('course_code'),
                     "size": db_record.get('file_size'),
-                    "drive_file_id": db_record.get('drive_file_id')
+                    "drive_file_id": db_record.get('drive_file_id'),
+                    "material_status": db_record.get("material_status") or "active",
+                    "academic_session": db_record.get("academic_session"),
+                    "semester": db_record.get("semester"),
                 }
             role_info = await get_current_user_role_info(current_user)
             if not role_info.is_admin:

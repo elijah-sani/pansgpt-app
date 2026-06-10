@@ -341,17 +341,17 @@ export default function MissionControlPage() {
 function StatCard({ icon: Icon, label, value, trend, sub, color, bg, iconType, progress }: StatCardProps) {
     const DisplayIcon = iconType || Icon;
     return (
-        <div className="bg-card border border-border rounded-xl p-5 hover:border-primary/30 transition-colors shadow-sm relative overflow-hidden group">
-            <div className="flex justify-between items-start mb-4">
-                <div className={`p-2.5 rounded-lg ${bg} ${color}`}>
+        <div className="rounded-2xl border border-border bg-background/90 p-4 transition-colors hover:border-primary/30 hover:bg-muted/40 relative overflow-hidden group">
+            <div className="flex justify-between items-start mb-2">
+                <div className={`inline-flex h-10 w-10 items-center justify-center rounded-2xl border ${color.replace('text-', 'border-').replace('bg-', 'border-')}/15 ${bg} ${color}`}>
                     <DisplayIcon className="w-5 h-5" />
                 </div>
                 {trend && <span className="text-[10px] font-bold bg-primary/10 text-primary px-2 py-1 rounded-full">{trend}</span>}
             </div>
             <div>
-                <h3 className="text-muted-foreground text-xs font-bold uppercase tracking-wider mb-1">{label}</h3>
-                <div className="flex items-baseline gap-2">
-                    <span className="text-2xl font-bold text-foreground">{value}</span>
+                <p className="mt-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
+                <div className="flex items-baseline gap-2 mt-1">
+                    <span className="text-lg font-bold text-foreground">{value}</span>
                     {sub && <span className="text-xs text-muted-foreground font-medium">{sub}</span>}
                 </div>
                 {progress !== undefined && (

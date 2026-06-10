@@ -216,7 +216,7 @@ async def get_active_student_restriction(
             raise ValueError("user_id or profile is required")
         profile_res = await _execute(
             lambda: sb.table("profiles")
-            .select("id,university,level")
+            .select("id,university,university_id,level")
             .eq("id", normalized_user_id)
             .limit(1)
             .execute(),
@@ -228,37 +228,47 @@ async def get_active_student_restriction(
     if not student_profile:
         return None
 
-    university_candidates = build_university_candidates(student_profile.get("university"))
     student_level = normalize_level(student_profile.get("level"))
-    if not university_candidates or not student_level:
+    if not student_level:
         return None
 
-    university_res = await _execute(
-        lambda: sb.table("universities")
-        .select("id,name,short_name,status")
-        .eq("status", "active")
-        .execute(),
-        "Resolve student university for restriction check",
-    )
-    university_rows = university_res.data or []
-    candidate_set = set(university_candidates)
-    university_row = next(
-        (
-            row
-            for row in university_rows
-            if normalize_university_name(row.get("name")) in candidate_set
-            or normalize_university_name(row.get("short_name")) in candidate_set
-        ),
-        None,
-    )
-    if not university_row:
+    explicit_university_id = normalize_optional_text(student_profile.get("university_id"))
+    university_id = explicit_university_id
+    if not university_id:
+        university_candidates = build_university_candidates(student_profile.get("university"))
+        if not university_candidates:
+            return None
+
+        university_res = await _execute(
+            lambda: sb.table("universities")
+            .select("id,name,short_name,status")
+            .eq("status", "active")
+            .execute(),
+            "Resolve student university for restriction check",
+        )
+        university_rows = university_res.data or []
+        candidate_set = set(university_candidates)
+        university_row = next(
+            (
+                row
+                for row in university_rows
+                if normalize_university_name(row.get("name")) in candidate_set
+                or normalize_university_name(row.get("short_name")) in candidate_set
+            ),
+            None,
+        )
+        if not university_row:
+            return None
+        university_id = normalize_optional_text(university_row.get("id"))
+
+    if not university_id:
         return None
 
     now_iso = utc_now().isoformat()
     restriction_res = await _execute(
         lambda: sb.table("exam_restrictions")
         .select(build_restriction_select())
-        .eq("university_id", university_row.get("id"))
+        .eq("university_id", university_id)
         .neq("status", "cancelled")
         .lte("start_time", now_iso)
         .gte("end_time", now_iso)
@@ -301,9 +311,9 @@ async def get_applicable_user_restriction(
     async def _resolve_role():
         if role_resolver:
             return await role_resolver(current_user)
-        from dependencies import get_current_user_role
+        from dependencies import get_current_user_role_info
 
-        return await get_current_user_role(current_user)
+        return await get_current_user_role_info(current_user)
 
     async def _resolve_lecturer():
         if lecturer_resolver:
@@ -312,8 +322,11 @@ async def get_applicable_user_restriction(
 
         return await get_lecturer_profile_for_user(current_user)
 
-    role = await _resolve_role()
-    if role in {"admin", "super_admin"}:
+    role_info = await _resolve_role()
+    if isinstance(role_info, str):
+        if role_info in {"admin", "super_admin", "global_admin", "university_admin"}:
+            return None
+    elif role_info and getattr(role_info, "is_admin", False):
         return None
 
     lecturer_profile = await _resolve_lecturer()

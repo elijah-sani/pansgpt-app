@@ -11,7 +11,10 @@ export type LecturerSearchMaterial = {
   id: string;
   title: string;
   course_code: string | null;
-  status: 'pending_review' | 'approved' | 'rejected' | 'ingesting' | 'ingested' | 'failed';
+  status: 'pending_review' | 'approved' | 'rejected' | 'cancelled';
+  pans_library_id?: string | null;
+  library_embedding_status?: 'pending' | 'processing' | 'completed' | 'failed' | string | null;
+  library_embedding_progress?: number | null;
 };
 
 export type LecturerSearchResultCategory = 'Quick actions' | 'Restrictions' | 'Materials' | 'Help topics' | 'Account';
@@ -28,9 +31,7 @@ const MATERIAL_STATUS_LABELS: Record<LecturerSearchMaterial['status'], string> =
   pending_review: 'Pending review',
   approved: 'Approved',
   rejected: 'Rejected',
-  ingesting: 'Preparing',
-  ingested: 'Added',
-  failed: 'Needs attention',
+  cancelled: 'Cancelled',
 };
 
 const DASHBOARD_ACTIONS = [
@@ -123,7 +124,7 @@ export function buildLecturerSearchResults({
     .map((material) => ({
       id: `material-${material.id}`,
       title: material.title,
-      description: `${material.course_code || 'Course not set'} - ${MATERIAL_STATUS_LABELS[material.status]}`,
+      description: `${material.course_code || 'Course not set'} - ${getMaterialStatusDescription(material)}`,
       href: '/lecturer/materials',
       category: 'Materials',
     }));
@@ -167,4 +168,20 @@ function formatDateTime(value: string | null | undefined) {
 
 function formatLabel(value: string) {
   return value.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function getMaterialStatusDescription(material: LecturerSearchMaterial) {
+  if (material.pans_library_id) {
+    const embedding = String(material.library_embedding_status || '').toLowerCase();
+    if (embedding === 'processing') {
+      const pct = typeof material.library_embedding_progress === 'number'
+        ? Math.max(0, Math.min(100, material.library_embedding_progress))
+        : 0;
+      return `Processing ${pct}%`;
+    }
+    if (embedding === 'completed') return 'Completed';
+    if (embedding === 'failed') return 'Failed';
+    if (embedding === 'pending') return 'Pending';
+  }
+  return MATERIAL_STATUS_LABELS[material.status];
 }

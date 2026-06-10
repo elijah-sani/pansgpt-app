@@ -1,837 +1,274 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
-import { useTheme } from 'next-themes';
-import { useRouter } from 'next/navigation';
-import {
-    LogOut,
-    AlertTriangle,
-    Moon,
-    Globe,
-    Cpu,
-    CheckCircle2,
-    Shield,
-    ChevronRight,
-    Cloud,
-    Wrench,
-    X,
-    LayoutGrid,
-    RefreshCw,
-    Check
-} from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import React, { useEffect, useState } from 'react';
+import { AlertTriangle, CalendarDays, CheckCircle2, RefreshCw } from 'lucide-react';
+
 import { api } from '@/lib/api';
 
-// --- Sub-Components (Defined outside to prevent re-mounting) ---
-
-interface AvatarSelectionModalProps {
-    isOpen: boolean;
-    onClose: () => void;
-    onConfirm: (avatarUrl: string) => void;
-}
-
-const AvatarSelectionModal = ({ isOpen, onClose, onConfirm }: AvatarSelectionModalProps) => {
-    const [seeds, setSeeds] = useState<string[]>([]);
-    const [selectedSeed, setSelectedSeed] = useState<string | null>(null);
-    const [isGenerating, setIsGenerating] = useState(false);
-
-    function generateSeeds() {
-        setIsGenerating(true);
-        const newSeeds = Array.from({ length: 12 }, () => Math.random().toString(36).substring(7));
-        setSeeds(newSeeds);
-        setTimeout(() => setIsGenerating(false), 500); // Fake delay for UX
-    }
-
-    // Generate random seeds on open
-    useEffect(() => {
-        if (!isOpen) return;
-
-        const timer = window.setTimeout(() => {
-            generateSeeds();
-            setSelectedSeed(null);
-        }, 0);
-
-        return () => window.clearTimeout(timer);
-    }, [isOpen]);
-
-    const getAvatarUrl = (seed: string) => `https://api.dicebear.com/9.x/toon-head/svg?translateY=5&beardProbability=30&eyebrows=happy,neutral,raised,sad,angry&hairColor=2c1b18,724133,a55728,b58143&backgroundColor=ffdfbf,ffd5dc,d1d4f9,c0aede,b6e3f4&seed=${seed}`;
-
-    if (!isOpen) return null;
-
-    return (
-        <AnimatePresence>
-            <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-                onClick={onClose}
-            >
-                <motion.div
-                    initial={{ scale: 0.95, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    exit={{ scale: 0.95, opacity: 0 }}
-                    className="bg-card border border-border rounded-2xl shadow-sm w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]"
-                    onClick={(e) => e.stopPropagation()}
-                >
-                    {/* Header */}
-                    <div className="p-6 border-b border-border flex justify-between items-center bg-muted/30">
-                        <div>
-                            <h2 className="text-xl font-bold text-foreground">Identity Lab</h2>
-                            <p className="text-sm text-muted-foreground">Select your digital persona</p>
-                        </div>
-                        <button onClick={onClose} className="p-2 hover:bg-muted rounded-full transition-colors">
-                            <X className="w-5 h-5 text-muted-foreground" />
-                        </button>
-                    </div>
-
-                    {/* Grid */}
-                    <div className="p-6 overflow-y-auto bg-background/50">
-                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-4">
-                            {seeds.map((seed, i) => (
-                                <motion.button
-                                    key={seed}
-                                    initial={{ opacity: 0, y: 10 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    transition={{ delay: i * 0.05 }}
-                                    onClick={() => setSelectedSeed(seed)}
-                                    className={`relative aspect-square rounded-xl overflow-hidden border-2 transition-all group ${selectedSeed === seed
-                                        ? 'border-primary ring-2 ring-primary/30 ring-offset-2 ring-offset-card scale-105 shadow-sm'
-                                        : 'border-border hover:border-primary/50 hover:scale-105'
-                                        }`}
-                                >
-                                    <img
-                                        src={getAvatarUrl(seed)}
-                                        alt={`Avatar ${i}`}
-                                        className="w-full h-full object-cover bg-muted/30"
-                                        loading="lazy"
-                                    />
-                                    {selectedSeed === seed && (
-                                        <div className="absolute top-1 right-1 bg-primary text-primary-foreground p-0.5 rounded-full shadow-sm">
-                                            <Check className="w-3 h-3" />
-                                        </div>
-                                    )}
-                                </motion.button>
-                            ))}
-                        </div>
-                    </div>
-
-                    {/* Footer */}
-                    <div className="p-6 border-t border-border bg-muted/30 flex items-center justify-between gap-4">
-                        <button
-                            onClick={generateSeeds}
-                            disabled={isGenerating}
-                            className="flex items-center gap-2 px-4 py-2.5 bg-background border border-border hover:bg-muted text-foreground rounded-xl text-sm font-medium transition-colors"
-                        >
-                            <RefreshCw className={`w-4 h-4 ${isGenerating ? 'animate-spin' : ''}`} />
-                            Shuffle
-                        </button>
-
-                        <button
-                            onClick={() => selectedSeed && onConfirm(getAvatarUrl(selectedSeed))}
-                            disabled={!selectedSeed}
-                            className="flex-1 px-6 py-2.5 bg-primary hover:bg-primary/90 text-primary-foreground font-bold rounded-xl shadow-sm  disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                        >
-                            Confirm Identity
-                        </button>
-                    </div>
-                </motion.div>
-            </motion.div>
-        </AnimatePresence>
-    );
+type AcademicContext = {
+    university_id?: string | null;
+    current_academic_session?: string | null;
+    current_semester?: 'first' | 'second' | string | null;
 };
 
-interface AIEditorProps {
-    systemConfig: { system_prompt: string; temperature: number; maintenance_mode: boolean; web_search_enabled: boolean; rag_threshold: number };
-    setSystemConfig: (data: { system_prompt: string; temperature: number; maintenance_mode: boolean; web_search_enabled: boolean; rag_threshold: number }) => void;
-    userEmail: string | null;
-}
+type RolloverPreview = {
+    dry_run: boolean;
+    archived_count: number;
+    new_context?: AcademicContext | null;
+};
 
-const AIEditor = ({ systemConfig, setSystemConfig, userEmail }: AIEditorProps) => {
-    const [localTemperature, setLocalTemperature] = useState(systemConfig.temperature);
-    const [localRagThreshold, setLocalRagThreshold] = useState(systemConfig.rag_threshold);
-    const [isSavingPrompt, setIsSavingPrompt] = useState(false);
-    const [isSavingTemp, setIsSavingTemp] = useState(false);
-    const [isSavingRag, setIsSavingRag] = useState(false);
-    const [promptMessage, setPromptMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+export default function AdminSettingsPage() {
+    const [academicContext, setAcademicContext] = useState<AcademicContext | null>(null);
+    const [academicSessionDraft, setAcademicSessionDraft] = useState('');
+    const [semesterDraft, setSemesterDraft] = useState<'first' | 'second'>('first');
+    const [rolloverSessionDraft, setRolloverSessionDraft] = useState('');
+    const [rolloverSemesterDraft, setRolloverSemesterDraft] = useState<'first' | 'second'>('first');
+    const [rolloverArchivePrevious, setRolloverArchivePrevious] = useState(true);
+    const [rolloverPreview, setRolloverPreview] = useState<RolloverPreview | null>(null);
+    const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isSaving, setIsSaving] = useState(false);
+    const [isPreviewing, setIsPreviewing] = useState(false);
+    const [isRollingOver, setIsRollingOver] = useState(false);
 
-    // Sync local temp with prop if it changes externally (e.g. initial load)
-    useEffect(() => {
-        setLocalTemperature(systemConfig.temperature);
-        setLocalRagThreshold(systemConfig.rag_threshold);
-    }, [systemConfig.temperature, systemConfig.rag_threshold]);
-
-    // Debounced Temperature Save
-    useEffect(() => {
-        const timer = setTimeout(async () => {
-            if (localTemperature === systemConfig.temperature) return;
-
-            setIsSavingTemp(true);
-            try {
-                const res = await api.post('/admin/config/update', {
-                    temperature: localTemperature
-                }, {
-                    headers: {
-                        'x-user-email': userEmail || ''
-                    }
-                });
-
-                if (!res.ok) throw new Error('Failed');
-
-                // Update parent after success to keep in sync
-                setSystemConfig({ ...systemConfig, temperature: localTemperature });
-
-            } catch (err) {
-                console.error("Failed to save temperature", err);
-            } finally {
-                setIsSavingTemp(false);
-            }
-        }, 500);
-
-        return () => clearTimeout(timer);
-        // Intentional: avoid including full object/setter deps to prevent save-loop churn while typing.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [localTemperature, userEmail]);
-
-    // Debounced RAG Threshold Save
-    useEffect(() => {
-        const timer = setTimeout(async () => {
-            if (localRagThreshold === systemConfig.rag_threshold) return;
-
-            setIsSavingRag(true);
-            try {
-                const res = await api.post('/admin/config/update', {
-                    rag_threshold: localRagThreshold
-                }, {
-                    headers: {
-                        'x-user-email': userEmail || ''
-                    }
-                });
-
-                if (!res.ok) throw new Error('Failed');
-
-                // Update parent after success to keep in sync
-                setSystemConfig({ ...systemConfig, rag_threshold: localRagThreshold });
-
-            } catch (err) {
-                console.error("Failed to save rag_threshold", err);
-            } finally {
-                setIsSavingRag(false);
-            }
-        }, 500);
-
-        return () => clearTimeout(timer);
-        // Intentional: avoid including full object/setter deps to prevent save-loop churn while typing.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [localRagThreshold, userEmail]);
-
-    const handleSavePrompt = async () => {
-        setIsSavingPrompt(true);
-        setPromptMessage(null);
-        try {
-            // Use centralized API client
-            // Note: api.post automatically handles Content-Type application/json
-            const res = await api.post('/admin/config/update', {
-                system_prompt: systemConfig.system_prompt
-            }, {
-                headers: {
-                    'x-user-email': userEmail || ''
-                }
-            });
-
-            if (!res.ok) throw new Error('Failed');
-
-            setPromptMessage({ type: 'success', text: 'Configuration saved.' });
-            setTimeout(() => setPromptMessage(null), 3000);
-        } catch {
-            setPromptMessage({ type: 'error', text: 'Failed to save.' });
-        } finally {
-            setIsSavingPrompt(false);
-        }
+    const applyContext = (context: AcademicContext | null) => {
+        setAcademicContext(context);
+        const currentSession = context?.current_academic_session || '';
+        const currentSemester = context?.current_semester === 'second' ? 'second' : 'first';
+        setAcademicSessionDraft(currentSession);
+        setSemesterDraft(currentSemester);
+        setRolloverSessionDraft(currentSession);
+        setRolloverSemesterDraft(currentSemester);
     };
 
-    return (
-        <div className="space-y-6">
-            <div className="space-y-2">
-                <label className="block text-xs font-bold text-muted-foreground uppercase tracking-widest">System Prompt</label>
-                <textarea
-                    value={systemConfig.system_prompt}
-                    onChange={(e) => setSystemConfig({ ...systemConfig, system_prompt: e.target.value })}
-                    className="w-full h-48 bg-background text-foreground font-mono text-sm p-4 rounded-xl border border-border focus:border-primary/50 outline-none resize-none leading-relaxed shadow-inner"
-                    placeholder="You are a helpful AI assistant..."
-                />
-                <div className="flex justify-end text-xs text-muted-foreground">
-                    <span>{systemConfig.system_prompt.length} chars</span>
-                </div>
-            </div>
-
-            <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                        <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Temperature</label>
-                        {isSavingTemp && <span className="text-[10px] text-primary animate-pulse">Saving...</span>}
-                    </div>
-                    <span className="text-primary font-bold font-mono">{localTemperature}</span>
-                </div>
-                <div className="relative pt-1">
-                    <input
-                        type="range"
-                        min="0" max="1" step="0.1"
-                        value={localTemperature}
-                        onChange={(e) => setLocalTemperature(parseFloat(e.target.value))}
-                        className="w-full h-2 bg-muted rounded-full appearance-none cursor-pointer accent-primary"
-                    />
-                    <div className="flex justify-between text-xs text-muted-foreground mt-2 font-medium">
-                        <span>Precise (0.0)</span>
-                        <span>Balanced (0.5)</span>
-                        <span>Creative (1.0)</span>
-                    </div>
-                </div>
-            </div>
-
-            <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                        <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">RAG Match Threshold</label>
-                        {isSavingRag && <span className="text-[10px] text-primary animate-pulse">Saving...</span>}
-                    </div>
-                    <span className="text-primary font-bold font-mono">{localRagThreshold.toFixed(2)}</span>
-                </div>
-                <div className="relative pt-1">
-                    <input
-                        type="range"
-                        min="0.1" max="1" step="0.05"
-                        value={localRagThreshold}
-                        onChange={(e) => setLocalRagThreshold(parseFloat(e.target.value))}
-                        className="w-full h-2 bg-muted rounded-full appearance-none cursor-pointer accent-primary"
-                    />
-                    <div className="flex justify-between text-xs text-muted-foreground mt-2 font-medium">
-                        <span>Loose (0.1)</span>
-                        <span>Balanced (0.5)</span>
-                        <span>Strict (1.0)</span>
-                    </div>
-                </div>
-            </div>
-
-            <div className="flex items-center justify-between pt-4 border-t border-border">
-                {promptMessage ? (
-                    <div className={`flex items-center gap-2 text-sm font-medium ${promptMessage.type === 'success' ? 'text-primary' : 'text-destructive'}`}>
-                        {promptMessage.type === 'success' ? <CheckCircle2 className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
-                        {promptMessage.text}
-                    </div>
-                ) : <div />}
-
-                <button
-                    onClick={handleSavePrompt}
-                    disabled={isSavingPrompt}
-                    className="px-6 py-3 bg-secondary hover:bg-secondary/80 text-secondary-foreground font-bold text-sm rounded-xl transition-colors border border-border/50"
-                >
-                    {isSavingPrompt ? 'Saving...' : 'Save Config'}
-                </button>
-            </div>
-        </div>
-    );
-};
-
-// --- Main Component ---
-
-export default function SettingsPage() {
-    const router = useRouter();
-    const { theme, setTheme } = useTheme();
-    const [mounted, setMounted] = useState(false);
-
-    const [loading, setLoading] = useState(true);
-    const [userEmail, setUserEmail] = useState<string | null>(null);
-    const [isSuperAdmin, setIsSuperAdmin] = useState(false);
-    const [fileCount, setFileCount] = useState(0);
-
-    // Mobile States
-    const [mobileSection, setMobileSection] = useState<'ai' | null>(null);
-
-    // Form States
-    const [profileData, setProfileData] = useState({ displayName: '', avatarUrl: '' });
-    const [systemConfig, setSystemConfig] = useState({
-        system_prompt: '',
-        temperature: 0.7,
-        maintenance_mode: false,
-        web_search_enabled: true,
-        rag_threshold: 0.50
-    });
-
-    // Avatar Modal
-    const [isAvatarModalOpen, setIsAvatarModalOpen] = useState(false);
-    const [showWebSearchConfirm, setShowWebSearchConfirm] = useState(false);
-
-    // Ensure hydration match for theme
     useEffect(() => {
-        setMounted(true);
+        const load = async () => {
+            setIsLoading(true);
+            try {
+                const response = await api.get('/admin/academic-context');
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(payload.detail || 'Unable to load academic context');
+                applyContext(payload.context || null);
+            } catch (err) {
+                setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Unable to load academic context' });
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        void load();
     }, []);
 
-    // --- Init ---
-    // Combined Fetch Logic (Prefer DB, Fallback to Auth)
-    useEffect(() => {
-        const init = async () => {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (session?.user) {
-                const { email, id, user_metadata } = session.user;
-                setUserEmail(email || null);
-                const bootstrapResponse = await api.get('/me/bootstrap');
-                const bootstrap = bootstrapResponse.ok ? await bootstrapResponse.json() : null;
-                const profile = bootstrap?.profile;
-                let dbDisplayName = '';
-
-                const firstName = profile?.first_name?.trim() || '';
-                const otherNames = profile?.other_names?.trim() || '';
-                const profileDisplayName = [firstName, otherNames].filter(Boolean).join(' ').trim();
-                if (profileDisplayName) {
-                    dbDisplayName = profileDisplayName;
-                }
-
-                // 2. Fallback to Metadata if DB is empty
-                const finalDisplayName = dbDisplayName || user_metadata?.full_name || 'User';
-                const finalAvatarUrl = profile?.avatar_url || user_metadata?.avatar_url || '';
-
-                setProfileData({
-                    displayName: finalDisplayName,
-                    avatarUrl: finalAvatarUrl
-                });
-                const superAdmin = bootstrap?.is_super_admin === true || bootstrap?.is_global_admin === true;
-                setIsSuperAdmin(superAdmin);
-                setFileCount(bootstrap?.file_count || 0);
-
-                // If super admin, fetch system config
-                if (superAdmin) {
-                    fetchSystemConfig();
-                }
-            }
-            setLoading(false);
-        };
-        init();
-    }, [supabase]);
-
-    const fetchSystemConfig = async () => {
+    const saveAcademicContext = async () => {
+        setIsSaving(true);
+        setMessage(null);
         try {
-            const res = await api.fetch('/admin/config');
-            if (res.ok) {
-                const data = await res.json();
-                setSystemConfig({
-                    system_prompt: data.system_prompt ?? '',
-                    temperature: data.temperature ?? 0.7,
-                    maintenance_mode: data.maintenance_mode ?? false,
-                    web_search_enabled: data.web_search_enabled ?? true,
-                    rag_threshold: data.rag_threshold ?? 0.50
-                });
-            }
-        } catch (err) {
-            console.error("Failed to fetch system config", err);
-        }
-    };
-
-    // --- Handlers ---
-
-    const handleUpdateAvatar = async (url: string) => {
-        setIsAvatarModalOpen(false);
-        // Optimistic update
-        setProfileData(prev => ({ ...prev, avatarUrl: url }));
-
-        // Save to Supabase Auth Metadata AND Profiles
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
-            await Promise.all([
-                supabase.auth.updateUser({ data: { avatar_url: url } }),
-                api.patch('/me/profile', { avatar_url: url })
-            ]);
-        }
-    };
-
-    const handleMaintenanceToggle = async (checked: boolean) => {
-        // 1. Optimistic Update
-        setSystemConfig(prev => ({ ...prev, maintenance_mode: checked }));
-
-        try {
-            const res = await api.post('/admin/config/update', {
-                maintenance_mode: checked
-            }, {
-                headers: {
-                    'x-user-email': userEmail || ''
-                }
+            const response = await api.fetch('/admin/academic-context', {
+                method: 'PUT',
+                body: JSON.stringify({
+                    current_academic_session: academicSessionDraft.trim(),
+                    current_semester: semesterDraft,
+                }),
             });
-
-            if (!res.ok) throw new Error('Failed to update maintenance mode');
-
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(payload.detail || 'Unable to save academic context');
+            applyContext(payload.context || null);
+            setMessage({ type: 'success', text: 'Academic context saved.' });
         } catch (err) {
-            console.error(err);
-            // Revert on failure
-            setSystemConfig(prev => ({ ...prev, maintenance_mode: !checked }));
-            alert("Failed to update system settings.");
+            setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Unable to save academic context' });
+        } finally {
+            setIsSaving(false);
         }
     };
 
-    const handleWebSearchToggle = async (checked: boolean) => {
-        setSystemConfig(prev => ({ ...prev, web_search_enabled: checked }));
+    const buildRolloverPayload = (dryRun: boolean) => ({
+        new_academic_session: rolloverSessionDraft.trim(),
+        new_semester: rolloverSemesterDraft,
+        archive_previous_active_materials: rolloverArchivePrevious,
+        dry_run: dryRun,
+    });
+
+    const previewRollover = async () => {
+        setIsPreviewing(true);
+        setMessage(null);
         try {
-            const res = await api.post('/admin/config/update', {
-                web_search_enabled: checked
-            }, {
-                headers: { 'x-user-email': userEmail || '' }
-            });
-            if (!res.ok) throw new Error('Failed');
+            const response = await api.post('/admin/academic-context/rollover', buildRolloverPayload(true));
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(payload.detail || 'Unable to preview rollover');
+            setRolloverPreview(payload);
+            setMessage({ type: 'info', text: `Preview ready: ${payload.archived_count || 0} active material(s) will be archived.` });
         } catch (err) {
-            console.error(err);
-            setSystemConfig(prev => ({ ...prev, web_search_enabled: !checked }));
-            alert("Failed to update web search setting.");
+            setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Unable to preview rollover' });
+            setRolloverPreview(null);
+        } finally {
+            setIsPreviewing(false);
         }
     };
 
-    const handleSignOut = async () => {
-        await supabase.auth.signOut();
-        window.location.replace('/login');
+    const confirmRollover = async () => {
+        setIsRollingOver(true);
+        setMessage(null);
+        try {
+            const response = await api.post('/admin/academic-context/rollover', buildRolloverPayload(false));
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(payload.detail || 'Unable to complete rollover');
+            applyContext(payload.new_context || null);
+            setRolloverPreview(payload);
+            setMessage({ type: 'success', text: `Rollover complete. Archived ${payload.archived_count || 0} material(s).` });
+        } catch (err) {
+            setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Unable to complete rollover' });
+        } finally {
+            setIsRollingOver(false);
+        }
     };
-
-    if (loading) return <div className="p-8 text-muted-foreground flex justify-center">Loading settings...</div>;
-
-    // --- Components ---
-
-    const ProfileSummaryCard = () => {
-        // Use custom avatar if available, else generated fallbock
-        const currentAvatar = profileData.avatarUrl || `https://api.dicebear.com/9.x/toon-head/svg?translateY=5&beardProbability=30&eyebrows=happy,neutral,raised,sad,angry&hairColor=2c1b18,724133,a55728,b58143&backgroundColor=ffdfbf,ffd5dc,d1d4f9,c0aede,b6e3f4&seed=${userEmail}`;
-
-        return (
-            <div className="bg-card border border-border rounded-2xl p-6 flex flex-col items-center text-center shadow-sm relative overflow-hidden">
-                {/* Background Gradient Effect */}
-                <div className="absolute top-0 inset-x-0 h-24 bg-gradient-to-b from-primary/10 to-transparent pointer-events-none" />
-
-                <div className="relative group mb-4">
-                    <div className="w-24 h-24 rounded-full bg-muted border-4 border-card shadow-sm overflow-hidden flex items-center justify-center relative z-10">
-                        <img
-                            src={currentAvatar}
-                            alt="Avatar"
-                            className="absolute inset-0 w-full h-full object-cover"
-                        />
-                    </div>
-                    <button
-                        onClick={() => setIsAvatarModalOpen(true)}
-                        className="absolute bottom-0 right-0 z-20 bg-primary hover:bg-primary/90 text-primary-foreground p-1.5 rounded-full ring-4 ring-card transition-colors shadow-sm cursor-pointer"
-                    >
-                        <LayoutGrid className="w-4 h-4" />
-                    </button>
-                </div>
-
-                <div className="mb-2">
-                    {isSuperAdmin && (
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-yellow-500 text-yellow-950 text-[10px] font-black uppercase tracking-widest shadow-sm">
-                            <Shield className="w-3 h-3 fill-current" />
-                            Super Admin
-                        </span>
-                    )}
-                </div>
-
-                <h2 className="text-xl font-bold text-foreground mb-0.5">{profileData.displayName}</h2>
-                <p className="text-sm text-muted-foreground mb-6">{userEmail}</p>
-
-                <div className="bg-primary/10 border border-primary/20 rounded-full px-5 py-2.5 flex items-center gap-2.5">
-                    <Cloud className="w-4 h-4 text-primary fill-current" />
-                    <span className="text-sm font-bold text-foreground">Files Uploaded: <span className="text-primary">{fileCount}</span></span>
-                </div>
-            </div>
-        );
-    };
-
-    const SettingsGroup = ({ title, children }: { title: string, children: React.ReactNode }) => (
-        <div className="space-y-2">
-            <h3 className="px-1 text-xs font-bold text-muted-foreground uppercase tracking-widest">{title}</h3>
-            <div className="bg-card border border-border rounded-xl overflow-hidden divide-y divide-border">
-                {children}
-            </div>
-        </div>
-    );
-
-    const SettingsRow = ({ icon: Icon, label, action, onClick, isDanger }: { icon: LucideIcon, label: string, action?: React.ReactNode, onClick?: () => void, isDanger?: boolean }) => (
-        <div
-            onClick={onClick}
-            className={`flex items-center justify-between p-4 ${onClick ? 'cursor-pointer hover:bg-muted/50 active:bg-muted transition-colors' : ''}`}
-        >
-            <div className="flex items-center gap-3">
-                <div className={`p-2 rounded-lg ${isDanger ? 'bg-red-500/10 text-red-500' : 'bg-muted text-foreground'}`}>
-                    <Icon className="w-5 h-5" />
-                </div>
-                <span className={`font-medium ${isDanger ? 'text-red-500' : 'text-foreground'}`}>{label}</span>
-            </div>
-            {action || (onClick && <ChevronRight className="w-5 h-5 text-muted-foreground" />)}
-        </div>
-    );
-
-    // Mobile Drawer Component
-    const MobileDrawer = ({ title, isOpen, onClose, children }: { title: string, isOpen: boolean, onClose: () => void, children: React.ReactNode }) => (
-        <AnimatePresence>
-            {isOpen && (
-                <>
-                    <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 0.5 }}
-                        exit={{ opacity: 0 }}
-                        onClick={onClose}
-                        className="fixed inset-0 bg-black z-50 md:hidden backdrop-blur-sm"
-                    />
-                    <motion.div
-                        initial={{ y: '100%' }}
-                        animate={{ y: 0 }}
-                        exit={{ y: '100%' }}
-                        transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                        className="fixed inset-x-0 bottom-0 h-[85vh] bg-background border-t border-border rounded-t-3xl z-50 md:hidden overflow-hidden flex flex-col shadow-sm"
-                    >
-                        <div className="p-4 border-b border-border flex items-center justify-between bg-card/50 backdrop-blur-md">
-                            <h2 className="text-lg font-bold text-foreground">{title}</h2>
-                            <button onClick={onClose} className="p-2 bg-muted rounded-full text-foreground">
-                                <X className="w-5 h-5" />
-                            </button>
-                        </div>
-                        <div className="flex-1 overflow-y-auto p-6 pb-32">
-                            {children}
-                        </div>
-                    </motion.div>
-
-                </>
-            )}
-        </AnimatePresence>
-    );
 
     return (
-        <div className="w-full max-w-5xl mx-auto pb-32 md:pb-12">
+        <div className="mx-auto w-full max-w-5xl space-y-8 pb-12">
+            <header>
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-primary">University Workspace</p>
+                <h1 className="mt-2 text-3xl font-semibold tracking-tight">University Settings</h1>
+                <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+                    Manage the current academic context and semester rollover for this university only.
+                </p>
+            </header>
 
-            {/* Header (Desktop Only Check) */}
-            <div className="flex items-center justify-center md:justify-between mb-6 md:mb-8 relative">
-                <h1 className="text-xl md:text-3xl font-bold text-foreground">Settings</h1>
-            </div>
-
-            {/* MAIN LAYOUT */}
-            <div className="md:grid md:grid-cols-12 md:gap-8">
-
-                {/* LEFT COL: Profile Summary (Sticky on Desktop) */}
-                <div className="md:col-span-4 lg:col-span-3 space-y-6">
-                    <ProfileSummaryCard />
-
-                    {/* DESKTOP NAV (Hidden on Mobile) */}
-                    <div className="hidden md:block space-y-2">
-                        {/* Navigation removed as per requirement */}
-                    </div>
+            {message ? (
+                <div className={`flex items-center gap-2 rounded-xl border px-4 py-3 text-sm ${
+                    message.type === 'error'
+                        ? 'border-destructive/30 bg-destructive/10 text-destructive'
+                        : message.type === 'success'
+                            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500'
+                            : 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-300'
+                }`}>
+                    {message.type === 'error' ? <AlertTriangle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+                    {message.text}
                 </div>
+            ) : null}
 
-                {/* RIGHT COL: Content (Visible on Desktop, hidden on Mobile - replaced by list items) */}
-                <div className="md:col-span-8 lg:col-span-9 space-y-8 hidden md:block">
-                    {/* System Intelligence Section */}
-                    {isSuperAdmin && (
-                        <div className="bg-card border border-border rounded-2xl p-8">
-                            <div className="flex items-center gap-3 mb-6 pb-6 border-b border-border">
-                                <Cpu className="w-6 h-6 text-primary" />
-                                <h2 className="text-xl font-bold text-foreground">System Intelligence</h2>
-                            </div>
-                            <AIEditor
-                                systemConfig={systemConfig}
-                                setSystemConfig={setSystemConfig}
-                                userEmail={userEmail}
-                            />
-                        </div>
-                    )}
-
-                    {/* Preferences (Maintenance, Dark Mode) - Explicit Desktop View */}
-                    <div className="bg-card border border-border rounded-2xl p-8 space-y-6">
-                        <h2 className="text-xl font-bold text-foreground border-b border-border pb-6">App Preferences</h2>
-
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-4">
-                                <div className="p-3 bg-muted rounded-xl text-foreground"><Moon className="w-6 h-6" /></div>
-                                <div>
-                                    <h3 className="font-bold text-foreground">Dark Mode</h3>
-                                    <p className="text-sm text-muted-foreground">Use dark theme interface</p>
-                                </div>
-                            </div>
-                            {mounted && (
-                                <label className="relative inline-flex items-center cursor-pointer">
-                                    <input type="checkbox" className="sr-only peer" checked={theme === 'dark'} onChange={(e) => setTheme(e.target.checked ? 'dark' : 'light')} />
-                                    <div className="w-14 h-7 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-primary"></div>
-                                </label>
-                            )}
-                        </div>
-
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-4">
-                                <div className="p-3 bg-muted rounded-xl text-foreground"><Wrench className="w-6 h-6" /></div>
-                                <div>
-                                    <h3 className="font-bold text-foreground">Maintenance Mode</h3>
-                                    <p className="text-sm text-muted-foreground">Disable user access temporarily</p>
-                                </div>
-                            </div>
-                            <label className="relative inline-flex items-center cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    className="sr-only peer"
-                                    checked={systemConfig.maintenance_mode}
-                                    onChange={(e) => handleMaintenanceToggle(e.target.checked)}
-                                    disabled={!isSuperAdmin}
-                                />
-                                <div className="w-14 h-7 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-amber-500"></div>
-                            </label>
-                        </div>
-
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-4">
-                                <div className="p-3 bg-muted rounded-xl text-foreground">
-                                    <Globe className="w-6 h-6" />
-                                </div>
-                                <div>
-                                    <h3 className="font-bold text-foreground">Web Search</h3>
-                                    <p className="text-sm text-muted-foreground">Allow AI to search the web for live results</p>
-                                </div>
-                            </div>
-                            <label className="relative inline-flex items-center cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    className="sr-only peer"
-                                    checked={systemConfig.web_search_enabled}
-                                    onChange={(e) => {
-                                        if (!e.target.checked) {
-                                            setShowWebSearchConfirm(true);
-                                        } else {
-                                            handleWebSearchToggle(true);
-                                        }
-                                    }}
-                                    disabled={!isSuperAdmin}
-                                />
-                                <div className="w-14 h-7 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-primary"></div>
-                            </label>
-                        </div>
+            <section className="rounded-xl border border-border bg-card p-5 shadow-sm md:p-6">
+                <div className="mb-6 flex items-center gap-3 border-b border-border pb-5">
+                    <div className="rounded-lg bg-primary/10 p-2 text-primary">
+                        <CalendarDays className="h-5 w-5" />
                     </div>
-
-                    <div className="bg-red-500/5 border border-red-500/20 rounded-2xl p-8 flex items-center justify-between">
-                        <div>
-                            <h3 className="font-bold text-red-600 dark:text-red-400">Danger Zone</h3>
-                            <p className="text-sm text-red-600/70 dark:text-red-400/70">Sign out of your active session.</p>
-                        </div>
-                        <button onClick={handleSignOut} className="px-6 py-2 border border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-500/10 font-bold rounded-xl transition-colors">Log Out</button>
-                    </div>
-                </div>
-
-                {/* MOBILE LIST SYSTEM (Visible on Mobile only) */}
-                <div className="md:hidden space-y-6 mt-8">
-
-                    <SettingsGroup title="Appearance">
-                        <div className="flex items-center justify-between p-4">
-                            <div className="flex items-center gap-3">
-                                <div className="p-2 bg-indigo-500/10 text-indigo-500 rounded-lg"><Moon className="w-5 h-5" /></div>
-                                <span className="font-medium text-foreground">Dark Mode</span>
-                            </div>
-                            {mounted && (
-                                <label className="relative inline-flex items-center cursor-pointer">
-                                    <input type="checkbox" className="sr-only peer" checked={theme === 'dark'} onChange={(e) => setTheme(e.target.checked ? 'dark' : 'light')} />
-                                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                                </label>
-                            )}
-                        </div>
-                    </SettingsGroup>
-
-                    {isSuperAdmin && (
-                        <SettingsGroup title="AI Configuration">
-                            <SettingsRow icon={Cpu} label="Model Parameters" onClick={() => setMobileSection('ai')} />
-                        </SettingsGroup>
-                    )}
-
-                    <SettingsGroup title="Security & Access">
-                        <div className="flex items-center justify-between p-4">
-                            <div className="flex items-center gap-3">
-                                <div className="p-2 bg-amber-500/10 text-amber-500 rounded-lg"><Wrench className="w-5 h-5" /></div>
-                                <span className="font-medium text-foreground">Maintenance Mode</span>
-                            </div>
-                            <label className="relative inline-flex items-center cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    className="sr-only peer"
-                                    checked={systemConfig.maintenance_mode}
-                                    onChange={(e) => handleMaintenanceToggle(e.target.checked)}
-                                    disabled={!isSuperAdmin}
-                                />
-                                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500"></div>
-                            </label>
-                        </div>
-                        <div className="flex items-center justify-between p-4">
-                            <div className="flex items-center gap-3">
-                                <div className="p-2 bg-primary/10 text-primary rounded-lg">
-                                    <Globe className="w-5 h-5" />
-                                </div>
-                                <span className="font-medium text-foreground">Web Search</span>
-                            </div>
-                            <label className="relative inline-flex items-center cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    className="sr-only peer"
-                                    checked={systemConfig.web_search_enabled}
-                                    onChange={(e) => {
-                                        if (!e.target.checked) {
-                                            setShowWebSearchConfirm(true);
-                                        } else {
-                                            handleWebSearchToggle(true);
-                                        }
-                                    }}
-                                    disabled={!isSuperAdmin}
-                                />
-                                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                            </label>
-                        </div>
-                    </SettingsGroup>
-
-                    <SettingsGroup title="Danger Zone">
-                        <SettingsRow icon={LogOut} label="Log Out" isDanger onClick={handleSignOut} />
-                    </SettingsGroup>
-
-                </div>
-            </div>
-
-            {/* MOBILE DRAWERS */}
-            <MobileDrawer title="Model Parameters" isOpen={mobileSection === 'ai'} onClose={() => setMobileSection(null)}>
-                <AIEditor
-                    systemConfig={systemConfig}
-                    setSystemConfig={setSystemConfig}
-                    userEmail={userEmail}
-                />
-            </MobileDrawer>
-
-            <AvatarSelectionModal
-                isOpen={isAvatarModalOpen}
-                onClose={() => setIsAvatarModalOpen(false)}
-                onConfirm={handleUpdateAvatar}
-            />
-            {showWebSearchConfirm && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-                    <div className="bg-background border border-border rounded-2xl p-6 max-w-sm w-full shadow-sm">
-                        <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center mb-4">
-                            <Globe className="w-6 h-6 text-red-500" />
-                        </div>
-                        <h3 className="text-lg font-bold text-foreground mb-2">Disable Web Search?</h3>
-                        <p className="text-sm text-muted-foreground mb-6">
-                            Students will no longer be able to search the web from the chat. This takes effect immediately for all users.
+                    <div>
+                        <h2 className="font-semibold">Academic Context</h2>
+                        <p className="text-xs text-muted-foreground">
+                            {isLoading
+                                ? 'Loading current context...'
+                                : academicContext
+                                    ? `Current: ${academicContext.current_academic_session || 'Not set'} - ${academicContext.current_semester === 'second' ? 'Second Semester' : 'First Semester'}`
+                                    : 'No academic context configured yet.'}
                         </p>
-                        <div className="flex gap-3">
-                            <button
-                                onClick={() => setShowWebSearchConfirm(false)}
-                                className="flex-1 py-2.5 rounded-xl border border-border text-foreground font-semibold text-sm hover:bg-muted transition-colors"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={() => {
-                                    handleWebSearchToggle(false);
-                                    setShowWebSearchConfirm(false);
-                                }}
-                                className="flex-1 py-2.5 rounded-xl bg-red-500 hover:bg-red-600 text-white font-semibold text-sm transition-colors"
-                            >
-                                Disable
-                            </button>
-                        </div>
                     </div>
                 </div>
-            )}
+
+                <div className="grid gap-4 md:grid-cols-2">
+                    <div>
+                        <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-muted-foreground">Current Academic Session</label>
+                        <input
+                            value={academicSessionDraft}
+                            onChange={(event) => setAcademicSessionDraft(event.target.value)}
+                            placeholder="2025/2026"
+                            className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none focus:border-primary"
+                        />
+                    </div>
+                    <div>
+                        <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-muted-foreground">Current Semester</label>
+                        <select
+                            value={semesterDraft}
+                            onChange={(event) => setSemesterDraft(event.target.value === 'second' ? 'second' : 'first')}
+                            className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none focus:border-primary"
+                        >
+                            <option value="first">First Semester</option>
+                            <option value="second">Second Semester</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div className="mt-5 flex justify-end">
+                    <button
+                        type="button"
+                        onClick={saveAcademicContext}
+                        disabled={isSaving || !academicSessionDraft.trim()}
+                        className="rounded-xl bg-primary px-5 py-2.5 text-sm font-bold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        {isSaving ? 'Saving...' : 'Save Context'}
+                    </button>
+                </div>
+            </section>
+
+            <section className="rounded-xl border border-border bg-card p-5 shadow-sm md:p-6">
+                <div className="mb-6 flex items-center gap-3 border-b border-border pb-5">
+                    <div className="rounded-lg bg-amber-500/10 p-2 text-amber-500">
+                        <RefreshCw className="h-5 w-5" />
+                    </div>
+                    <div>
+                        <h2 className="font-semibold">Semester Rollover</h2>
+                        <p className="text-xs text-muted-foreground">Archive previous active materials and set the next academic context.</p>
+                    </div>
+                </div>
+
+                <div className="mb-5 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-muted-foreground">
+                    Archived materials remain readable as past materials, but active materials are the default AI context.
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                    <div>
+                        <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-muted-foreground">New Academic Session</label>
+                        <input
+                            value={rolloverSessionDraft}
+                            onChange={(event) => setRolloverSessionDraft(event.target.value)}
+                            placeholder="2026/2027"
+                            className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none focus:border-primary"
+                        />
+                    </div>
+                    <div>
+                        <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-muted-foreground">New Semester</label>
+                        <select
+                            value={rolloverSemesterDraft}
+                            onChange={(event) => setRolloverSemesterDraft(event.target.value === 'second' ? 'second' : 'first')}
+                            className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none focus:border-primary"
+                        >
+                            <option value="first">First Semester</option>
+                            <option value="second">Second Semester</option>
+                        </select>
+                    </div>
+                </div>
+
+                <label className="mt-4 flex items-center gap-3 text-sm">
+                    <input
+                        type="checkbox"
+                        checked={rolloverArchivePrevious}
+                        onChange={(event) => setRolloverArchivePrevious(event.target.checked)}
+                        className="h-4 w-4 rounded border-border"
+                    />
+                    Archive previous active materials
+                </label>
+
+                {rolloverPreview ? (
+                    <div className="mt-4 rounded-xl border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
+                        {rolloverPreview.dry_run ? 'Dry run' : 'Last rollover'}: {rolloverPreview.archived_count || 0} material(s) affected.
+                    </div>
+                ) : null}
+
+                <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+                    <button
+                        type="button"
+                        onClick={previewRollover}
+                        disabled={isPreviewing || isRollingOver || !rolloverSessionDraft.trim()}
+                        className="rounded-xl border border-border px-5 py-2.5 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        {isPreviewing ? 'Previewing...' : 'Preview / Dry Run'}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={confirmRollover}
+                        disabled={isRollingOver || isPreviewing || !rolloverSessionDraft.trim()}
+                        className="rounded-xl bg-amber-600 px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        {isRollingOver ? 'Rolling over...' : 'Confirm Rollover'}
+                    </button>
+                </div>
+            </section>
         </div>
     );
 }

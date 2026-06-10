@@ -9,6 +9,7 @@ export type SignupFormData = {
   firstName: string;
   otherNames: string;
   university: string;
+  universityId: string;
   level: string;
   email: string;
   password: string;
