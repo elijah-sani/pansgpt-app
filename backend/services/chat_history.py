@@ -60,6 +60,7 @@ async def save_assistant_message(
     session_id: str,
     content: str,
     citations: Optional[list[dict[str, Any]]] = None,
+    thinking_text: str = "",
 ) -> Optional[int]:
     # Update the parent session timestamp
     await _run(
@@ -76,6 +77,8 @@ async def save_assistant_message(
     }
     if citations is not None:
         payload["citations"] = citations
+    if thinking_text:
+        payload["thinking_text"] = thinking_text
 
     try:
         response = await _run(
@@ -119,4 +122,3 @@ async def update_session_title(session_id: str, title: str) -> None:
         lambda: supabase_client.table("chat_sessions").update({"title": title}).eq("id", session_id).execute(),
         "Update chat session title",
     )
-

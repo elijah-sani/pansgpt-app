@@ -4,7 +4,7 @@ import os
 # Add backend directory to sys.path so we can import routers.shared
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from routers.shared import get_holdback_length, _generate_retrieval_progress_update
+from routers.shared import get_holdback_length, _generate_retrieval_progress_update, _clean_generated_title, _is_generic_title
 
 def test_get_holdback_length_partial_tags():
     # Suffix matches target tag prefix
@@ -63,7 +63,41 @@ def test_generate_retrieval_progress_update():
     # Empty citations, default fallback
     assert _generate_retrieval_progress_update([], {}) == "I checked the available materials and will use them to prepare the response."
 
+def test_clean_generated_title():
+    # Tag-free input
+    assert _clean_generated_title("Simple Title") == "Simple Title"
+    assert _clean_generated_title('  "Simple Title"  ') == "Simple Title"
+    
+    # Completed thought block tag
+    assert _clean_generated_title("<thought>some reasoning here</thought> Real Title") == "Real Title"
+    assert _clean_generated_title("<think>some reasoning here</think> Real Title") == "Real Title"
+    
+    # Case insensitivity
+    assert _clean_generated_title("<THOUGHT>some reasoning</THOUGHT> Real Title") == "Real Title"
+    
+    # Unclosed tag (cut off)
+    assert _clean_generated_title("<thought>some reasoning that never closes") == ""
+    assert _clean_generated_title("<think>some reasoning that never closes") == ""
+    assert _clean_generated_title("<thought>reasoning</thought> Real Title <think>unclosed") == "Real Title"
+
+def test_is_generic_title():
+    # Generic titles
+    assert _is_generic_title("New Chat") is True
+    assert _is_generic_title("Chat") is True
+    assert _is_generic_title("discussion") is True
+    assert _is_generic_title("help") is True
+    assert _is_generic_title("study help") is True
+    
+    # Non-generic specific concepts
+    assert _is_generic_title("Streptomyces erythreus") is False
+    assert _is_generic_title("Eicosanoids") is False
+    assert _is_generic_title("Pharmacokinetics") is False
+    assert _is_generic_title("Aspirin mechanism") is False
+    assert _is_generic_title("PCH 412 lecture") is False
+
 if __name__ == "__main__":
     test_get_holdback_length_partial_tags()
     test_generate_retrieval_progress_update()
+    test_clean_generated_title()
+    test_is_generic_title()
     print("All tests passed successfully!")

@@ -119,7 +119,7 @@ export default function ChatInput({
 
   return (
     <div
-      className={`relative w-full ${variant === 'welcome' ? 'max-w-3xl px-0' : 'max-w-4xl px-4'} mx-auto ${compactSpacing ? 'pb-0' : 'pb-6'}`}
+      className={`relative w-full ${variant === 'welcome' ? 'max-w-3xl px-0' : 'max-w-[800px] px-4'} mx-auto ${compactSpacing ? 'pb-0' : 'pb-6'}`}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -249,10 +249,11 @@ export default function ChatInput({
               </div>
             )} */}
           </div>
-          <div className="flex items-center gap-1">
-            {!isLoading && onThinkingModeChange && (
+          <div className="flex items-center gap-3">
+            {/* FIX: removed !isLoading guard — toggle stays visible while AI is responding */}
+            {/* onThinkingModeChange && (
               <ThinkingModeToggle thinkingMode={thinkingMode} onChange={onThinkingModeChange} />
-            )}
+            ) */}
             <div className="flex items-center gap-2">
               {isLoading ? (
               <div className="relative">

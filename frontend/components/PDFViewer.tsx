@@ -46,6 +46,15 @@ const Page = dynamic(() => loadReactPdf().then((mod) => mod.Page), {
     ssr: false,
 });
 
+type MaterialStatus = 'active' | 'archived';
+
+function formatSemester(value?: string | null): string {
+    const raw = String(value || '').trim().toLowerCase();
+    if (['first', 'first semester', '1st', '1st semester'].includes(raw)) return 'First Semester';
+    if (['second', 'second semester', '2nd', '2nd semester'].includes(raw)) return 'Second Semester';
+    return '';
+}
+
 interface PDFViewerProps {
     fileId: string;
     fileSize?: string;
@@ -191,8 +200,9 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     }, [isOffline]);
 
     // Fetch Metadata — declared early so it can be used in effects below
-    const [meta, setMeta] = useState<{ topic?: string; lecturer?: string; filename: string; documentId?: string }>({ filename: "Document" });
+    const [meta, setMeta] = useState<{ topic?: string; lecturer?: string; filename: string; documentId?: string; materialStatus: MaterialStatus; academicSession?: string; semester?: string }>({ filename: "Document", materialStatus: "active" });
     const resolvedDocumentId = meta.documentId ?? fileId;
+    const isArchivedMaterial = meta.materialStatus === 'archived';
     const [showMoreMenu, setShowMoreMenu] = useState(false);
 
     // Eagerly fetch notes in the background so the panel opens instantly
@@ -976,6 +986,9 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                     topic: data.topic,
                     lecturer: data.lecturer_name,
                     documentId: data.id,
+                    materialStatus: data.material_status === 'archived' ? 'archived' : 'active',
+                    academicSession: data.academic_session,
+                    semester: data.semester,
                 });
             }).catch(err => console.error("Metadata Fetch Error:", err)),
         ]);
@@ -1103,6 +1116,10 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
     const handleAIRequest = async (mode: string) => {
         if (isLoading) return; // Prevent new requests while generating
+        if (isArchivedMaterial) {
+            toast.info('AI study chat is only available for current materials for now.');
+            return;
+        }
         const textToProcess = selectionMenu?.text || selectedText;
         if (!textToProcess) return;
 
@@ -1323,6 +1340,10 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     };
 
     const sendMessage = async (text: string, attachments: string[] = [], systemInstruction?: string, isRetry: boolean = false) => {
+        if (isArchivedMaterial) {
+            toast.info('AI study chat is only available for current materials for now.');
+            return;
+        }
         // Reset stream buffer and early-stop flag so stale state never bleeds into next send
         streamFullTextRef.current = '';
         wasEarlyStopRef.current = false;
@@ -1732,6 +1753,10 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     };
 
     const handleMenuAddToInput = (image: string) => {
+        if (isArchivedMaterial) {
+            toast.info('AI study chat is only available for current materials for now.');
+            return;
+        }
         // 1. Open Sidebar
         if (window.innerWidth < 768) setActiveTab('chat');
         else setIsSidebarOpen(true);
@@ -2146,6 +2171,25 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
     const renderChatUI = (isMobile = false) => (
         <>
+            {isArchivedMaterial ? (
+                <div className="flex h-full flex-col bg-background">
+                    <div className="border-b border-border px-5 py-4">
+                        <p className="text-sm font-semibold text-foreground">Past material</p>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                            AI study chat is only available for current materials for now.
+                        </p>
+                    </div>
+                    <div className="flex flex-1 items-center justify-center px-6 text-center">
+                        <div className="max-w-xs rounded-xl border border-border bg-card px-5 py-6">
+                            <BookOpen className="mx-auto mb-3 h-6 w-6 text-muted-foreground" />
+                            <p className="text-sm font-medium text-foreground">You can keep reading this material.</p>
+                            <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                                PANSGPT will not use archived documents for study answers by default.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            ) : (
             <ChatInterface
             messages={chatHistory}
             isLoading={isLoading}
@@ -2258,7 +2302,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                     setIsLoading(false);
                 }
             }}
-        />
+            />
+            )}
         </>
     );
 
@@ -2345,8 +2390,17 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                             </button>
                             <div className="h-6 w-px bg-border" />
                             <div className="flex flex-col justify-center min-w-0">
-                                <h1 className="text-sm font-semibold text-foreground leading-tight truncate max-w-sm">{meta.topic || meta.filename}</h1>
-                                {meta.lecturer && <p className="text-xs text-muted-foreground truncate max-w-sm">{meta.lecturer}</p>}
+                                <div className="flex min-w-0 items-center gap-2">
+                                    <h1 className="truncate text-sm font-semibold leading-tight text-foreground max-w-sm">{meta.topic || meta.filename}</h1>
+                                    {isArchivedMaterial && (
+                                        <span className="shrink-0 rounded-full border border-slate-500/20 bg-slate-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                                            Past
+                                        </span>
+                                    )}
+                                </div>
+                                <p className="truncate text-xs text-muted-foreground max-w-sm">
+                                    {[meta.lecturer, meta.academicSession, formatSemester(meta.semester)].filter(Boolean).join(' • ')}
+                                </p>
                             </div>
                         </div>
 
@@ -2431,6 +2485,12 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                     >
                                         Cancel
                                     </button>
+                                </div>
+                            )}
+
+                            {isArchivedMaterial && (
+                                <div className="sticky top-0 z-20 border-b border-border bg-card/95 px-4 py-3 text-center text-xs font-medium text-muted-foreground backdrop-blur md:top-0">
+                                    This is a past material. You can read it, but PANSGPT will not use it for AI study answers by default.
                                 </div>
                             )}
 
@@ -2596,7 +2656,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                                 <Copy className="w-4 h-4" />
                                             </button>
 
-                                            <div className="w-px h-4 bg-zinc-700 mx-1" />
+                                            {/* COMMENTED OUT: Add to notes divider + button — re-enable when ready */}
+                                            {/* <div className="w-px h-4 bg-zinc-700 mx-1" />
 
                                             <button
                                                 onClick={() => {
@@ -2616,7 +2677,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                                 <span className="absolute -top-9 left-1/2 -translate-x-1/2 px-2 py-1 bg-black text-xs text-white rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none shadow-lg border border-zinc-800">
                                                     Add to notes
                                                 </span>
-                                            </button>
+                                            </button> */}
 
                                             <div className="w-px h-4 bg-zinc-700 mx-1" />
 
@@ -2886,6 +2947,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                         <Scissors className="w-4 h-4" />
                                         {isSnippingMode ? 'Cancel' : 'Snip'}
                                     </button>
+                                    {/* COMMENTED OUT: Notes feature hidden
                                     <div className="w-px h-5 bg-border mx-0.5" />
                                     <button
                                         onClick={() => {
@@ -2903,6 +2965,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                             <span className="ml-0.5 text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">{notes.length}</span>
                                         )}
                                     </button>
+                                    */}
                                 </div>
                             </div>
                             </>

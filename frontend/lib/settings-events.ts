@@ -1,4 +1,20 @@
-export type ChatTextSize = 'small' | 'medium' | 'large';
+export type ChatTextSize = 'small' | 'medium' | 'large' | 'xl';
+
+export const CHAT_TEXT_SIZE_STEPS: ChatTextSize[] = ['small', 'medium', 'large', 'xl'];
+
+export const CHAT_TEXT_SIZE_LABELS: Record<ChatTextSize, string> = {
+  small: 'Small',
+  medium: 'Medium',
+  large: 'Large',
+  xl: 'Extra Large',
+};
+
+export const CHAT_TEXT_SIZE_PIXELS: Record<ChatTextSize, string> = {
+  small: '14px',
+  medium: '15px',
+  large: '17px',
+  xl: '19px',
+};
 
 export const WEB_SEARCH_DEFAULT_KEY = 'pansgpt-web-search-enabled';
 export const CHAT_TEXT_SIZE_KEY = 'pansgpt-chat-text-size';

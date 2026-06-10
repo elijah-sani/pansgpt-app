@@ -18,12 +18,16 @@ interface ChatSessionContextType {
     loadSession: (id: string, limit?: number) => Promise<any[]>;
     loadSessionFull: (id: string) => Promise<any[]>;
     clearHistory: () => void;
+    pendingPath: string | null;
+    setPendingPath: (path: string | null) => void;
+    updateSessionTitle: (sessionId: string, newTitle: string) => void;
 }
 
 const ChatSessionContext = createContext<ChatSessionContextType | null>(null);
 
 export function ChatSessionProvider({ children }: { children: ReactNode }) {
     const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+    const [pendingPath, setPendingPath] = useState<string | null>(null);
     const chatHistory = useChatHistory();
 
     useEffect(() => {
@@ -54,6 +58,8 @@ export function ChatSessionProvider({ children }: { children: ReactNode }) {
             ...chatHistory,
             activeSessionId,
             setActiveSessionId,
+            pendingPath,
+            setPendingPath,
         }}>
             {children}
         </ChatSessionContext.Provider>

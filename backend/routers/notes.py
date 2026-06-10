@@ -119,7 +119,7 @@ async def _fix_typos(text: str) -> str:
 
         response = await asyncio.wait_for(
             llm_engine.google_client.chat.completions.create(
-                model="gemma-4-26b-it",
+                model=llm_engine.TEXT_SECONDARY,
                 messages=[
                     {
                         "role": "user",

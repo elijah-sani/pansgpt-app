@@ -5,11 +5,14 @@ from typing import Any, AsyncIterator, Optional
 
 logger = logging.getLogger("PansGPT")
 
+OPENROUTER_FALLBACK_MAX_TOKENS = 1024
+
 TEXT_PRIMARY = "gemma-4-31b-it"           # Google AI Studio
-TEXT_SECONDARY = "gemma-4-26b-it"         # Google AI Studio fallback
+TEXT_SECONDARY = "gemma-4-26b-a4b-it"         # Google AI Studio fallback
 TEXT_TERTIARY = "qwen/qwen3-vl-235b-a22b-thinking"  # OpenRouter last resort
 # Compatibility alias for callers still referencing TEXT_FALLBACK.
-TEXT_FALLBACK = TEXT_PRIMARY
+TEXT_FALLBACK = TEXT_SECONDARY
+TEXT_FAST = TEXT_SECONDARY                  # Smaller and faster model for quick tasks (e.g. titles)
 
 VISION_PRIMARY = "gemma-4-31b-it"           # Google AI Studio vision primary
 VISION_FALLBACK = "qwen/qwen3-vl-235b-a22b-thinking"  # OpenRouter vision fallback
@@ -45,7 +48,7 @@ def initialize_clients() -> None:
                 api_key=gemini_api_key,
                 base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
                 max_retries=0,
-                timeout=45.0,
+                timeout=90.0,
             )
             logger.info("[INFO] Google AI Studio Client Initialized")
         else:
@@ -67,12 +70,14 @@ async def generate_completion_with_failover(
     has_images: bool = False,
     stream: bool = False,
     force_google: bool = False,
+    requested_model: Optional[str] = None,
 ) -> Optional[Any]:
     if force_google:
         if google_client is None:
             raise RuntimeError("Google fallback client not initialized.")
         forced_model = VISION_FALLBACK if has_images else TEXT_PRIMARY
         logger.info(f"[INFO] Forcing generation with Google model: {forced_model}")
+        logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "FORCE_GOOGLE", forced_model)
         return await google_client.chat.completions.create(
             model=forced_model,
             messages=messages,
@@ -83,11 +88,12 @@ async def generate_completion_with_failover(
 
     # --- Vision path (unchanged logic, just updated model names) ---
     if has_images:
-        # Try OpenRouter vision primary first
+        # Try Google vision primary first
         try:
-            if openrouter_client is None:
-                raise RuntimeError("OpenRouter client not initialized")
-            return await openrouter_client.chat.completions.create(
+            if google_client is None:
+                raise RuntimeError("Google fallback client not initialized")
+            logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "VISION_PRIMARY", VISION_PRIMARY)
+            return await google_client.chat.completions.create(
                 model=VISION_PRIMARY,
                 messages=messages,
                 temperature=temperature,
@@ -95,12 +101,13 @@ async def generate_completion_with_failover(
                 stream=stream,
             )
         except Exception as exc:
-            logger.warning(f"Vision primary failed ({VISION_PRIMARY}), falling back to Google: {exc}")
+            logger.warning(f"Vision primary failed ({VISION_PRIMARY}), falling back to OpenRouter: {exc}")
 
-        # Fallback to Google for vision
-        if google_client is None:
-            raise RuntimeError("Google fallback client not initialized.")
-        return await google_client.chat.completions.create(
+        # Fallback to OpenRouter for vision
+        if openrouter_client is None:
+            raise RuntimeError("OpenRouter client not initialized.")
+        logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "VISION_PRIMARY", VISION_FALLBACK)
+        return await openrouter_client.chat.completions.create(
             model=VISION_FALLBACK,
             messages=messages,
             temperature=temperature,
@@ -108,53 +115,53 @@ async def generate_completion_with_failover(
             stream=stream,
         )
 
-    # --- Text path: Google 27B -> Google 12B -> OpenRouter Qwen ---
+    # --- Text path: Gemma 27B <-> Gemma 12B -> OpenRouter Qwen ---
+    if requested_model == "TEXT_SECONDARY":
+        model_order = [
+            ("TEXT_SECONDARY", TEXT_SECONDARY),
+            ("TEXT_PRIMARY", TEXT_PRIMARY),
+            ("TEXT_TERTIARY", TEXT_TERTIARY)
+        ]
+    else:
+        model_order = [
+            ("TEXT_PRIMARY", TEXT_PRIMARY),
+            ("TEXT_SECONDARY", TEXT_SECONDARY),
+            ("TEXT_TERTIARY", TEXT_TERTIARY)
+        ]
 
-    # Step 1: Try Google Gemma 3 27B
-    if google_client is not None:
-        try:
-            logger.info(f"Attempting text generation with primary: {TEXT_PRIMARY}")
-            return await google_client.chat.completions.create(
-                model=TEXT_PRIMARY,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stream=stream,
-            )
-        except Exception as exc:
-            logger.warning(f"Primary model failed ({TEXT_PRIMARY}), trying secondary: {exc}")
+    for model_alias, model_name in model_order:
+        if model_name == TEXT_TERTIARY:
+            if openrouter_client is None:
+                logger.error("All models failed and OpenRouter client is not initialized.")
+                return None
+            try:
+                fallback_max_tokens = min(max_tokens, OPENROUTER_FALLBACK_MAX_TOKENS)
+                logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "TEXT_PRIMARY", model_name)
+                return await openrouter_client.chat.completions.create(
+                    model=model_name,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=fallback_max_tokens,
+                    stream=stream,
+                )
+            except Exception as exc:
+                logger.error(f"All models failed. Last resort ({TEXT_TERTIARY}) error: {exc}")
+                raise exc
+        else:
+            if google_client is not None:
+                try:
+                    logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "TEXT_PRIMARY", model_name)
+                    return await google_client.chat.completions.create(
+                        model=model_name,
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        stream=stream,
+                    )
+                except Exception as exc:
+                    logger.warning(f"Model {model_alias} failed ({model_name}), trying next: {exc}")
 
-    # Step 2: Try Google Gemma 3 12B
-    if google_client is not None:
-        try:
-            logger.info(f"Attempting text generation with secondary: {TEXT_SECONDARY}")
-            return await google_client.chat.completions.create(
-                model=TEXT_SECONDARY,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stream=stream,
-            )
-        except Exception as exc:
-            logger.warning(f"Secondary model failed ({TEXT_SECONDARY}), trying tertiary: {exc}")
-
-    # Step 3: Last resort -> OpenRouter Qwen
-    if openrouter_client is None:
-        logger.error("All models failed and OpenRouter client is not initialized.")
-        return None
-
-    try:
-        logger.warning(f"Falling back to last resort: {TEXT_TERTIARY}")
-        return await openrouter_client.chat.completions.create(
-            model=TEXT_TERTIARY,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=stream,
-        )
-    except Exception as exc:
-        logger.error(f"All models failed. Last resort ({TEXT_TERTIARY}) error: {exc}")
-        raise exc
+    return None
 
 
 async def generate_dual_cloud_stream(
@@ -162,6 +169,7 @@ async def generate_dual_cloud_stream(
     has_images: bool = False,
     temperature: float = 0.7,
     max_tokens: int = 2048,
+    requested_model: Optional[str] = None,
 ) -> AsyncIterator[Any]:
     completion_stream = await generate_completion_with_failover(
         messages=messages,
@@ -169,6 +177,7 @@ async def generate_dual_cloud_stream(
         max_tokens=max_tokens,
         has_images=has_images,
         stream=True,
+        requested_model=requested_model,
     )
     if completion_stream is None:
         return

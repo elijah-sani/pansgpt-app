@@ -55,26 +55,16 @@ export default function MessageBubble({
     const [copied, setCopied] = useState(false);
     const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
     const [reasoningExpanded, setReasoningExpanded] = useState(false);
-    const [thinkingDuration, setThinkingDuration] = useState<number | null>(null);
 
-    // Track thinking duration during active streaming
+    // Auto-expand the panel as soon as thinking starts
     useEffect(() => {
         if (isThinkingStreaming) {
-            const startTime = Date.now();
-            setThinkingDuration(0);
-            const timer = setInterval(() => {
-                setThinkingDuration(Math.round((Date.now() - startTime) / 1000));
-            }, 1000);
-            return () => clearInterval(timer);
+            setReasoningExpanded(true);
         }
     }, [isThinkingStreaming]);
 
-    // Auto-expand while streaming, auto-collapse when thinking_done fires
-    useEffect(() => {
-        setReasoningExpanded(isThinkingStreaming);
-    }, [isThinkingStreaming]);
-
     const reasoningText = thinkingText || message.thinking_text || '';
+    // Show the thinking toggle as soon as the AI is in thinking mode (even before text arrives)
     const hasReasoning = isThinkingStreaming || Boolean(thinkingText) || Boolean(message.thinking_text);
     const [currentRating, setCurrentRating] = useState<'up' | 'down'>('up');
     const [showToast, setShowToast] = useState(false);
@@ -93,7 +83,7 @@ export default function MessageBubble({
             retrieving_context: 'Retrieving relevant content...',
             thinking: 'Thinking...',
             preparing_response: 'Preparing response...',
-        }[message.status ?? ''] ?? 'Thinking...'),
+        }[message.status ?? ''] ?? message.status ?? 'Thinking...'),
         [message.status]
     );
 
@@ -247,7 +237,7 @@ export default function MessageBubble({
                             isStreaming={isThinkingStreaming}
                             expanded={reasoningExpanded}
                             onToggle={() => setReasoningExpanded((p) => !p)}
-                            thinkingDuration={thinkingDuration}
+                            status={statusLabel}
                         />
                     )}
                 </div>

@@ -165,6 +165,7 @@ async def _summarize_previous_session(user_id: str, exclude_session_id: str):
         needs_title = _is_generic_title(prev_title) or prev_title == "New Chat" or not prev_title
 
         prompt = (
+            "/no_think\n"
             "You are summarizing a pharmacy tutoring conversation between a student and an AI tutor.\n\n"
             f"Conversation:\n{conversation_text}\n\n"
             "Based on this conversation, provide:\n"
@@ -192,7 +193,7 @@ async def _summarize_previous_session(user_id: str, exclude_session_id: str):
                 model=llm_engine.TEXT_SECONDARY,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
-                max_tokens=300,
+                max_tokens=768,
                 stream=False,
             ),
             "Background session summarization",

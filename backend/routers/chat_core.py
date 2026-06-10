@@ -59,6 +59,7 @@ from .shared import (
     verify_api_key,
     stream_pipeline_plan,
     STREAMING_PLANNER_DEFAULTS,
+    FAST_MODE_DEFAULTS,
     _generate_retrieval_progress_update,
 )
 from slowapi import Limiter
@@ -506,17 +507,25 @@ async def _build_streaming_response(
     citations: Optional[list] = None,
     user_id: Optional[str] = None,
     thinking_mode: bool = True,
+    start_time: float = 0.0,
+    selected_model: str = "unknown",
+    title_task: Optional[asyncio.Task] = None,
 ) -> StreamingResponse:
     """
     Stream assistant deltas via SSE and persist full assistant response to DB after completion.
     Detects client disconnect via request.is_disconnected() and appends STOPPED_ASSISTANT_NOTE.
     """
     async def stream_generator():
+        import time
+        nonlocal selected_model
+        pipeline_params = {}
         full_text = ""
         saved_assistant_message_id = None
         emitted_graceful = False
         disconnected = False
         cancelled = False
+        # track first visible delta
+        first_delta_logged = False
         # Accumulates the safe planner <public_thought> narrative that was
         # displayed in the Thinking panel.  This — and only this — is saved
         # to chat_messages.thinking_text so history reload shows the same text.
@@ -544,6 +553,16 @@ async def _build_streaming_response(
                     if not isinstance(event, dict):
                         continue
 
+                    model_val = event.get("selected_model")
+                    if model_val:
+                        selected_model = model_val
+                        continue
+
+                    params = event.get("pipeline_params")
+                    if params:
+                        pipeline_params = params
+                        continue
+
                     status = event.get("status")
                     if isinstance(status, str) and status:
                         yield f"data: {json.dumps({'status': status})}\n\n"
@@ -561,6 +580,16 @@ async def _build_streaming_response(
                     if delta:
                         visible_chunk, thinking_chunk = parser.feed(delta)
                         if visible_chunk:
+                            if not first_delta_logged and start_time > 0.0:
+                                first_delta_logged = True
+                                elapsed_ms = (time.perf_counter() - start_time) * 1000
+                                logger.info(
+                                    "CHAT LATENCY mode=%s model=%s stage=%s elapsed_ms=%.1f",
+                                    "thinking" if thinking_mode else "fast",
+                                    selected_model,
+                                    "first_visible_delta_emitted",
+                                    elapsed_ms,
+                                )
                             full_text += visible_chunk
                             yield f"data: {json.dumps({'delta': visible_chunk})}\n\n"
                         # thinking_chunk: native model reasoning extracted by the parser.
@@ -647,6 +676,13 @@ async def _build_streaming_response(
                             _summarize_previous_session(user_id, session_id)
                         )
 
+            new_title = None
+            if title_task:
+                try:
+                    new_title = await asyncio.wait_for(asyncio.shield(title_task), timeout=4.5)
+                except Exception as title_err:
+                    logger.warning(f"Could not retrieve generated title for SSE: {title_err}")
+
             final_event = {
                 "done": True,
                 "message_id": saved_assistant_message_id,
@@ -654,6 +690,8 @@ async def _build_streaming_response(
                 "citations": citations or [],
                 "stopped": bool(disconnected or cancelled),
             }
+            if new_title:
+                final_event["new_title"] = new_title
             if save_failed:
                 final_event["save_failed"] = True
                 final_event["full_text"] = text_to_save
@@ -663,6 +701,30 @@ async def _build_streaming_response(
             except Exception as sse_final_err:
                 # Expected when the client is already gone; message is still persisted above.
                 logger.info(f"Could not emit terminal SSE event: {sse_final_err}")
+
+            if start_time > 0.0:
+                elapsed_ms = (time.perf_counter() - start_time) * 1000
+                logger.info(
+                    "CHAT LATENCY mode=%s model=%s stage=%s elapsed_ms=%.1f",
+                    "thinking" if thinking_mode else "fast",
+                    selected_model,
+                    "stream_complete",
+                    elapsed_ms,
+                )
+                logger.info(
+                    "CHAT LATENCY mode=%s model=%s stage=%s elapsed_ms=%.1f thinking_mode=%s selected_model=%s rag_chunk_count=%s fetch_timetable=%s fetch_faculty=%s run_web_search=%s enable_deep_final_reasoning=%s",
+                    "thinking" if thinking_mode else "fast",
+                    selected_model,
+                    "total_request_duration",
+                    elapsed_ms,
+                    thinking_mode,
+                    selected_model,
+                    pipeline_params.get("rag_chunk_count", "unknown"),
+                    pipeline_params.get("fetch_timetable", "unknown"),
+                    pipeline_params.get("fetch_faculty", "unknown"),
+                    pipeline_params.get("run_web_search", "unknown"),
+                    pipeline_params.get("enable_deep_final_reasoning", "unknown"),
+                )
 
     return StreamingResponse(
         stream_generator(),
@@ -774,29 +836,42 @@ async def _generate_and_save_title(session_id: str, user_text: str, current_user
             logger.warning(f"Could not build title conversation excerpt for session {session_id}: {excerpt_err}")
 
         title_prompt = (
-            "You generate high-quality chat session titles.\n"
-            "Write ONE concise title that reflects the actual conversation topic.\n"
-            "Requirements:\n"
-            "- 3 to 8 words.\n"
-            "- Specific and concrete, not generic.\n"
-            "- Include the main subject, concept, or entity discussed.\n"
-            "- Do not use filler phrases like 'Chat', 'Discussion', 'Help', or 'Question'.\n"
-            "- If the user's text is purely small talk or a generic greeting (e.g., 'hello', 'hi', 'how are you'), do NOT invent a topic. You must strictly return the exact phrase 'Small Talk'.\n"
-            "- Return only the title text.\n\n"
-            f"Conversation excerpt:\n{conversation_excerpt}\n\n"
-            f"Latest user message:\n{(user_text or '').strip()}"
+            "/no_think\n"
+            "Generate a chat session title based on the conversation below.\n\n"
+            "Rules:\n"
+            "- Return ONLY the title — no explanation, no punctuation at the end, no quotes.\n"
+            "- 3 to 7 words maximum.\n"
+            "- Be specific: name the actual topic, concept, drug, disease, or subject discussed.\n"
+            "- Never use vague words like 'Chat', 'Question', 'Discussion', 'Help', 'Query', or 'Inquiry'.\n"
+            "- If the conversation is purely casual greeting/small talk with no real topic, return exactly: Small Talk\n\n"
+            f"Conversation:\n{conversation_excerpt}\n\n"
+            f"Latest message:\n{(user_text or '').strip()}"
         )
 
-        title_completion = await _call_background_llm_with_retry(
-            lambda: llm_engine.google_client.chat.completions.create(
-                model=llm_engine.TEXT_FALLBACK,
-                messages=[{"role": "user", "content": title_prompt}],
-                temperature=0.7,
-                max_tokens=100,
-                stream=False
-            ),
-            "Background title generation",
-        )
+        title_completion = None
+        try:
+            title_completion = await _call_background_llm_with_retry(
+                lambda: llm_engine.google_client.chat.completions.create(
+                    model=llm_engine.TEXT_FAST,
+                    messages=[{"role": "user", "content": title_prompt}],
+                    temperature=0.7,
+                    max_tokens=512,
+                    stream=False
+                ),
+                "Background title generation (fast)",
+            )
+        except Exception as fast_err:
+            logger.warning(f"Fast title generation with {llm_engine.TEXT_FAST} failed: {fast_err}. Falling back to fallback model.")
+            title_completion = await _call_background_llm_with_retry(
+                lambda: llm_engine.google_client.chat.completions.create(
+                    model=llm_engine.TEXT_FALLBACK,
+                    messages=[{"role": "user", "content": title_prompt}],
+                    temperature=0.7,
+                    max_tokens=512,
+                    stream=False
+                ),
+                "Background title generation (fallback)",
+            )
 
         if title_completion is None:
             raise RuntimeError("Title generation failed on Google model")
@@ -809,36 +884,53 @@ async def _generate_and_save_title(session_id: str, user_text: str, current_user
                 "Must include at least one concrete keyword from the conversation "
                 "(for example: drug/class, disease, mechanism, course code, or named concept)."
             )
-            retry_completion = await _call_background_llm_with_retry(
-                lambda: llm_engine.google_client.chat.completions.create(
-                    model=llm_engine.TEXT_FALLBACK,
-                    messages=[{"role": "user", "content": stricter_prompt}],
-                    temperature=0.1,
-                    max_tokens=24,
-                    stream=False
-                ),
-                "Background title regeneration",
-                max_attempts=2,
-            )
+            retry_completion = None
+            try:
+                retry_completion = await _call_background_llm_with_retry(
+                    lambda: llm_engine.google_client.chat.completions.create(
+                        model=llm_engine.TEXT_FAST,
+                        messages=[{"role": "user", "content": stricter_prompt}],
+                        temperature=0.1,
+                        max_tokens=512,
+                        stream=False
+                    ),
+                    "Background title regeneration (fast)",
+                    max_attempts=2,
+                )
+            except Exception as fast_retry_err:
+                logger.warning(f"Fast title regeneration with {llm_engine.TEXT_FAST} failed: {fast_retry_err}. Falling back to fallback model.")
+                retry_completion = await _call_background_llm_with_retry(
+                    lambda: llm_engine.google_client.chat.completions.create(
+                        model=llm_engine.TEXT_FALLBACK,
+                        messages=[{"role": "user", "content": stricter_prompt}],
+                        temperature=0.1,
+                        max_tokens=512,
+                        stream=False
+                    ),
+                    "Background title regeneration (fallback)",
+                    max_attempts=2,
+                )
             if retry_completion is not None:
                 regenerated = _clean_generated_title(retry_completion.choices[0].message.content)
                 if regenerated:
                     new_title = regenerated
 
         if not new_title:
-            new_title = (user_text or "").strip()[:30] + "..."
+            new_title = (user_text or "").strip()[:40]
 
         await chat_history.update_session_title(session_id, new_title)
         logger.info(
             f"AI Auto-renamed session {session_id} to '{new_title}' (via Google AI) "
             f"for user {getattr(current_user, 'id', 'unknown')}"
         )
+        return new_title
     except Exception as e:
         err_meta = _format_background_llm_error(e)
         if _is_transient_background_llm_error(e):
             logger.warning(f"Background title generation skipped for session {session_id}: {err_meta}")
         else:
             logger.error(f"Background title generation failed for session {session_id}: {err_meta}")
+        return None
 
 
 async def _get_recent_session_summaries(user_id: str, current_session_id: Optional[str], limit: int = 3) -> str:
@@ -892,6 +984,15 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
     AI Chat Endpoint (formerly /ask-ai).
     Modes: explain, example, memory, chat
     """
+    import time
+    start_time = time.perf_counter()
+    logger.info(
+        "CHAT LATENCY mode=%s model=%s stage=%s elapsed_ms=%.1f",
+        "thinking" if chat_request.thinking_mode else "fast",
+        "unknown",
+        "request_received",
+        0.0,
+    )
     restriction = await _get_chat_restriction_if_any(current_user)
     chat_request.text = sanitize_text(chat_request.text, CHAT_MAX)
     if restriction:
@@ -903,6 +1004,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
     if not llm_engine.has_available_client():
         raise HTTPException(status_code=503, detail="The AI service is temporarily unavailable. Please try again in a moment.")
     saved_user_message_id: Optional[str] = None
+    title_task = None
 
     (student_profile_text, student_level), cached_config = await asyncio.gather(
         _build_student_profile_text(current_user),
@@ -944,7 +1046,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
             )
 
         if request.session_id and (not current_title or "New Chat" in current_title or _is_generic_title(current_title)):
-            asyncio.create_task(_generate_and_save_title(request.session_id, request.text, current_user))
+            title_task = asyncio.create_task(_generate_and_save_title(request.session_id, request.text, current_user))
 
     logger.info(f"Chat Request: mode={request.mode}, text='{request.text[:30]}...', msgs={len(request.messages or [])}")
 
@@ -961,11 +1063,20 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
     citations: list[dict] = []
 
     async def event_stream():
+        import time
         web_search_text = ""
         web_search_limit_reached = False
 
         if request.thinking_mode:
             pipeline_params = STREAMING_PLANNER_DEFAULTS.copy()
+            planner_start = time.perf_counter()
+            logger.info(
+                "CHAT LATENCY mode=%s model=%s stage=%s elapsed_ms=%.1f",
+                "thinking",
+                "unknown",
+                "planner_start",
+                (planner_start - start_time) * 1000,
+            )
             async for planner_event in stream_pipeline_plan(
                 user_text=request.text,
                 student_profile_text=student_profile_text,
@@ -975,26 +1086,29 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                     yield {"thinking_update": planner_event["thinking_update"]}
                 if "pipeline_params" in planner_event:
                     pipeline_params = planner_event["pipeline_params"]
+            planner_complete = time.perf_counter()
+            logger.info(
+                "CHAT LATENCY mode=%s model=%s stage=%s elapsed_ms=%.1f",
+                "thinking",
+                "unknown",
+                "planner_complete",
+                (planner_complete - start_time) * 1000,
+            )
         else:
-            pipeline_params = STREAMING_PLANNER_DEFAULTS.copy()
+            pipeline_params = FAST_MODE_DEFAULTS.copy()
 
         rag_chunk_count = pipeline_params["rag_chunk_count"]
         should_web_search = pipeline_params["run_web_search"]
         should_timetable = pipeline_params["fetch_timetable"]
         should_faculty = pipeline_params["fetch_faculty"]
 
-        gather_tasks = [_get_recent_session_summaries(current_user.id, request.session_id)]
-        if should_faculty:
-            gather_tasks.append(get_cached_faculty_knowledge(student_level, current_user))
-        if should_timetable:
-            gather_tasks.append(get_cached_student_timetable(student_level, current_user))
-        gather_results = await asyncio.gather(*gather_tasks)
-        recent_summaries = gather_results[0]
-        faculty_info = gather_results[1] if should_faculty else ""
-        timetable_info = (
-            gather_results[2]
-            if should_faculty and should_timetable
-            else (gather_results[1] if should_timetable else "")
+        context_start = time.perf_counter()
+        logger.info(
+            "CHAT LATENCY mode=%s model=%s stage=%s elapsed_ms=%.1f",
+            "thinking" if request.thinking_mode else "fast",
+            "unknown",
+            "context_gathering_start",
+            (context_start - start_time) * 1000,
         )
 
         should_skip_rag = is_conversational_message(request.text)
@@ -1005,28 +1119,158 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
             if is_off_topic_for_document(request.text):
                 should_skip_rag = True
                 logger.info("Study mode: skipping RAG — off-topic general knowledge question.")
-        extracted_image_text = ""
-        rag_query = request.text
+
+        # Concurrently gather recent summaries, faculty info, timetable info, web search, and RAG retrieval
+        gather_tasks = {}
+        gather_tasks["summaries"] = _get_recent_session_summaries(current_user.id, request.session_id)
+        if should_faculty:
+            gather_tasks["faculty"] = get_cached_faculty_knowledge(student_level, current_user)
+        if should_timetable:
+            gather_tasks["timetable"] = get_cached_student_timetable(student_level, current_user)
 
         effective_web_search = request.web_search or (should_web_search and web_search_globally_enabled)
         if effective_web_search and request.text.strip():
-            yield {"status": "searching_web"}
-            ws_result = await search_web(
+            gather_tasks["web_search"] = search_web(
                 query=request.text,
                 user_id=current_user.id,
                 web_search_enabled=web_search_globally_enabled,
             )
+
+        run_rag_concurrently = (not should_skip_rag) and (not request.images) and (not request.thinking_mode)
+        if run_rag_concurrently:
+            if request.document_id:
+                gather_tasks["rag"] = get_relevant_context(
+                    request.text,
+                    request.document_id,
+                    None if student_level == "Unknown" else student_level,
+                    current_user=current_user,
+                    academic_session=request.academic_session,
+                    semester=request.semester,
+                    rag_match_count=rag_chunk_count,
+                )
+            else:
+                gather_tasks["rag"] = get_relevant_context(
+                    request.text,
+                    document_id=None,
+                    user_level=None if student_level == "Unknown" else student_level,
+                    current_user=current_user,
+                    academic_session=request.academic_session,
+                    semester=request.semester,
+                    rag_match_count=rag_chunk_count,
+                )
+
+        # Now run all concurrently!
+        task_keys = list(gather_tasks.keys())
+        task_futures = list(gather_tasks.values())
+        gather_results = await asyncio.gather(*task_futures, return_exceptions=True)
+
+        results_map = {}
+        for key, res in zip(task_keys, gather_results):
+            if isinstance(res, Exception):
+                # Re-raise controlled HTTPExceptions (e.g. university suspension gate) immediately.
+                # These must never be swallowed and turned into silent empty results.
+                if isinstance(res, HTTPException):
+                    raise res
+                logger.error(f"Error in concurrent task '{key}': {res}")
+                results_map[key] = None
+            else:
+                results_map[key] = res
+
+        recent_summaries = results_map.get("summaries") or ""
+        faculty_info = results_map.get("faculty") or ""
+        timetable_info = results_map.get("timetable") or ""
+        if effective_web_search and request.text.strip():
+            ws_result = results_map.get("web_search")
             if ws_result == "__LIMIT_REACHED__":
                 web_search_limit_reached = True
             else:
-                web_search_text = ws_result
+                web_search_text = ws_result or ""
 
         context_text = ""
         retrieved_citations: list[dict] = []
-        if should_skip_rag:
-            logger.info("Skipping RAG retrieval for conversational message.")
+        extracted_image_text = ""
+
+        context_quality = "good"
+
+        if request.thinking_mode:
+            # ----------------------------------------------------
+            # Sequential Agentic RAG Path (Thinking Mode Only)
+            # ----------------------------------------------------
+            if not should_skip_rag:
+                if request.images:
+                    yield {"status": "reading_image"}
+                    try:
+                        extraction_messages = [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": "Extract and summarize the key text, topics, and concepts visible in this image. Be concise and focus on subject matter relevant to pharmacy education.",
+                                    },
+                                    *[
+                                        {
+                                            "type": "image_url",
+                                            "image_url": {"url": f"data:image/jpeg;base64,{img}"},
+                                        }
+                                        for img in request.images
+                                    ],
+                                ],
+                            }
+                        ]
+                        extraction_response = await llm_engine.generate_completion_with_failover(
+                            messages=extraction_messages,
+                            temperature=0.2,
+                            max_tokens=300,
+                            has_images=True,
+                            stream=False,
+                        )
+                        if extraction_response is not None:
+                            extracted_content = extraction_response.choices[0].message.content
+                            if isinstance(extracted_content, list):
+                                extracted_image_text = " ".join(
+                                    part.get("text", "") for part in extracted_content if isinstance(part, dict)
+                                ).strip()
+                            else:
+                                extracted_image_text = str(extracted_content).strip()
+                    except Exception as exc:
+                        logger.warning(f"Vision RAG enrichment failed, falling back to text-only query: {exc}")
+
+                rag_query = f"{request.text}\n\n{extracted_image_text}" if extracted_image_text else request.text
+                search_queries = pipeline_params.get("search_queries", [])
+                if not search_queries:
+                    search_queries = [{"query": rag_query, "status": "Reviewing the relevant course material..."}]
+
+                from .shared import agentic_rag_loop
+                async for event in agentic_rag_loop(
+                    user_text=rag_query,
+                    document_id=request.document_id,
+                    student_level=student_level,
+                    current_user=current_user,
+                    academic_session=request.academic_session,
+                    semester=request.semester,
+                    rag_match_count=rag_chunk_count,
+                    search_queries=search_queries,
+                    llm_engine=llm_engine,
+                ):
+                    if "status" in event:
+                        yield {"status": event["status"]}
+                    elif "final_result" in event:
+                        context_text, retrieved_citations, context_quality = event["final_result"]
+            else:
+                context_quality = "none"
+
         else:
-            if request.images:
+            # ----------------------------------------------------
+            # Fast Mode Path (Single-pass retrieval)
+            # ----------------------------------------------------
+            if run_rag_concurrently:
+                rag_res = results_map.get("rag")
+                if rag_res:
+                    context_text, retrieved_citations = rag_res
+                context_quality = "good" if context_text else "none"
+            elif not should_skip_rag and request.images:
+                # Sequential extraction and RAG fallback because we have images to process first
                 yield {"status": "reading_image"}
                 try:
                     extraction_messages = [
@@ -1065,34 +1309,44 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                 except Exception as exc:
                     logger.warning(f"Vision RAG enrichment failed, falling back to text-only query: {exc}")
 
-            rag_query = f"{request.text}\n\n{extracted_image_text}" if extracted_image_text else request.text
-            logger.info(f"Vision RAG query enriched: {rag_query[:100]}...")
-            yield {"status": "searching_curriculum"}
-            yield {"status": "retrieving_context"}
-            if request.document_id:
-                logger.info(f"RAG enabled for document: {request.document_id}")
-                context_text, retrieved_citations = await get_relevant_context(
-                    rag_query,
-                    request.document_id,
-                    None if student_level == "Unknown" else student_level,
-                    current_user=current_user,
-                    academic_session=request.academic_session,
-                    semester=request.semester,
-                    rag_match_count=rag_chunk_count,
-                )
+                rag_query = f"{request.text}\n\n{extracted_image_text}" if extracted_image_text else request.text
+                yield {"status": "searching_curriculum"}
+                yield {"status": "retrieving_context"}
+                if request.document_id:
+                    context_text, retrieved_citations = await get_relevant_context(
+                        rag_query,
+                        request.document_id,
+                        None if student_level == "Unknown" else student_level,
+                        current_user=current_user,
+                        academic_session=request.academic_session,
+                        semester=request.semester,
+                        rag_match_count=rag_chunk_count,
+                    )
+                else:
+                    context_text, retrieved_citations = await get_relevant_context(
+                        rag_query,
+                        document_id=None,
+                        user_level=None if student_level == "Unknown" else student_level,
+                        current_user=current_user,
+                        academic_session=request.academic_session,
+                        semester=request.semester,
+                        rag_match_count=rag_chunk_count,
+                    )
+                context_quality = "good" if context_text else "none"
             else:
-                logger.info(f"Global RAG enabled for user level: {student_level}")
-                context_text, retrieved_citations = await get_relevant_context(
-                    rag_query,
-                    document_id=None,
-                    user_level=None if student_level == "Unknown" else student_level,
-                    current_user=current_user,
-                    academic_session=request.academic_session,
-                    semester=request.semester,
-                    rag_match_count=rag_chunk_count,
-                )
+                context_quality = "none"
+
         citations.clear()
         citations.extend(retrieved_citations)
+
+        context_complete = time.perf_counter()
+        logger.info(
+            "CHAT LATENCY mode=%s model=%s stage=%s elapsed_ms=%.1f",
+            "thinking" if request.thinking_mode else "fast",
+            "unknown",
+            "context_gathering_complete",
+            (context_complete - start_time) * 1000,
+        )
 
         if request.thinking_mode:
             progress_update = _generate_retrieval_progress_update(citations, pipeline_params)
@@ -1138,10 +1392,20 @@ STUDY MODE — STRICT RULES (these override ALL other tone and greeting rules ab
 - Only elaborate if the student explicitly says "explain in detail" or "elaborate".
 """
 
+        # Select instruction based on context_quality
+        if context_quality == "none":
+            instructions_block = """INSTRUCTIONS:
+No relevant curriculum material was found. Answer honestly using general pharmaceutical knowledge. Do not imply that the answer came from the student's materials. Mention the absence of matching material only when it is useful for clarity. Do not cite documents. Tailor your explanation to their academic level."""
+        elif context_quality == "partial":
+            instructions_block = """INSTRUCTIONS:
+Only partial relevant curriculum material was found. Answer prioritizing the retrieved context below, but supplement with general knowledge where needed. Do not imply that the answer came from the student's materials unless retrieved context supports it. Do not cite sources, lecturers, course codes or page numbers inline in your response. Tailor your explanation to their academic level."""
+        else:
+            instructions_block = """INSTRUCTIONS:
+Answer the student's question prioritizing the retrieved context below. Tailor your explanation to their academic level. If the exact answer is not in the retrieved context, answer honestly using general knowledge, but do not imply that the answer came from the student's materials. Do not cite sources, lecturers, course codes or page numbers inline in your response."""
+
         if context_text:
             final_system_prompt += f"""
-INSTRUCTIONS:
-Answer the student's question prioritizing the retrieved context below. Tailor your explanation to their academic level. If the exact answer is NOT in the retrieved context, you must explicitly state: "This information is not directly covered in the material, but based on general knowledge..." and then proceed. Do not cite sources, lecturers, course codes or page numbers inline in your response.
+{instructions_block}
 FACULTY KNOWLEDGE PROTOCOL: You possess hidden knowledge about the student's specific curriculum and general faculty rules. When a user asks about their courses, lecturers, schedule, or faculty, you must scan this knowledge and extract ONLY the precise answer. Do NOT recite the entire curriculum or list unrelated courses unless explicitly asked to do so. Be concise, accurate, and conversational.
 TIMETABLE PROTOCOL: You possess the student's exact weekly class schedule under STUDENT WEEKLY TIMETABLE. When asked about classes, you MUST follow these absolute rules:
 1. NEVER guess, invent, or modify course codes, titles, or times.
@@ -1195,13 +1459,14 @@ Do not mention the limit in your response unless the user explicitly asks why we
 
         final_system_prompt += "\n\nIMPORTANT: Do NOT cite sources, lecturers, course codes, or page numbers inline in your response. Never write things like (Prof. X, PTE 411) or (Source: ...) in your answers. Sources are provided separately to the user."
 
-        # /no_think must be the very first token the model sees so Qwen3-family
-        # models skip their chain-of-thought.  Placing it in the system prompt
-        # keeps the user message and the saved DB record completely clean.
-        # It is intentionally added AFTER the system prompt is fully built so
-        # it always appears at position 0 of the content the LLM receives.
-        # NOTE: selected_model is not yet resolved at this point; we re-check
-        # inside the event_stream generator below where selected_model is set.
+        prompt_assembled = time.perf_counter()
+        logger.info(
+            "CHAT LATENCY mode=%s model=%s stage=%s elapsed_ms=%.1f",
+            "thinking" if request.thinking_mode else "fast",
+            "unknown",
+            "prompt_assembly_complete",
+            (prompt_assembled - start_time) * 1000,
+        )
 
         messages = []
         all_images = request.images or []
@@ -1232,6 +1497,27 @@ Do not mention the limit in your response unless the user explicitly asks why we
                 selected_model = llm_engine.VISION_PRIMARY
                 logger.info(f"Smart Router: Detected images, switching to {selected_model}")
                 yield {"status": "thinking"}
+
+                # Yield pipeline_params and selected_model for instrumentation capture
+                yield {"pipeline_params": pipeline_params}
+                yield {"selected_model": selected_model}
+
+                logger.info(
+                    "CHAT LATENCY mode=%s model=%s stage=%s elapsed_ms=%.1f",
+                    "thinking" if request.thinking_mode else "fast",
+                    selected_model,
+                    "selected_model",
+                    (time.perf_counter() - start_time) * 1000,
+                )
+
+                main_stream_start = time.perf_counter()
+                logger.info(
+                    "CHAT LATENCY mode=%s model=%s stage=%s elapsed_ms=%.1f",
+                    "thinking" if request.thinking_mode else "fast",
+                    selected_model,
+                    "main_model_stream_start",
+                    (main_stream_start - start_time) * 1000,
+                )
 
                 completion_stream = llm_engine.generate_dual_cloud_stream(
                     messages=messages,
@@ -1294,14 +1580,33 @@ Do not mention the limit in your response unless the user explicitly asks why we
                 logger.info(f"Smart Router: Found images in history, using {selected_model}")
                 is_vision_mode = True
             else:
-                selected_model = llm_engine.TEXT_PRIMARY
+                selected_model = llm_engine.TEXT_PRIMARY if request.thinking_mode else llm_engine.TEXT_SECONDARY
                 logger.info(f"Smart Router: Pure text detected, processing efficiently with {selected_model}")
                 is_vision_mode = False
+
+            # Yield pipeline_params and selected_model for instrumentation capture
+            yield {"pipeline_params": pipeline_params}
+            yield {"selected_model": selected_model}
+
+            logger.info(
+                "CHAT LATENCY mode=%s model=%s stage=%s elapsed_ms=%.1f",
+                "thinking" if request.thinking_mode else "fast",
+                selected_model,
+                "selected_model",
+                (time.perf_counter() - start_time) * 1000,
+            )
+
             yield {"status": "thinking"}
 
-            # Inject /no_think at the START of the system prompt so Qwen3-family
-            # models skip chain-of-thought without touching the user message.
-            if not request.thinking_mode and model_uses_thinking(selected_model):
+            # Adaptive final-answer reasoning prepending /no_think
+            if not request.thinking_mode:
+                prepend_no_think = True
+            elif not pipeline_params.get("enable_deep_final_reasoning", False):
+                prepend_no_think = True
+            else:
+                prepend_no_think = False
+
+            if prepend_no_think and model_uses_thinking(selected_model):
                 # Mutate the already-appended system message in the messages list
                 for msg in messages:
                     if msg["role"] == "system" and msg["content"] == final_system_prompt:
@@ -1312,11 +1617,21 @@ Do not mention the limit in your response unless the user explicitly asks why we
 
             messages = merge_system_into_user(messages)
 
+            main_stream_start = time.perf_counter()
+            logger.info(
+                "CHAT LATENCY mode=%s model=%s stage=%s elapsed_ms=%.1f",
+                "thinking" if request.thinking_mode else "fast",
+                selected_model,
+                "main_model_stream_start",
+                (main_stream_start - start_time) * 1000,
+            )
+
             completion_stream = llm_engine.generate_dual_cloud_stream(
                 messages=messages,
                 has_images=is_vision_mode,
                 temperature=temperature,
                 max_tokens=2048,
+                requested_model="TEXT_PRIMARY" if request.thinking_mode else "TEXT_SECONDARY",
             )
             yield {"status": "preparing_response"}
             async for event in _stream_completion_events(completion_stream):
@@ -1333,6 +1648,8 @@ Do not mention the limit in your response unless the user explicitly asks why we
         citations=citations,
         user_id=current_user.id,
         thinking_mode=request.thinking_mode,
+        start_time=start_time,
+        title_task=title_task,
     )
 
 # --- Save Partial (Stopped) Response ---
@@ -1647,17 +1964,18 @@ async def edit_message(
         remaining_msgs = remaining_res.data or []
         logger.info(f"Edit remaining_msgs sample: {[{k: v for k, v in m.items() if k in ('id', 'role', 'image_data', 'images')} for m in remaining_msgs]}")
 
+        (student_profile_text, student_level), cached_config = await asyncio.gather(
+            _build_student_profile_text(current_user),
+            get_cached_settings(),
+            return_exceptions=False,
+        )
         system_prompt = PHARMACY_SYSTEM_PROMPT
         temperature = 0.7
-        cached_config = await get_cached_settings()
         if cached_config:
             if cached_config.get("system_prompt"):
                 system_prompt = cached_config["system_prompt"]
             if cached_config.get("temperature") is not None:
                 temperature = float(cached_config["temperature"])
-
-        student_profile_text, student_level = await _build_student_profile_text(current_user)
-        recent_summaries = await _get_recent_session_summaries(current_user.id, payload.session_id)
         citations: list[dict] = []
         should_skip_rag = is_conversational_message(payload.new_text)
 
@@ -1677,69 +1995,100 @@ async def edit_message(
                     if "pipeline_params" in planner_event:
                         pipeline_params = planner_event["pipeline_params"]
             else:
-                pipeline_params = STREAMING_PLANNER_DEFAULTS.copy()
+                pipeline_params = FAST_MODE_DEFAULTS.copy()
 
             rag_chunk_count = pipeline_params["rag_chunk_count"]
             should_web_search = pipeline_params["run_web_search"]
             should_timetable = pipeline_params["fetch_timetable"]
             should_faculty = pipeline_params["fetch_faculty"]
 
-            gather_tasks = [_get_recent_session_summaries(current_user.id, payload.session_id)]
-            if should_faculty:
-                gather_tasks.append(get_cached_faculty_knowledge(student_level, current_user))
-            if should_timetable:
-                gather_tasks.append(get_cached_student_timetable(student_level, current_user))
-            gather_results = await asyncio.gather(*gather_tasks)
-            recent_summaries = gather_results[0]
-            faculty_info = gather_results[1] if should_faculty else ""
-            timetable_info = (
-                gather_results[2]
-                if should_faculty and should_timetable
-                else (gather_results[1] if should_timetable else "")
+            # Parse images from remaining_msgs to determine if we can run RAG concurrently
+            latest_user_with_images = next(
+                (
+                    msg for msg in reversed(remaining_msgs)
+                    if msg.get("role") == "user" and (msg.get("image_data") or msg.get("images"))
+                ),
+                None,
             )
+            has_images_for_rag = False
+            images = []
+            if latest_user_with_images:
+                image_data = latest_user_with_images.get("image_data")
+                images = latest_user_with_images.get("images") or []
+                if isinstance(image_data, str) and image_data:
+                    try:
+                        parsed = json.loads(image_data)
+                        if isinstance(parsed, list):
+                            images = parsed
+                        else:
+                            images = [image_data]
+                    except Exception:
+                        images = [image_data]
+                if images:
+                    has_images_for_rag = True
+
+            # Concurrently gather recent summaries, faculty info, timetable info, web search, and RAG retrieval
+            gather_tasks = {}
+            gather_tasks["summaries"] = _get_recent_session_summaries(current_user.id, payload.session_id)
+            if should_faculty:
+                gather_tasks["faculty"] = get_cached_faculty_knowledge(student_level, current_user)
+            if should_timetable:
+                gather_tasks["timetable"] = get_cached_student_timetable(student_level, current_user)
 
             web_search_globally_enabled = bool((cached_config or {}).get("web_search_enabled", True))
             effective_web_search = should_web_search and web_search_globally_enabled
             if effective_web_search and payload.new_text.strip():
-                yield {"status": "searching_web"}
-                ws_result = await search_web(
+                gather_tasks["web_search"] = search_web(
                     query=payload.new_text,
                     user_id=current_user.id,
                     web_search_enabled=web_search_globally_enabled,
                 )
+
+            run_rag_concurrently = (not should_skip_rag) and (not has_images_for_rag) and (not payload.thinking_mode)
+            if run_rag_concurrently:
+                gather_tasks["rag"] = get_relevant_context(
+                    user_question=payload.new_text,
+                    document_id=None,
+                    user_level=None if student_level == "Unknown" else student_level,
+                    current_user=current_user,
+                    rag_match_count=rag_chunk_count,
+                )
+
+            # Run concurrently!
+            task_keys = list(gather_tasks.keys())
+            task_futures = list(gather_tasks.values())
+            gather_results = await asyncio.gather(*task_futures, return_exceptions=True)
+
+            results_map = {}
+            for key, res in zip(task_keys, gather_results):
+                if isinstance(res, Exception):
+                    logger.error(f"Error in concurrent task '{key}': {res}")
+                    results_map[key] = None
+                else:
+                    results_map[key] = res
+
+            recent_summaries = results_map.get("summaries") or ""
+            faculty_info = results_map.get("faculty") or ""
+            timetable_info = results_map.get("timetable") or ""
+            if effective_web_search and payload.new_text.strip():
+                ws_result = results_map.get("web_search")
                 if ws_result == "__LIMIT_REACHED__":
                     web_search_limit_reached = True
                 else:
-                    web_search_text = ws_result
+                    web_search_text = ws_result or ""
 
             context_text = ""
             retrieved_citations: list[dict] = []
             extracted_image_text = ""
-            rag_query = payload.new_text
-            if should_skip_rag:
-                logger.info("Skipping RAG retrieval for conversational edited message.")
-            else:
-                latest_user_with_images = next(
-                    (
-                        msg for msg in reversed(remaining_msgs)
-                        if msg.get("role") == "user" and (msg.get("image_data") or msg.get("images"))
-                    ),
-                    None,
-                )
-                if latest_user_with_images:
-                    image_data = latest_user_with_images.get("image_data")
-                    images = latest_user_with_images.get("images") or []
-                    if isinstance(image_data, str) and image_data:
-                        try:
-                            parsed = json.loads(image_data)
-                            if isinstance(parsed, list):
-                                images = parsed
-                            else:
-                                images = [image_data]
-                        except Exception:
-                            images = [image_data]
 
-                    if images:
+            context_quality = "good"
+
+            if payload.thinking_mode:
+                # ----------------------------------------------------
+                # Sequential Agentic RAG Path (Thinking Mode Only)
+                # ----------------------------------------------------
+                if not should_skip_rag:
+                    if has_images_for_rag:
                         yield {"status": "reading_image"}
                         try:
                             extraction_messages = [
@@ -1778,16 +2127,93 @@ async def edit_message(
                         except Exception as exc:
                             logger.warning(f"Edit vision RAG enrichment failed, falling back to text-only query: {exc}")
 
-                rag_query = f"{payload.new_text}\n\n{extracted_image_text}" if extracted_image_text else payload.new_text
-                yield {"status": "searching_curriculum"}
-                yield {"status": "retrieving_context"}
-                context_text, retrieved_citations = await get_relevant_context(
-                    user_question=rag_query,
-                    document_id=None,
-                    user_level=None if student_level == "Unknown" else student_level,
-                    current_user=current_user,
-                    rag_match_count=rag_chunk_count,
-                )
+                    rag_query = f"{payload.new_text}\n\n{extracted_image_text}" if extracted_image_text else payload.new_text
+                    search_queries = pipeline_params.get("search_queries", [])
+                    if not search_queries:
+                        search_queries = [{"query": rag_query, "status": "Reviewing the relevant course material..."}]
+
+                    from .shared import agentic_rag_loop
+                    async for event in agentic_rag_loop(
+                        user_text=rag_query,
+                        document_id=None,
+                        student_level=student_level,
+                        current_user=current_user,
+                        academic_session=None,
+                        semester=None,
+                        rag_match_count=rag_chunk_count,
+                        search_queries=search_queries,
+                        llm_engine=llm_engine,
+                    ):
+                        if "status" in event:
+                            yield {"status": event["status"]}
+                        elif "final_result" in event:
+                            context_text, retrieved_citations, context_quality = event["final_result"]
+                else:
+                    context_quality = "none"
+
+            else:
+                # ----------------------------------------------------
+                # Fast Mode Path (Single-pass retrieval)
+                # ----------------------------------------------------
+                if run_rag_concurrently:
+                    rag_res = results_map.get("rag")
+                    if rag_res:
+                        context_text, retrieved_citations = rag_res
+                    context_quality = "good" if context_text else "none"
+                elif not should_skip_rag and has_images_for_rag:
+                    # Sequential image extraction first, then RAG
+                    yield {"status": "reading_image"}
+                    try:
+                        extraction_messages = [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": "Extract and summarize the key text, topics, and concepts visible in this image. Be concise and focus on subject matter relevant to pharmacy education.",
+                                    },
+                                    *[
+                                        {
+                                            "type": "image_url",
+                                            "image_url": {"url": f"data:image/jpeg;base64,{img}"},
+                                        }
+                                        for img in images
+                                    ],
+                                ],
+                            }
+                        ]
+                        extraction_response = await llm_engine.generate_completion_with_failover(
+                            messages=extraction_messages,
+                            temperature=0.2,
+                            max_tokens=300,
+                            has_images=True,
+                            stream=False,
+                        )
+                        if extraction_response is not None:
+                            extracted_content = extraction_response.choices[0].message.content
+                            if isinstance(extracted_content, list):
+                                extracted_image_text = " ".join(
+                                    part.get("text", "") for part in extracted_content if isinstance(part, dict)
+                                ).strip()
+                            else:
+                                extracted_image_text = str(extracted_content).strip()
+                    except Exception as exc:
+                        logger.warning(f"Edit vision RAG enrichment failed, falling back to text-only query: {exc}")
+
+                    rag_query = f"{payload.new_text}\n\n{extracted_image_text}" if extracted_image_text else payload.new_text
+                    yield {"status": "searching_curriculum"}
+                    yield {"status": "retrieving_context"}
+                    context_text, retrieved_citations = await get_relevant_context(
+                        rag_query,
+                        document_id=None,
+                        user_level=None if student_level == "Unknown" else student_level,
+                        current_user=current_user,
+                        rag_match_count=rag_chunk_count,
+                    )
+                    context_quality = "good" if context_text else "none"
+                else:
+                    context_quality = "none"
+
             citations.clear()
             citations.extend(retrieved_citations)
 
@@ -1824,10 +2250,20 @@ FACULTY & CURRICULUM KNOWLEDGE:
 STUDENT WEEKLY TIMETABLE:
 {timetable_info}
 """
+            # Select instruction based on context_quality
+            if context_quality == "none":
+                instructions_block = """INSTRUCTIONS:
+No relevant curriculum material was found. Answer honestly using general pharmaceutical knowledge. Do not imply that the answer came from the student's materials. Mention the absence of matching material only when it is useful for clarity. Do not cite documents. Tailor your explanation to their academic level."""
+            elif context_quality == "partial":
+                instructions_block = """INSTRUCTIONS:
+Only partial relevant curriculum material was found. Answer prioritizing the retrieved context below, but supplement with general knowledge where needed. Do not imply that the answer came from the student's materials unless retrieved context supports it. Do not cite sources, lecturers, course codes or page numbers inline in your response. Tailor your explanation to their academic level."""
+            else:
+                instructions_block = """INSTRUCTIONS:
+Answer the student's question prioritizing the retrieved context below. Tailor your explanation to their academic level. If the exact answer is not in the retrieved context, answer honestly using general knowledge, but do not imply that the answer came from the student's materials. Do not cite sources, lecturers, course codes or page numbers inline in your response."""
+
             if context_text:
                 final_system_prompt += f"""
-INSTRUCTIONS:
-Answer the student's question prioritizing the retrieved context below. Tailor your explanation to their academic level. If the exact answer is NOT in the retrieved context, you must explicitly state: "This information is not directly covered in the material, but based on general knowledge..." and then proceed. Do not cite sources, lecturers, course codes or page numbers inline in your response.
+{instructions_block}
 FACULTY KNOWLEDGE PROTOCOL: You possess hidden knowledge about the student's specific curriculum and general faculty rules. When a user asks about their courses, lecturers, schedule, or faculty, you must scan this knowledge and extract ONLY the precise answer. Do NOT recite the entire curriculum or list unrelated courses unless explicitly asked to do so. Be concise, accurate, and conversational.
 TIMETABLE PROTOCOL: You possess the student's exact weekly class schedule under STUDENT WEEKLY TIMETABLE. When asked about classes, you MUST follow these absolute rules:
 1. NEVER guess, invent, or modify course codes, titles, or times.
@@ -1923,12 +2359,24 @@ Do not mention the limit in your response unless the user explicitly asks why we
                 logger.info(f"Smart Router: Images detected in context, using {selected_model}")
                 is_vision_mode = True
             else:
-                selected_model = llm_engine.TEXT_PRIMARY
+                selected_model = llm_engine.TEXT_PRIMARY if payload.thinking_mode else llm_engine.TEXT_SECONDARY
                 logger.info(f"Smart Router: Text-only context, using {selected_model}")
                 is_vision_mode = False
             yield {"status": "thinking"}
 
-            if not payload.thinking_mode and model_uses_thinking(selected_model):
+            # Yield pipeline_params and selected_model for instrumentation capture
+            yield {"pipeline_params": pipeline_params}
+            yield {"selected_model": selected_model}
+
+            # Adaptive final-answer reasoning prepending /no_think
+            if not payload.thinking_mode:
+                prepend_no_think = True
+            elif not pipeline_params.get("enable_deep_final_reasoning", False):
+                prepend_no_think = True
+            else:
+                prepend_no_think = False
+
+            if prepend_no_think and model_uses_thinking(selected_model):
                 for msg in llm_messages:
                     if msg["role"] == "system" and msg["content"] == final_system_prompt:
                         msg["content"] = "/no_think\n" + msg["content"]
@@ -1941,6 +2389,7 @@ Do not mention the limit in your response unless the user explicitly asks why we
                 has_images=is_vision_mode,
                 temperature=temperature,
                 max_tokens=2048,
+                requested_model="TEXT_PRIMARY" if payload.thinking_mode else "TEXT_SECONDARY",
             )
             yield {"status": "preparing_response"}
             async for event in _stream_completion_events(completion_stream):
@@ -2012,16 +2461,18 @@ async def regenerate_response(
             role = "assistant" if (m['role'] == 'ai' or m['role'] == 'assistant') else "user"
             history_msgs.append({"role": role, "content": m['content']})
 
+        (student_profile_text, student_level), cached_config = await asyncio.gather(
+            _build_student_profile_text(current_user),
+            get_cached_settings(),
+            return_exceptions=False,
+        )
         system_prompt = PHARMACY_SYSTEM_PROMPT
-        cached_config = await get_cached_settings()
         temperature = 0.7
         if cached_config:
             if cached_config.get("system_prompt"):
                 system_prompt = cached_config["system_prompt"]
             if cached_config.get("temperature") is not None:
                 temperature = float(cached_config["temperature"])
-
-        student_profile_text, student_level = await _build_student_profile_text(current_user)
 
         user_text = last_user_msg['content']
         citations: list[dict] = []
@@ -2043,55 +2494,212 @@ async def regenerate_response(
                     if "pipeline_params" in planner_event:
                         pipeline_params = planner_event["pipeline_params"]
             else:
-                pipeline_params = STREAMING_PLANNER_DEFAULTS.copy()
+                pipeline_params = FAST_MODE_DEFAULTS.copy()
 
             rag_chunk_count = pipeline_params["rag_chunk_count"]
             should_web_search = pipeline_params["run_web_search"]
             should_timetable = pipeline_params["fetch_timetable"]
             should_faculty = pipeline_params["fetch_faculty"]
 
-            gather_tasks = [_get_recent_session_summaries(current_user.id, session_id)]
+            # Parse images from last_user_msg to determine if we can run RAG concurrently
+            has_images_for_rag = False
+            images = []
+            image_data = last_user_msg.get('image_data')
+            if image_data:
+                try:
+                    images = json.loads(image_data) if image_data.startswith('[') else [image_data]
+                except Exception:
+                    images = [image_data]
+                if images:
+                    has_images_for_rag = True
+
+            # Concurrently gather recent summaries, faculty info, timetable info, web search, and RAG retrieval
+            gather_tasks = {}
+            gather_tasks["summaries"] = _get_recent_session_summaries(current_user.id, session_id)
             if should_faculty:
-                gather_tasks.append(get_cached_faculty_knowledge(student_level, current_user))
+                gather_tasks["faculty"] = get_cached_faculty_knowledge(student_level, current_user)
             if should_timetable:
-                gather_tasks.append(get_cached_student_timetable(student_level, current_user))
-            gather_results = await asyncio.gather(*gather_tasks)
-            recent_summaries = gather_results[0]
-            faculty_info = gather_results[1] if should_faculty else ""
-            timetable_info = (
-                gather_results[2]
-                if should_faculty and should_timetable
-                else (gather_results[1] if should_timetable else "")
-            )
+                gather_tasks["timetable"] = get_cached_student_timetable(student_level, current_user)
 
             web_search_globally_enabled = bool((cached_config or {}).get("web_search_enabled", True))
             effective_web_search = should_web_search and web_search_globally_enabled
             if effective_web_search and user_text.strip():
-                yield {"status": "searching_web"}
-                ws_result = await search_web(
+                gather_tasks["web_search"] = search_web(
                     query=user_text,
                     user_id=current_user.id,
                     web_search_enabled=web_search_globally_enabled,
                 )
-                if ws_result == "__LIMIT_REACHED__":
-                    web_search_limit_reached = True
-                else:
-                    web_search_text = ws_result
 
-            context_text = ""
-            retrieved_citations: list[dict] = []
-            if should_skip_rag:
-                logger.info("Skipping RAG retrieval for conversational regenerate request.")
-            else:
-                yield {"status": "searching_curriculum"}
-                yield {"status": "retrieving_context"}
-                context_text, retrieved_citations = await get_relevant_context(
+            run_rag_concurrently = (not should_skip_rag) and (not has_images_for_rag) and (not payload.thinking_mode)
+            if run_rag_concurrently:
+                gather_tasks["rag"] = get_relevant_context(
                     user_text,
                     document_id=None,
                     user_level=None if student_level == "Unknown" else student_level,
                     current_user=current_user,
                     rag_match_count=rag_chunk_count,
                 )
+
+            # Run concurrently!
+            task_keys = list(gather_tasks.keys())
+            task_futures = list(gather_tasks.values())
+            gather_results = await asyncio.gather(*task_futures, return_exceptions=True)
+
+            results_map = {}
+            for key, res in zip(task_keys, gather_results):
+                if isinstance(res, Exception):
+                    logger.error(f"Error in concurrent task '{key}': {res}")
+                    results_map[key] = None
+                else:
+                    results_map[key] = res
+
+            recent_summaries = results_map.get("summaries") or ""
+            faculty_info = results_map.get("faculty") or ""
+            timetable_info = results_map.get("timetable") or ""
+            if effective_web_search and user_text.strip():
+                ws_result = results_map.get("web_search")
+                if ws_result == "__LIMIT_REACHED__":
+                    web_search_limit_reached = True
+                else:
+                    web_search_text = ws_result or ""
+
+            context_text = ""
+            retrieved_citations: list[dict] = []
+            extracted_image_text = ""
+
+            context_quality = "good"
+
+            if payload.thinking_mode:
+                # ----------------------------------------------------
+                # Sequential Agentic RAG Path (Thinking Mode Only)
+                # ----------------------------------------------------
+                if not should_skip_rag:
+                    if has_images_for_rag:
+                        yield {"status": "reading_image"}
+                        try:
+                            extraction_messages = [
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": "Extract and summarize the key text, topics, and concepts visible in this image. Be concise and focus on subject matter relevant to pharmacy education.",
+                                        },
+                                        *[
+                                            {
+                                                "type": "image_url",
+                                                "image_url": {"url": f"data:image/jpeg;base64,{img}"},
+                                            }
+                                            for img in images
+                                        ],
+                                    ],
+                                }
+                            ]
+                            extraction_response = await llm_engine.generate_completion_with_failover(
+                                messages=extraction_messages,
+                                temperature=0.2,
+                                max_tokens=300,
+                                has_images=True,
+                                stream=False,
+                            )
+                            if extraction_response is not None:
+                                extracted_content = extraction_response.choices[0].message.content
+                                if isinstance(extracted_content, list):
+                                    extracted_image_text = " ".join(
+                                        part.get("text", "") for part in extracted_content if isinstance(part, dict)
+                                    ).strip()
+                                else:
+                                    extracted_image_text = str(extracted_content).strip()
+                        except Exception as exc:
+                            logger.warning(f"Regenerate vision RAG enrichment failed, falling back to text-only query: {exc}")
+
+                    rag_query = f"{user_text}\n\n{extracted_image_text}" if extracted_image_text else user_text
+                    search_queries = pipeline_params.get("search_queries", [])
+                    if not search_queries:
+                        search_queries = [{"query": rag_query, "status": "Reviewing the relevant course material..."}]
+
+                    from .shared import agentic_rag_loop
+                    async for event in agentic_rag_loop(
+                        user_text=rag_query,
+                        document_id=None,
+                        student_level=student_level,
+                        current_user=current_user,
+                        academic_session=None,
+                        semester=None,
+                        rag_match_count=rag_chunk_count,
+                        search_queries=search_queries,
+                        llm_engine=llm_engine,
+                    ):
+                        if "status" in event:
+                            yield {"status": event["status"]}
+                        elif "final_result" in event:
+                            context_text, retrieved_citations, context_quality = event["final_result"]
+                else:
+                    context_quality = "none"
+
+            else:
+                # ----------------------------------------------------
+                # Fast Mode Path (Single-pass retrieval)
+                # ----------------------------------------------------
+                if run_rag_concurrently:
+                    rag_res = results_map.get("rag")
+                    if rag_res:
+                        context_text, retrieved_citations = rag_res
+                    context_quality = "good" if context_text else "none"
+                elif not should_skip_rag and has_images_for_rag:
+                    # Sequential image extraction first, then RAG
+                    yield {"status": "reading_image"}
+                    try:
+                        extraction_messages = [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": "Extract and summarize the key text, topics, and concepts visible in this image. Be concise and focus on subject matter relevant to pharmacy education.",
+                                    },
+                                    *[
+                                        {
+                                            "type": "image_url",
+                                            "image_url": {"url": f"data:image/jpeg;base64,{img}"},
+                                        }
+                                        for img in images
+                                    ],
+                                ],
+                            }
+                        ]
+                        extraction_response = await llm_engine.generate_completion_with_failover(
+                            messages=extraction_messages,
+                            temperature=0.2,
+                            max_tokens=300,
+                            has_images=True,
+                            stream=False,
+                        )
+                        if extraction_response is not None:
+                            extracted_content = extraction_response.choices[0].message.content
+                            if isinstance(extracted_content, list):
+                                extracted_image_text = " ".join(
+                                    part.get("text", "") for part in extracted_content if isinstance(part, dict)
+                                ).strip()
+                            else:
+                                extracted_image_text = str(extracted_content).strip()
+                    except Exception as exc:
+                        logger.warning(f"Regenerate vision RAG enrichment failed, falling back to text-only query: {exc}")
+
+                    rag_query = f"{user_text}\n\n{extracted_image_text}" if extracted_image_text else user_text
+                    yield {"status": "searching_curriculum"}
+                    yield {"status": "retrieving_context"}
+                    context_text, retrieved_citations = await get_relevant_context(
+                        rag_query,
+                        document_id=None,
+                        user_level=None if student_level == "Unknown" else student_level,
+                        current_user=current_user,
+                        rag_match_count=rag_chunk_count,
+                    )
+                    context_quality = "good" if context_text else "none"
+                else:
+                    context_quality = "none"
+
             citations.clear()
             citations.extend(retrieved_citations)
 
@@ -2127,10 +2735,20 @@ FACULTY & CURRICULUM KNOWLEDGE:
 STUDENT WEEKLY TIMETABLE:
 {timetable_info}
 """
+            # Select instruction based on context_quality
+            if context_quality == "none":
+                instructions_block = """INSTRUCTIONS:
+No relevant curriculum material was found. Answer honestly using general pharmaceutical knowledge. Do not imply that the answer came from the student's materials. Mention the absence of matching material only when it is useful for clarity. Do not cite documents. Tailor your explanation to their academic level."""
+            elif context_quality == "partial":
+                instructions_block = """INSTRUCTIONS:
+Only partial relevant curriculum material was found. Answer prioritizing the retrieved context below, but supplement with general knowledge where needed. Do not imply that the answer came from the student's materials unless retrieved context supports it. Do not cite sources, lecturers, course codes or page numbers inline in your response. Tailor your explanation to their academic level."""
+            else:
+                instructions_block = """INSTRUCTIONS:
+Answer the student's question prioritizing the retrieved context below. Tailor your explanation to their academic level. If the exact answer is not in the retrieved context, answer honestly using general knowledge, but do not imply that the answer came from the student's materials. Do not cite sources, lecturers, course codes or page numbers inline in your response."""
+
             if context_text:
                 final_system_prompt += f"""
-INSTRUCTIONS:
-Answer the student's question prioritizing the retrieved context below. Tailor your explanation to their academic level. If the exact answer is NOT in the retrieved context, you must explicitly state: "This information is not directly covered in the material, but based on general knowledge..." and then proceed. Do not cite sources, lecturers, course codes or page numbers inline in your response.
+{instructions_block}
 FACULTY KNOWLEDGE PROTOCOL: You possess hidden knowledge about the student's specific curriculum and general faculty rules. When a user asks about their courses, lecturers, schedule, or faculty, you must scan this knowledge and extract ONLY the precise answer. Do NOT recite the entire curriculum or list unrelated courses unless explicitly asked to do so. Be concise, accurate, and conversational.
 TIMETABLE PROTOCOL: You possess the student's exact weekly class schedule under STUDENT WEEKLY TIMETABLE. When asked about classes, you MUST follow these absolute rules:
 1. NEVER guess, invent, or modify course codes, titles, or times.
@@ -2210,12 +2828,24 @@ Do not mention the limit in your response unless the user explicitly asks why we
                 logger.info(f"Smart Router: Images detected in context, using {selected_model}")
                 is_vision_mode = True
             else:
-                selected_model = llm_engine.TEXT_PRIMARY
+                selected_model = llm_engine.TEXT_PRIMARY if payload.thinking_mode else llm_engine.TEXT_SECONDARY
                 logger.info(f"Smart Router: Text-only context, using {selected_model}")
                 is_vision_mode = False
             yield {"status": "thinking"}
 
-            if not payload.thinking_mode and model_uses_thinking(selected_model):
+            # Yield pipeline_params and selected_model for instrumentation capture
+            yield {"pipeline_params": pipeline_params}
+            yield {"selected_model": selected_model}
+
+            # Adaptive final-answer reasoning prepending /no_think
+            if not payload.thinking_mode:
+                prepend_no_think = True
+            elif not pipeline_params.get("enable_deep_final_reasoning", False):
+                prepend_no_think = True
+            else:
+                prepend_no_think = False
+
+            if prepend_no_think and model_uses_thinking(selected_model):
                 for msg in llm_messages:
                     if msg["role"] == "system" and msg["content"] == final_system_prompt:
                         msg["content"] = "/no_think\n" + msg["content"]
@@ -2228,6 +2858,7 @@ Do not mention the limit in your response unless the user explicitly asks why we
                 has_images=is_vision_mode,
                 temperature=temperature,
                 max_tokens=2048,
+                requested_model="TEXT_PRIMARY" if payload.thinking_mode else "TEXT_SECONDARY",
             )
             yield {"status": "preparing_response"}
             async for event in _stream_completion_events(completion_stream):

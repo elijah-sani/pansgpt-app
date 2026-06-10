@@ -18,7 +18,8 @@ import {
     Square,
     Pencil,
     MoreVertical,
-    ChevronDown
+    ChevronDown,
+    ArrowDown
 } from 'lucide-react';
 
 interface Message {
@@ -681,23 +682,22 @@ export default function ChatInterface({
                 </div>
             </div>
 
-            <div
-                className={`pointer-events-none absolute bottom-[70px] left-1/2 z-10 -translate-x-1/2 transition-opacity duration-200 ${
-                    showScrollToBottom && !isLoadingChat ? 'opacity-100' : 'opacity-0'
-                }`}
-            >
-                <button
-                    type="button"
-                    onClick={handleScrollToBottom}
-                    aria-label="Scroll to bottom"
-                    className="pointer-events-auto bg-background border border-border rounded-full shadow-sm p-2"
-                >
-                    <ChevronDown className="w-5 h-5" />
-                </button>
-            </div>
-
             {/* 3. INPUT AREA: Floating Capsule */}
-            <div className="p-4 bg-background">
+            <div className="p-4 bg-background relative shrink-0">
+                <div
+                    className={`pointer-events-none absolute bottom-[calc(100%+24px)] left-1/2 z-10 -translate-x-1/2 transition-opacity duration-200 ${
+                        showScrollToBottom && !isLoadingChat ? 'opacity-100' : 'opacity-0'
+                    }`}
+                >
+                    <button
+                        type="button"
+                        onClick={handleScrollToBottom}
+                        aria-label="Scroll to bottom"
+                        className="pointer-events-auto bg-background border border-border rounded-full shadow-lg p-1.5 hover:bg-accent hover:text-accent-foreground transition-colors flex items-center justify-center"
+                    >
+                        <ArrowDown className="w-4 h-4" strokeWidth={2.4} />
+                    </button>
+                </div>
                 <div className="max-w-3xl mx-auto relative">
 
                     {/* Attachments Preview (Scrollable Row) */}
