@@ -94,6 +94,7 @@ export function useMainPageController() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const streamFullTextRef = useRef('');
+  const streamThinkingTextRef = useRef(''); // accumulates thinking_update / thinking_delta text between resets
   const wasEarlyStopRef = useRef(false); // true if stopped before AI started streaming
   const streamStatusRef = useRef('processing');
   const isCreatingSessionRef = useRef(false);
@@ -394,10 +395,17 @@ export function useMainPageController() {
           updateUIWithChunk(parsed.delta);
         }
 
-        if (typeof parsed?.thinking_delta === 'string' && parsed.thinking_delta.length > 0) {
-          setThinkingText((prev) => prev + parsed.thinking_delta);
+        // thinking_update: planner public-thought narrative (streamed before RAG/final answer)
+        if (typeof parsed?.thinking_update === 'string' && parsed.thinking_update.length > 0) {
+          streamThinkingTextRef.current += parsed.thinking_update;
+          setThinkingText((prev) => prev + parsed.thinking_update);
           setIsThinking(true);
         }
+
+        // thinking_delta: raw native model reasoning — DISCARD SILENTLY.
+        // The backend no longer emits this. If it ever arrives (legacy or regression),
+        // do NOT accumulate, display, or save it. Native <think> content is backend-only.
+        // (defensive no-op — intentionally empty)
 
         if (parsed?.thinking_done === true) {
           setIsThinking(false);
@@ -689,7 +697,10 @@ export function useMainPageController() {
       setChatError(null);
       lastFailedRequestRef.current = null;
       streamFullTextRef.current = '';
+      streamThinkingTextRef.current = '';
       wasEarlyStopRef.current = false;
+      setThinkingText('');
+      setIsThinking(false);
 
       const controller = new AbortController();
       abortControllerRef.current = controller;
@@ -926,6 +937,9 @@ export function useMainPageController() {
       abortControllerRef.current = controller;
       lastFailedRequestRef.current = null;
       streamFullTextRef.current = '';
+      setThinkingText('');
+      setIsThinking(false);
+      streamThinkingTextRef.current = '';
 
       const editIndex = messages.findIndex((message) => String(message.id) === String(messageId));
       const targetMessageId = editIndex !== -1 ? String(messages[editIndex].id) : String(messageId);
@@ -1028,6 +1042,7 @@ export function useMainPageController() {
             session_id: activeSessionId,
             message_id: resolvedTargetId,
             new_text: newText,
+            thinking_mode: thinkingMode,
             ...(editImages ? { images: editImages } : {}),
           }),
         });
@@ -1084,7 +1099,7 @@ export function useMainPageController() {
         abortControllerRef.current = null;
       }
     },
-    [activeSessionId, messages]
+    [activeSessionId, messages, thinkingMode, sendMessageApi]
   );
 
   const handleRegenerate = useCallback(async () => {
@@ -1097,6 +1112,9 @@ export function useMainPageController() {
     abortControllerRef.current = controller;
     lastFailedRequestRef.current = null;
     streamFullTextRef.current = '';
+    setThinkingText('');
+    setIsThinking(false);
+    streamThinkingTextRef.current = '';
 
     setMessages((previous) => {
       if (previous.length === 0) {
@@ -1116,7 +1134,9 @@ export function useMainPageController() {
       const response = await api.fetch(`/chat/${activeSessionId}/regenerate`, {
         method: 'POST',
         signal: controller.signal,
-        body: JSON.stringify({}),
+        body: JSON.stringify({
+          thinking_mode: thinkingMode,
+        }),
       });
 
       if (!response.ok) {
@@ -1161,7 +1181,7 @@ export function useMainPageController() {
       setIsLoading(false);
       abortControllerRef.current = null;
     }
-  }, [activeSessionId]);
+  }, [activeSessionId, thinkingMode]);
 
   const handleRetryFailure = useCallback(() => {
     const lastFailed = lastFailedRequestRef.current;

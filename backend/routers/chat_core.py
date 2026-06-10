@@ -57,6 +57,9 @@ from .shared import (
     timezone,
     uuid,
     verify_api_key,
+    stream_pipeline_plan,
+    STREAMING_PLANNER_DEFAULTS,
+    _generate_retrieval_progress_update,
 )
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -514,6 +517,10 @@ async def _build_streaming_response(
         emitted_graceful = False
         disconnected = False
         cancelled = False
+        # Accumulates the safe planner <public_thought> narrative that was
+        # displayed in the Thinking panel.  This — and only this — is saved
+        # to chat_messages.thinking_text so history reload shows the same text.
+        planner_narrative_acc: str = ""
         # Always instantiate the parser — even in Fast mode it acts as a safety
         # net to strip any <thought> / <think> blocks the model emits despite
         # /no_think (models occasionally ignore the directive).
@@ -541,14 +548,23 @@ async def _build_streaming_response(
                     if isinstance(status, str) and status:
                         yield f"data: {json.dumps({'status': status})}\n\n"
 
+                    thinking_update = event.get("thinking_update")
+                    if thinking_update:
+                        planner_narrative_acc += thinking_update
+                        yield f"data: {json.dumps({'thinking_update': thinking_update})}\n\n"
+
+                    thinking_done = event.get("thinking_done")
+                    if thinking_done:
+                        yield f"data: {json.dumps({'thinking_done': True})}\n\n"
+
                     delta = event.get("delta")
                     if delta:
                         visible_chunk, thinking_chunk = parser.feed(delta)
                         if visible_chunk:
                             full_text += visible_chunk
                             yield f"data: {json.dumps({'delta': visible_chunk})}\n\n"
-                        if thinking_chunk and thinking_mode:
-                            yield f"data: {json.dumps({'thinking_delta': thinking_chunk})}\n\n"
+                        # thinking_chunk: native model reasoning extracted by the parser.
+                        # Discarded — never transmitted to frontend, never persisted.
         except asyncio.CancelledError:
             cancelled = True
             logger.info("Stream task cancelled; persisting partial assistant response.")
@@ -577,17 +593,21 @@ async def _build_streaming_response(
                     full_text += visible_rem
                     yield f"data: {json.dumps({'delta': visible_rem})}\n\n"
                 if thinking_rem:
-                    yield f"data: {json.dumps({'thinking_delta': thinking_rem})}\n\n"
+                    pass  # Discard — native reasoning is never emitted or persisted.
                 # Only fire thinking_done when the user requested Thinking mode.
                 # In Fast mode the parser runs silently — the frontend never
                 # receives a thinking_done event and shows no reasoning block.
                 if thinking_mode:
                     yield f"data: {json.dumps({'thinking_done': True})}\n\n"
 
-            thinking_text_to_save = parser.get_full_thinking()
-            text_to_save, _batch_thinking = strip_thinking_tokens(full_text)
-            if not thinking_text_to_save and _batch_thinking:
-                thinking_text_to_save = _batch_thinking
+            # Save only the safe planner narrative the user already saw in the
+            # Thinking panel.  Native model <think> content (parser.get_full_thinking())
+            # is discarded — it must never be persisted.
+            thinking_text_to_save = planner_narrative_acc.strip()
+            # Strip any residual <think> tokens from the final answer before saving.
+            # The parser filters them during streaming, but strip_thinking_tokens
+            # provides a batch safety net for anything the parser may have missed.
+            text_to_save, _ = strip_thinking_tokens(full_text)
             if disconnected or cancelled:
                 if text_to_save.strip():
                     if STOPPED_ASSISTANT_NOTE not in text_to_save:
@@ -889,11 +909,6 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
         get_cached_settings(),
         return_exceptions=False,
     )
-    faculty_info, timetable_info, recent_summaries = await asyncio.gather(
-        get_cached_faculty_knowledge(student_level, current_user),
-        get_cached_student_timetable(student_level, current_user),
-        _get_recent_session_summaries(current_user.id, request.session_id),
-    )
 
     if request.session_id and chat_history.has_client() and not request.is_retry:
         image_payload = None
@@ -948,6 +963,40 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
     async def event_stream():
         web_search_text = ""
         web_search_limit_reached = False
+
+        if request.thinking_mode:
+            pipeline_params = STREAMING_PLANNER_DEFAULTS.copy()
+            async for planner_event in stream_pipeline_plan(
+                user_text=request.text,
+                student_profile_text=student_profile_text,
+                llm_engine_instance=llm_engine,
+            ):
+                if "thinking_update" in planner_event:
+                    yield {"thinking_update": planner_event["thinking_update"]}
+                if "pipeline_params" in planner_event:
+                    pipeline_params = planner_event["pipeline_params"]
+        else:
+            pipeline_params = STREAMING_PLANNER_DEFAULTS.copy()
+
+        rag_chunk_count = pipeline_params["rag_chunk_count"]
+        should_web_search = pipeline_params["run_web_search"]
+        should_timetable = pipeline_params["fetch_timetable"]
+        should_faculty = pipeline_params["fetch_faculty"]
+
+        gather_tasks = [_get_recent_session_summaries(current_user.id, request.session_id)]
+        if should_faculty:
+            gather_tasks.append(get_cached_faculty_knowledge(student_level, current_user))
+        if should_timetable:
+            gather_tasks.append(get_cached_student_timetable(student_level, current_user))
+        gather_results = await asyncio.gather(*gather_tasks)
+        recent_summaries = gather_results[0]
+        faculty_info = gather_results[1] if should_faculty else ""
+        timetable_info = (
+            gather_results[2]
+            if should_faculty and should_timetable
+            else (gather_results[1] if should_timetable else "")
+        )
+
         should_skip_rag = is_conversational_message(request.text)
 
         # In study mode: also skip RAG for clearly off-topic general knowledge questions
@@ -959,7 +1008,8 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
         extracted_image_text = ""
         rag_query = request.text
 
-        if request.web_search and request.text.strip():
+        effective_web_search = request.web_search or (should_web_search and web_search_globally_enabled)
+        if effective_web_search and request.text.strip():
             yield {"status": "searching_web"}
             ws_result = await search_web(
                 query=request.text,
@@ -1026,6 +1076,9 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                     request.document_id,
                     None if student_level == "Unknown" else student_level,
                     current_user=current_user,
+                    academic_session=request.academic_session,
+                    semester=request.semester,
+                    rag_match_count=rag_chunk_count,
                 )
             else:
                 logger.info(f"Global RAG enabled for user level: {student_level}")
@@ -1034,9 +1087,17 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                     document_id=None,
                     user_level=None if student_level == "Unknown" else student_level,
                     current_user=current_user,
+                    academic_session=request.academic_session,
+                    semester=request.semester,
+                    rag_match_count=rag_chunk_count,
                 )
         citations.clear()
         citations.extend(retrieved_citations)
+
+        if request.thinking_mode:
+            progress_update = _generate_retrieval_progress_update(citations, pipeline_params)
+            yield {"thinking_update": progress_update}
+            yield {"thinking_done": True}
 
         nigeria_now = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=1)))
         current_time_str = nigeria_now.strftime("%A, %B %d, %Y, %I:%M %p")
@@ -1532,6 +1593,7 @@ class EditMessageRequest(BaseModel):
     message_id: str
     new_text: str
     images: Optional[list[str]] = None
+    thinking_mode: bool = False
 
 @router.post("/chat/edit", dependencies=[Depends(verify_api_key)])
 @chat_limiter.limit("20/minute")
@@ -1600,6 +1662,56 @@ async def edit_message(
         should_skip_rag = is_conversational_message(payload.new_text)
 
         async def event_stream():
+            web_search_text = ""
+            web_search_limit_reached = False
+
+            if payload.thinking_mode:
+                pipeline_params = STREAMING_PLANNER_DEFAULTS.copy()
+                async for planner_event in stream_pipeline_plan(
+                    user_text=payload.new_text,
+                    student_profile_text=student_profile_text,
+                    llm_engine_instance=llm_engine,
+                ):
+                    if "thinking_update" in planner_event:
+                        yield {"thinking_update": planner_event["thinking_update"]}
+                    if "pipeline_params" in planner_event:
+                        pipeline_params = planner_event["pipeline_params"]
+            else:
+                pipeline_params = STREAMING_PLANNER_DEFAULTS.copy()
+
+            rag_chunk_count = pipeline_params["rag_chunk_count"]
+            should_web_search = pipeline_params["run_web_search"]
+            should_timetable = pipeline_params["fetch_timetable"]
+            should_faculty = pipeline_params["fetch_faculty"]
+
+            gather_tasks = [_get_recent_session_summaries(current_user.id, payload.session_id)]
+            if should_faculty:
+                gather_tasks.append(get_cached_faculty_knowledge(student_level, current_user))
+            if should_timetable:
+                gather_tasks.append(get_cached_student_timetable(student_level, current_user))
+            gather_results = await asyncio.gather(*gather_tasks)
+            recent_summaries = gather_results[0]
+            faculty_info = gather_results[1] if should_faculty else ""
+            timetable_info = (
+                gather_results[2]
+                if should_faculty and should_timetable
+                else (gather_results[1] if should_timetable else "")
+            )
+
+            web_search_globally_enabled = bool((cached_config or {}).get("web_search_enabled", True))
+            effective_web_search = should_web_search and web_search_globally_enabled
+            if effective_web_search and payload.new_text.strip():
+                yield {"status": "searching_web"}
+                ws_result = await search_web(
+                    query=payload.new_text,
+                    user_id=current_user.id,
+                    web_search_enabled=web_search_globally_enabled,
+                )
+                if ws_result == "__LIMIT_REACHED__":
+                    web_search_limit_reached = True
+                else:
+                    web_search_text = ws_result
+
             context_text = ""
             retrieved_citations: list[dict] = []
             extracted_image_text = ""
@@ -1674,30 +1786,99 @@ async def edit_message(
                     document_id=None,
                     user_level=None if student_level == "Unknown" else student_level,
                     current_user=current_user,
+                    rag_match_count=rag_chunk_count,
                 )
             citations.clear()
             citations.extend(retrieved_citations)
 
+            if payload.thinking_mode:
+                progress_update = _generate_retrieval_progress_update(citations, pipeline_params)
+                yield {"thinking_update": progress_update}
+                yield {"thinking_done": True}
+
+            nigeria_now = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=1)))
+            current_time_str = nigeria_now.strftime("%A, %B %d, %Y, %I:%M %p")
+            tomorrow = nigeria_now + timedelta(days=1)
+            tomorrow_str = tomorrow.strftime("%A, %B %d, %Y")
+            has_prior_history = len(remaining_msgs) > 1
+            greeting_policy = _build_greeting_policy(
+                user_text=payload.new_text,
+                has_prior_history=has_prior_history,
+                now_local=nigeria_now,
+            )
+
             final_system_prompt = f"""{system_prompt}
+
+CURRENT TIME & DATE (NIGERIA)  READ THIS FIRST:
+Today: {current_time_str}
+Tomorrow: {tomorrow_str}
 
 STUDENT PROFILE:
 {student_profile_text}
 
 {recent_summaries}
+
+FACULTY & CURRICULUM KNOWLEDGE:
+{faculty_info or "Not configured."}
+
+STUDENT WEEKLY TIMETABLE:
+{timetable_info}
 """
             if context_text:
                 final_system_prompt += f"""
 INSTRUCTIONS:
 Answer the student's question prioritizing the retrieved context below. Tailor your explanation to their academic level. If the exact answer is NOT in the retrieved context, you must explicitly state: "This information is not directly covered in the material, but based on general knowledge..." and then proceed. Do not cite sources, lecturers, course codes or page numbers inline in your response.
+FACULTY KNOWLEDGE PROTOCOL: You possess hidden knowledge about the student's specific curriculum and general faculty rules. When a user asks about their courses, lecturers, schedule, or faculty, you must scan this knowledge and extract ONLY the precise answer. Do NOT recite the entire curriculum or list unrelated courses unless explicitly asked to do so. Be concise, accurate, and conversational.
+TIMETABLE PROTOCOL: You possess the student's exact weekly class schedule under STUDENT WEEKLY TIMETABLE. When asked about classes, you MUST follow these absolute rules:
+1. NEVER guess, invent, or modify course codes, titles, or times.
+2. List EVERY SINGLE CLASS scheduled for the requested day. You are STRICTLY FORBIDDEN from summarizing, skipping, or omitting any classes.
+3. Output the exact time slots and course titles exactly as they appear in the data. Do not alter them.
+4. If there are overlapping classes (e.g., practicals at the same time), list all of them.
+{greeting_policy}
 
 CONTEXT:
 {context_text}
 """
             else:
-                final_system_prompt += """
+                final_system_prompt += f"""
 INSTRUCTIONS:
 Answer the student's question prioritizing your general knowledge, but tailor your explanation specifically to their academic level as defined in their profile.
+FACULTY KNOWLEDGE PROTOCOL: You possess hidden knowledge about the student's specific curriculum and general faculty rules. When a user asks about their courses, lecturers, schedule, or faculty, you must scan this knowledge and extract ONLY the precise answer. Do NOT recite the entire curriculum or list unrelated courses unless explicitly asked to do so. Be concise, accurate, and conversational.
+TIMETABLE PROTOCOL: You possess the student's exact weekly class schedule under STUDENT WEEKLY TIMETABLE. When asked about classes, you MUST follow these absolute rules:
+1. NEVER guess, invent, or modify course codes, titles, or times.
+2. List EVERY SINGLE CLASS scheduled for the requested day. You are STRICTLY FORBIDDEN from summarizing, skipping, or omitting any classes.
+3. Output the exact time slots and course titles exactly as they appear in the data. Do not alter them.
+4. If there are overlapping classes (e.g., practicals at the same time), list all of them.
+{greeting_policy}
 """
+
+            if web_search_text:
+                final_system_prompt += f"""
+
+WEB SEARCH RESULTS (live, retrieved just now - today's date: {current_time_str}):
+{web_search_text}
+
+Instructions for web results:
+- Cite sources naturally when referencing web results (e.g. "According to [title]...").
+- Prefer RAG document context over web results for pharmacy curriculum questions.
+- For current events, drug recalls, recent news, or real-world updates - prefer web results.
+"""
+
+            if web_search_limit_reached:
+                final_system_prompt += """
+
+NOTE: The user requested web search but has reached their daily limit (5 searches/day).
+Respond using your existing knowledge and RAG context only.
+Do not mention the limit in your response unless the user explicitly asks why web search is unavailable.
+"""
+
+            if context_text:
+                final_system_prompt += f"\n\nRELEVANT CURRICULUM CONTEXT:\n{context_text}"
+
+            if web_search_text:
+                final_system_prompt += f"\n\nLIVE WEB SEARCH RESULTS:\n{web_search_text}"
+
+            final_system_prompt += "\n\nIMPORTANT: Do NOT cite sources, lecturers, course codes, or page numbers inline in your response. Never write things like (Prof. X, PTE 411) or (Source: ...) in your answers. Sources are provided separately to the user."
 
             llm_messages = [{"role": "system", "content": final_system_prompt}]
             for m in remaining_msgs:
@@ -1747,6 +1928,13 @@ Answer the student's question prioritizing your general knowledge, but tailor yo
                 is_vision_mode = False
             yield {"status": "thinking"}
 
+            if not payload.thinking_mode and model_uses_thinking(selected_model):
+                for msg in llm_messages:
+                    if msg["role"] == "system" and msg["content"] == final_system_prompt:
+                        msg["content"] = "/no_think\n" + msg["content"]
+                        break
+
+            llm_messages = _trim_messages_to_fit(llm_messages, final_system_prompt)
             llm_messages = merge_system_into_user(llm_messages)
             completion_stream = llm_engine.generate_dual_cloud_stream(
                 messages=llm_messages,
@@ -1765,7 +1953,7 @@ Answer the student's question prioritizing your general knowledge, but tailor yo
             str(new_msg_id) if new_msg_id else None,
             citations=citations,
             user_id=current_user.id,
-            thinking_mode=True,
+            thinking_mode=payload.thinking_mode,
         )
 
     except HTTPException:
@@ -1774,11 +1962,15 @@ Answer the student's question prioritizing your general knowledge, but tailor yo
         logger.error(f"Edit Message Error: {e}")
         raise HTTPException(status_code=500, detail="Unable to edit this message. Please try again.")
 
+class RegenerateRequest(BaseModel):
+    thinking_mode: bool = False
+
 @router.post("/chat/{session_id}/regenerate", dependencies=[Depends(verify_api_key)])
 @chat_limiter.limit("20/minute")
 async def regenerate_response(
     session_id: str,
     request: Request,
+    payload: RegenerateRequest,
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -1830,15 +2022,62 @@ async def regenerate_response(
                 temperature = float(cached_config["temperature"])
 
         student_profile_text, student_level = await _build_student_profile_text(current_user)
-        faculty_info = await get_cached_faculty_knowledge(student_level, current_user)
-        timetable_info = await get_cached_student_timetable(student_level, current_user)
-        recent_summaries = await _get_recent_session_summaries(current_user.id, session_id)
 
         user_text = last_user_msg['content']
         citations: list[dict] = []
         should_skip_rag = is_conversational_message(user_text)
 
         async def event_stream():
+            web_search_text = ""
+            web_search_limit_reached = False
+
+            if payload.thinking_mode:
+                pipeline_params = STREAMING_PLANNER_DEFAULTS.copy()
+                async for planner_event in stream_pipeline_plan(
+                    user_text=user_text,
+                    student_profile_text=student_profile_text,
+                    llm_engine_instance=llm_engine,
+                ):
+                    if "thinking_update" in planner_event:
+                        yield {"thinking_update": planner_event["thinking_update"]}
+                    if "pipeline_params" in planner_event:
+                        pipeline_params = planner_event["pipeline_params"]
+            else:
+                pipeline_params = STREAMING_PLANNER_DEFAULTS.copy()
+
+            rag_chunk_count = pipeline_params["rag_chunk_count"]
+            should_web_search = pipeline_params["run_web_search"]
+            should_timetable = pipeline_params["fetch_timetable"]
+            should_faculty = pipeline_params["fetch_faculty"]
+
+            gather_tasks = [_get_recent_session_summaries(current_user.id, session_id)]
+            if should_faculty:
+                gather_tasks.append(get_cached_faculty_knowledge(student_level, current_user))
+            if should_timetable:
+                gather_tasks.append(get_cached_student_timetable(student_level, current_user))
+            gather_results = await asyncio.gather(*gather_tasks)
+            recent_summaries = gather_results[0]
+            faculty_info = gather_results[1] if should_faculty else ""
+            timetable_info = (
+                gather_results[2]
+                if should_faculty and should_timetable
+                else (gather_results[1] if should_timetable else "")
+            )
+
+            web_search_globally_enabled = bool((cached_config or {}).get("web_search_enabled", True))
+            effective_web_search = should_web_search and web_search_globally_enabled
+            if effective_web_search and user_text.strip():
+                yield {"status": "searching_web"}
+                ws_result = await search_web(
+                    query=user_text,
+                    user_id=current_user.id,
+                    web_search_enabled=web_search_globally_enabled,
+                )
+                if ws_result == "__LIMIT_REACHED__":
+                    web_search_limit_reached = True
+                else:
+                    web_search_text = ws_result
+
             context_text = ""
             retrieved_citations: list[dict] = []
             if should_skip_rag:
@@ -1851,9 +2090,15 @@ async def regenerate_response(
                     document_id=None,
                     user_level=None if student_level == "Unknown" else student_level,
                     current_user=current_user,
+                    rag_match_count=rag_chunk_count,
                 )
             citations.clear()
             citations.extend(retrieved_citations)
+
+            if payload.thinking_mode:
+                progress_update = _generate_retrieval_progress_update(citations, pipeline_params)
+                yield {"thinking_update": progress_update}
+                yield {"thinking_done": True}
 
             nigeria_now = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=1)))
             current_time_str = nigeria_now.strftime("%A, %B %d, %Y, %I:%M %p")
@@ -1910,6 +2155,34 @@ TIMETABLE PROTOCOL: You possess the student's exact weekly class schedule under 
 {greeting_policy}
 """
 
+            if web_search_text:
+                final_system_prompt += f"""
+
+WEB SEARCH RESULTS (live, retrieved just now - today's date: {current_time_str}):
+{web_search_text}
+
+Instructions for web results:
+- Cite sources naturally when referencing web results (e.g. "According to [title]...").
+- Prefer RAG document context over web results for pharmacy curriculum questions.
+- For current events, drug recalls, recent news, or real-world updates - prefer web results.
+"""
+
+            if web_search_limit_reached:
+                final_system_prompt += """
+
+NOTE: The user requested web search but has reached their daily limit (5 searches/day).
+Respond using your existing knowledge and RAG context only.
+Do not mention the limit in your response unless the user explicitly asks why web search is unavailable.
+"""
+
+            if context_text:
+                final_system_prompt += f"\n\nRELEVANT CURRICULUM CONTEXT:\n{context_text}"
+
+            if web_search_text:
+                final_system_prompt += f"\n\nLIVE WEB SEARCH RESULTS:\n{web_search_text}"
+
+            final_system_prompt += "\n\nIMPORTANT: Do NOT cite sources, lecturers, course codes, or page numbers inline in your response. Never write things like (Prof. X, PTE 411) or (Source: ...) in your answers. Sources are provided separately to the user."
+
             llm_messages = [{"role": "system", "content": final_system_prompt}]
             llm_messages.extend(history_msgs)
 
@@ -1942,6 +2215,12 @@ TIMETABLE PROTOCOL: You possess the student's exact weekly class schedule under 
                 is_vision_mode = False
             yield {"status": "thinking"}
 
+            if not payload.thinking_mode and model_uses_thinking(selected_model):
+                for msg in llm_messages:
+                    if msg["role"] == "system" and msg["content"] == final_system_prompt:
+                        msg["content"] = "/no_think\n" + msg["content"]
+                        break
+
             llm_messages = _trim_messages_to_fit(llm_messages, final_system_prompt)
             llm_messages = merge_system_into_user(llm_messages)
             completion_stream = llm_engine.generate_dual_cloud_stream(
@@ -1960,7 +2239,7 @@ TIMETABLE PROTOCOL: You possess the student's exact weekly class schedule under 
             session_id,
             citations=citations,
             user_id=current_user.id,
-            thinking_mode=True,
+            thinking_mode=payload.thinking_mode,
         )
 
     except HTTPException:

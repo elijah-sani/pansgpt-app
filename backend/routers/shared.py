@@ -5,7 +5,7 @@ Handles AI-powered chat interactions using Groq with vector search.
 from fastapi import APIRouter, HTTPException, Depends, Header, File, UploadFile, Request, Form
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, field_validator
-from typing import List, Optional, Literal
+from typing import Any, AsyncIterator, List, Optional, Literal
 import logging
 import os
 import asyncio
@@ -217,6 +217,7 @@ _timetable_cache = TTLCache(maxsize=10, ttl=300)
 _profile_cache = TTLCache(maxsize=100, ttl=300)
 _student_scope_cache = TTLCache(maxsize=100, ttl=300)
 _drive_metadata_cache = TTLCache(maxsize=200, ttl=7200)
+_academic_context_cache = TTLCache(maxsize=100, ttl=300)
 
 def invalidate_settings_cache() -> None:
     """
@@ -224,6 +225,13 @@ def invalidate_settings_cache() -> None:
     """
     _settings_cache.clear()
     logger.info("System settings cache invalidated")
+
+
+def invalidate_academic_context_cache(university_id: Optional[str] = None) -> None:
+    if university_id:
+        _academic_context_cache.pop(university_id, None)
+    else:
+        _academic_context_cache.clear()
 
 async def get_cached_settings():
     """
@@ -257,6 +265,68 @@ def _normalize_optional_text(value: Optional[str]) -> Optional[str]:
         return None
     normalized = str(value).strip()
     return normalized or None
+
+
+def normalize_semester(value: Optional[str]) -> Optional[str]:
+    raw = (value or "").strip().lower()
+    if not raw:
+        return None
+    compact = re.sub(r"[\s_-]+", " ", raw).strip()
+    aliases = {
+        "first": "first",
+        "first semester": "first",
+        "1st": "first",
+        "1st semester": "first",
+        "one": "first",
+        "second": "second",
+        "second semester": "second",
+        "2nd": "second",
+        "2nd semester": "second",
+        "two": "second",
+    }
+    normalized = aliases.get(compact)
+    if not normalized:
+        raise HTTPException(status_code=400, detail="semester must be first or second")
+    return normalized
+
+
+async def get_current_academic_context(university_id: Optional[str]) -> Optional[dict]:
+    normalized_university_id = _normalize_optional_text(university_id)
+    if not normalized_university_id:
+        return None
+
+    if normalized_university_id in _academic_context_cache:
+        return _academic_context_cache[normalized_university_id]
+
+    sb = supabase_service_client or supabase_client
+    if not sb:
+        return None
+
+    try:
+        res = await _execute_with_retry(
+            lambda: sb.table("academic_contexts")
+            .select("id,university_id,current_academic_session,current_semester,updated_at,updated_by")
+            .eq("university_id", normalized_university_id)
+            .limit(1)
+            .execute(),
+            "Fetch current academic context",
+        )
+        row = (res.data or [None])[0]
+        if not row:
+            return None
+        context = {
+            "id": row.get("id"),
+            "university_id": row.get("university_id"),
+            "current_academic_session": row.get("current_academic_session"),
+            "current_semester": normalize_semester(row.get("current_semester")),
+            "updated_at": row.get("updated_at"),
+            "updated_by": row.get("updated_by"),
+        }
+        _academic_context_cache[normalized_university_id] = context
+        return context
+    except Exception as exc:
+        logger.warning("Could not fetch academic context for university_id=%s: %s", normalized_university_id, exc)
+        return None
 
 
 def _level_candidates(level: str) -> set[str]:
@@ -303,13 +373,9 @@ def _is_ai_retrievable_document(document_row: Optional[dict]) -> bool:
         return False
     embedding_status = str(document_row.get("embedding_status") or "").strip().lower()
     material_status = str(document_row.get("material_status") or "").strip().lower()
-    visibility = str(document_row.get("visibility") or "").strip().lower()
-    approval_status = str(document_row.get("approval_status") or "").strip().lower()
     return (
         embedding_status == "completed"
         and material_status == "active"
-        and visibility == "visible"
-        and approval_status == "approved"
     )
 
 
@@ -537,6 +603,8 @@ class ChatRequest(BaseModel):
     context: Optional[str] = None
     messages: Optional[List[Message]] = []
     document_id: Optional[str] = None  # For RAG: restricts search to specific PDF
+    academic_session: Optional[str] = None
+    semester: Optional[str] = None
     image: Optional[str] = None      # Base64 image string for DB storage
     images: Optional[List[str]] = []    # New: multiple images
     system_instruction: Optional[str] = None # For decoupled prompt logic (hidden instructions)
@@ -556,6 +624,11 @@ class ChatRequest(BaseModel):
         v = v.replace('\x00', '')
         return v.strip()[:4000]
 
+    @field_validator('semester', mode='before')
+    @classmethod
+    def normalize_semester_field(cls, v: Optional[str]) -> Optional[str]:
+        return normalize_semester(v)
+
 class CreateSessionRequest(BaseModel):
     title: Optional[str] = "New Chat"
     context_id: Optional[str] = None
@@ -565,12 +638,14 @@ class ChatSession(BaseModel):
     title: str
     context_id: Optional[str] = None
     created_at: datetime
+    updated_at: Optional[datetime] = None
 
 class CreateSessionResponse(BaseModel):
     id: str
     title: str
     context_id: Optional[str] = None
     created_at: datetime
+    updated_at: Optional[datetime] = None
 
 
 class FeedbackRequest(BaseModel):
@@ -710,6 +785,9 @@ async def get_relevant_context(
     document_id: Optional[str] = None,
     user_level: Optional[str] = None,
     current_user: Optional[User] = None,
+    academic_session: Optional[str] = None,
+    semester: Optional[str] = None,
+    rag_match_count: Optional[int] = None,  # [AGENTIC LAYER] — planner-supplied chunk count overrides heuristic
 ) -> tuple[str, list[dict]]:
     """
     RAG Helper: Embed user question and retrieve relevant chunks via vector search.
@@ -734,6 +812,9 @@ async def get_relevant_context(
 
     student_university_id = None
     resolved_level = (user_level or "").strip()
+    requested_academic_session = _normalize_optional_text(academic_session)
+    requested_semester = normalize_semester(semester)
+    context_filter_source = "request" if (requested_academic_session or requested_semester) else None
     if current_user is not None:
         student_context = await resolve_student_university_context(current_user)
         student_university_id = student_context.get("university_id")
@@ -757,7 +838,7 @@ async def get_relevant_context(
         settings = await get_cached_settings()
         match_threshold = float(settings.get("rag_threshold", 0.50)) if settings and settings.get("rag_threshold") is not None else float(os.getenv("RAG_MATCH_THRESHOLD", "0.50"))
 
-        # Detect broad/listing queries — fetch more chunks at lower threshold
+        # [AGENTIC LAYER - superseded] Detect broad/listing queries — kept as fallback when no planner count provided
         _BROAD_QUERY_KEYWORDS = {
             "list all", "list the", "what are all", "what topics", "what does this cover",
             "what is covered", "how many groups", "how many topics", "how many sections",
@@ -768,7 +849,12 @@ async def get_relevant_context(
         }
         question_lower = user_question.lower()
         is_broad_query = any(kw in question_lower for kw in _BROAD_QUERY_KEYWORDS)
-        rag_match_count = 20 if is_broad_query else 4
+        # [AGENTIC LAYER] — use planner-supplied count if provided; fall back to broad-query heuristic
+        if rag_match_count is not None:  # [AGENTIC LAYER]
+            _resolved_match_count = rag_match_count  # [AGENTIC LAYER]
+        else:  # [AGENTIC LAYER]
+            _resolved_match_count = 20 if is_broad_query else 4  # [AGENTIC LAYER - superseded heuristic]
+        rag_match_count = _resolved_match_count  # [AGENTIC LAYER]
         rag_threshold = 0.25 if is_broad_query else match_threshold
 
         # ----------------------------
@@ -794,7 +880,7 @@ async def get_relevant_context(
                 try:
                     meta_response = await _execute_with_retry(
                         lambda: supabase_client.table("pans_library")
-                        .select("id,file_name,topic,lecturer_name,course_code,university_id,embedding_status,material_status,visibility,approval_status")
+                        .select("id,file_name,topic,lecturer_name,course_code,university_id,embedding_status,material_status")
                         .eq("id", document_id)
                         .execute(),
                         "Fetch document metadata by UUID",
@@ -814,7 +900,7 @@ async def get_relevant_context(
                     try:
                         doc_response = await _execute_with_retry(
                             lambda: supabase_client.table("pans_library")
-                            .select("id,file_name,topic,lecturer_name,course_code,university_id,embedding_status,material_status,visibility,approval_status")
+                            .select("id,file_name,topic,lecturer_name,course_code,university_id,embedding_status,material_status")
                             .eq("drive_file_id", document_id)
                             .execute(),
                             "Fetch document metadata by Drive ID",
@@ -845,7 +931,7 @@ async def get_relevant_context(
                 return "", []
             if not _is_ai_retrievable_document(doc_metadata):
                 logger.info(
-                    "Skipping study-mode retrieval for document_id=%s because document is not AI-retrievable (embedding/material/visibility/approval state)",
+                    "Skipping study-mode retrieval for document_id=%s because document is not AI-retrievable (embedding/material state)",
                     doc_metadata.get("id") or document_id,
                 )
                 return "", []
@@ -1011,25 +1097,54 @@ async def get_relevant_context(
             logger.info("Skipping global chat retrieval for user_id=%s because level is missing", getattr(current_user, "id", "unknown"))
             return "", []
 
+        if not requested_academic_session and not requested_semester:
+            academic_context = await get_current_academic_context(student_university_id)
+            if academic_context:
+                requested_academic_session = _normalize_optional_text(academic_context.get("current_academic_session"))
+                requested_semester = normalize_semester(academic_context.get("current_semester"))
+                context_filter_source = "current_academic_context"
+
         # Build candidate level strings to handle format mismatches
         # User profile might store "400" but documents use "400lvl", "400l", etc.
         docs_res = await _execute_with_retry(
             lambda: supabase_client.table("pans_library")
-            .select("id,target_levels,university_id,embedding_status,material_status,visibility,approval_status")
+            .select("id,target_levels,university_id,embedding_status,material_status,academic_session,semester")
             .eq("university_id", student_university_id)
             .eq("embedding_status", "completed")
             .eq("material_status", "active")
-            .eq("visibility", "visible")
-            .eq("approval_status", "approved")
             .execute(),
             "Fetch university-scoped global RAG documents",
         )
         scoped_docs = docs_res.data or []
+        base_scoped_docs = scoped_docs
+        if requested_academic_session:
+            scoped_docs = [
+                row for row in scoped_docs
+                if (row.get("academic_session") or "").strip() == requested_academic_session
+            ]
+        if requested_semester:
+            scoped_docs = [
+                row for row in scoped_docs
+                if normalize_semester(row.get("semester")) == requested_semester
+            ]
         allowed_doc_ids = [
             row.get("id")
             for row in scoped_docs
             if row.get("id") and _doc_matches_level(row.get("target_levels"), resolved_level)
         ]
+        if not allowed_doc_ids and context_filter_source == "current_academic_context":
+            logger.info(
+                "No global RAG documents matched current academic context for user_id=%s university_id=%s session=%s semester=%s; falling back to active university/level documents",
+                getattr(current_user, "id", "unknown"),
+                student_university_id,
+                requested_academic_session,
+                requested_semester,
+            )
+            allowed_doc_ids = [
+                row.get("id")
+                for row in base_scoped_docs
+                if row.get("id") and _doc_matches_level(row.get("target_levels"), resolved_level)
+            ]
 
         if not allowed_doc_ids:
             logger.info(
@@ -1131,6 +1246,429 @@ async def get_relevant_context(
 
         logger.error(f"RAG context retrieval failed: {e}", exc_info=True)
         return "", []
+
+async def determine_pipeline_parameters(
+    user_text: str,
+    student_profile_text: str,
+    llm_engine_instance,
+) -> dict:
+    """
+    Agentic Thinking Layer: makes a single pre-pipeline LLM call (thinking ON)
+    that returns structured routing decisions for the chat pipeline.
+
+    Decides:
+      - rag_chunk_count  : how many RAG chunks to retrieve (3, 6, or 10)
+      - run_web_search   : whether live web search should be performed
+      - fetch_timetable  : whether to inject the student's weekly timetable
+      - fetch_faculty    : whether to inject faculty/curriculum knowledge
+
+    Always returns a safe dict — never raises. Falls back to defaults on any error.
+    """
+    _PLANNER_DEFAULTS = {
+        "rag_chunk_count": 6,
+        "run_web_search": False,
+        "fetch_timetable": True,
+        "fetch_faculty": True,
+    }
+
+    try:
+        planning_prompt = f"""You are the routing brain of PansGPT, an AI pharmacy study assistant.
+Your job is to analyse the student's message and decide which pipeline components to activate.
+Think carefully, then output ONLY a single JSON object — no explanation, no markdown fences.
+
+STUDENT PROFILE:
+{student_profile_text}
+
+STUDENT MESSAGE:
+{user_text}
+
+ROUTING RULES:
+1. rag_chunk_count — how many curriculum chunks to retrieve from the vector database.
+   - 3  → short factual recall, greeting, yes/no, or simple one-word answer ("what is aspirin?")
+   - 6  → standard academic question requiring a paragraph-level answer (default for most questions)
+   - 10 → complex multi-part question, comparison, mechanism breakdown, or the user asks to "list all", "summarise", "explain in detail", "compare", or asks about an entire topic/chapter
+2. run_web_search — set true ONLY when the question clearly requires real-world current information
+   that is unlikely to be in lecture materials: drug recalls, recent news, live prices, current events,
+   research published after 2023, or the student explicitly says "search the web" / "look it up online".
+   Always false for greetings, conversational replies, or standard curriculum questions.
+3. fetch_timetable — set true when the student mentions schedule, class, timetable, lecture time,
+   "when is", "what day", "do I have class", or any day-of-week reference.
+   Set false for purely academic/drug/clinical questions with no schedule component.
+4. fetch_faculty — set true when the student asks about courses, lecturers, curriculum, course codes,
+   faculty rules, department policies, or anything that requires knowledge of their specific programme.
+   Set false for pure greetings, simple maths, general world-knowledge questions, or small talk
+   that has nothing to do with their degree programme.
+
+OUTPUT — respond with ONLY this JSON (no extra text, no markdown):
+{{
+  "rag_chunk_count": <3|6|10>,
+  "run_web_search": <true|false>,
+  "fetch_timetable": <true|false>,
+  "fetch_faculty": <true|false>
+}}"""
+
+        response = await llm_engine_instance.generate_completion_with_failover(
+            messages=[{"role": "user", "content": planning_prompt}],
+            temperature=0.1,
+            max_tokens=800,
+            has_images=False,
+            stream=False,
+        )
+
+        if response is None:
+            raise RuntimeError("Planner LLM returned None")
+
+        raw_content = response.choices[0].message.content or ""
+
+        # Strip any <think>...</think> / <thinking>...</thinking> blocks the model emits
+        # using the same compiled pattern already in thinking_token_utils._BATCH_PATTERN.
+        # We import inline to avoid making shared.py depend on a utils import at module level.
+        _think_re = re.compile(
+            r"<(think|thinking|thought|scratchpad)\b[^>]*>(.*?)</\1>",
+            re.DOTALL | re.IGNORECASE,
+        )
+        clean_text = _think_re.sub("", raw_content).strip()
+
+        # Extract the JSON object — handle any stray whitespace or partial prose
+        json_match = re.search(r"\{[\s\S]*\}", clean_text)
+        if not json_match:
+            raise ValueError(f"No JSON object found in planner output: {clean_text[:200]!r}")
+
+        parsed = json.loads(json_match.group())
+
+        result = {
+            "rag_chunk_count": int(parsed.get("rag_chunk_count", _PLANNER_DEFAULTS["rag_chunk_count"])),
+            "run_web_search": bool(parsed.get("run_web_search", _PLANNER_DEFAULTS["run_web_search"])),
+            "fetch_timetable": bool(parsed.get("fetch_timetable", _PLANNER_DEFAULTS["fetch_timetable"])),
+            "fetch_faculty": bool(parsed.get("fetch_faculty", _PLANNER_DEFAULTS["fetch_faculty"])),
+        }
+
+        # Clamp rag_chunk_count to allowed values
+        if result["rag_chunk_count"] not in (3, 6, 10):
+            closest = min((3, 6, 10), key=lambda v: abs(v - result["rag_chunk_count"]))
+            logger.debug("Planner returned rag_chunk_count=%d; clamping to %d", result["rag_chunk_count"], closest)
+            result["rag_chunk_count"] = closest
+
+        logger.info(
+            "Agentic planner decision: rag_chunks=%d web_search=%s timetable=%s faculty=%s",
+            result["rag_chunk_count"],
+            result["run_web_search"],
+            result["fetch_timetable"],
+            result["fetch_faculty"],
+        )
+        return result
+
+    except Exception as e:
+        logger.warning("Agentic planner failed, using defaults: %s", e)
+        return _PLANNER_DEFAULTS.copy()
+
+
+STREAMING_PLANNER_DEFAULTS = {
+    "rag_chunk_count": 6,
+    "run_web_search": False,
+    "fetch_timetable": True,
+    "fetch_faculty": True,
+}
+PUBLIC_PLANNER_FALLBACK = (
+    "The question is clear and focused. The most useful approach is to identify the main concept "
+    "and organise the explanation in a simple, relevant structure."
+)
+_PUBLIC_PLANNER_LEAK_MARKERS = (
+    "role:",
+    "constraints:",
+    "system:",
+    "context:",
+    "checked",
+    "no headings",
+    "student profile",
+    "<think",
+    "<scratchpad",
+    "<routing",
+    "rag_chunk_count",
+    "run_web_search",
+    "fetch_timetable",
+    "fetch_faculty",
+    "course code",
+    "lecturer",
+    "page number",
+    "model name",
+    "database",
+    "chunk",
+    "json",
+    "planner",
+    "routing",
+)
+
+
+def _validate_pipeline_plan(parsed: dict[str, Any]) -> dict:
+    result = {
+        "rag_chunk_count": int(parsed.get("rag_chunk_count", STREAMING_PLANNER_DEFAULTS["rag_chunk_count"])),
+        "run_web_search": bool(parsed.get("run_web_search", STREAMING_PLANNER_DEFAULTS["run_web_search"])),
+        "fetch_timetable": bool(parsed.get("fetch_timetable", STREAMING_PLANNER_DEFAULTS["fetch_timetable"])),
+        "fetch_faculty": bool(parsed.get("fetch_faculty", STREAMING_PLANNER_DEFAULTS["fetch_faculty"])),
+    }
+    if result["rag_chunk_count"] not in (3, 6, 10):
+        result["rag_chunk_count"] = STREAMING_PLANNER_DEFAULTS["rag_chunk_count"]
+    return result
+
+
+def _is_safe_public_planner_text(text: str) -> bool:
+    clean = (text or "").strip()
+    if not clean or len(clean) > 1400:
+        return False
+    lowered = clean.lower()
+    return not any(marker in lowered for marker in _PUBLIC_PLANNER_LEAK_MARKERS)
+
+
+def _extract_public_thought(raw_text: str) -> str:
+    start_match = re.search(r"<public_thought>", raw_text, re.IGNORECASE)
+    if not start_match:
+        return ""
+    after_start = raw_text[start_match.end():]
+    end_match = re.search(r"</public_thought>", after_start, re.IGNORECASE)
+    if end_match:
+        return after_start[:end_match.start()]
+    routing_match = re.search(r"<routing>", after_start, re.IGNORECASE)
+    if routing_match:
+        return after_start[:routing_match.start()]
+    return after_start
+
+
+def _extract_routing_plan(raw_text: str) -> dict:
+    routing_match = re.search(
+        r"<routing>\s*(\{[\s\S]*?\})\s*</routing>",
+        raw_text,
+        re.IGNORECASE,
+    )
+    if routing_match:
+        payload = routing_match.group(1)
+    else:
+        json_match = re.search(r"\{[\s\S]*\}", raw_text)
+        if not json_match:
+            return STREAMING_PLANNER_DEFAULTS.copy()
+        payload = json_match.group()
+
+    try:
+        parsed = json.loads(payload)
+        return _validate_pipeline_plan(parsed)
+    except Exception as exc:
+        logger.warning("Streaming planner routing parse failed, using defaults: %s", exc)
+        return STREAMING_PLANNER_DEFAULTS.copy()
+
+
+def _take_public_planner_emit(pending: str, force: bool = False) -> tuple[str, str]:
+    if not pending:
+        return "", ""
+    if force:
+        return pending.strip(), ""
+
+    paragraph_idx = pending.rfind("\n\n")
+    if paragraph_idx != -1:
+        return pending[:paragraph_idx + 2], pending[paragraph_idx + 2:]
+
+    if len(pending) >= 220:
+        sentence_match = list(re.finditer(r"[.!?]\s+", pending))
+        if sentence_match:
+            end = sentence_match[-1].end()
+            return pending[:end], pending[end:]
+    return "", pending
+
+
+
+def get_holdback_length(raw_text: str) -> int:
+    target_tags = [
+        "<public_thought>", "</public_thought>",
+        "<routing>", "</routing>",
+        "<think>", "</think>",
+        "<thinking>", "</thinking>",
+        "<thought>", "</thought>",
+        "<scratchpad>", "</scratchpad>"
+    ]
+    lowered = raw_text.lower()
+    max_check = max(len(t) for t in target_tags) - 1
+    for k in range(min(len(lowered), max_check), 0, -1):
+        suffix = lowered[-k:]
+        for tag in target_tags:
+            if tag.startswith(suffix) and k < len(tag):
+                return k
+    return 0
+
+
+def _generate_retrieval_progress_update(citations: list[dict], pipeline_params: dict) -> str:
+    if citations:
+        valid_materials = []
+        seen = set()
+        for c in citations:
+            course = (c.get("course") or "").strip()
+            topic = (c.get("topic") or "").strip()
+            title = (c.get("title") or "").strip()
+            
+            if title.lower().endswith(".pdf"):
+                title = title[:-4].strip()
+                
+            if course.lower() in ("n/a", "none", "null", ""):
+                course = ""
+            if topic.lower() in ("n/a", "none", "null", ""):
+                topic = ""
+            if title.lower() in ("n/a", "none", "null", "unknown document", ""):
+                title = ""
+
+            parts = []
+            if course and topic:
+                parts.append(f"{course} — {topic}")
+            elif course:
+                parts.append(course)
+            elif topic:
+                parts.append(topic)
+            elif title:
+                parts.append(title)
+                
+            if parts:
+                material_str = parts[0].replace("**", "").replace("*", "").replace("`", "").strip()
+                material_str = os.path.basename(material_str)
+                if material_str and material_str not in seen:
+                    seen.add(material_str)
+                    valid_materials.append(material_str)
+                    
+        if len(valid_materials) == 1:
+            return f"I found the relevant details in **{valid_materials[0]}** and will use them to prepare a focused explanation."
+        elif len(valid_materials) > 1:
+            return "I found relevant details across the available course materials and will combine the key points into a clear explanation."
+            
+    if pipeline_params.get("fetch_timetable"):
+        return "I checked the available class schedule and will use it to prepare the response."
+    if pipeline_params.get("fetch_faculty"):
+        return "I found the relevant curriculum details and will use them to prepare the response."
+    return "I checked the available materials and will use them to prepare the response."
+
+
+async def stream_pipeline_plan(
+    user_text: str,
+    student_profile_text: str,
+    llm_engine_instance,
+) -> AsyncIterator[dict]:
+    """
+    Stream safe public planner text and finish with private routing parameters.
+    Yields thinking_update events plus one pipeline_params event.
+    """
+    planning_prompt = f"""You are the visible planning layer for a pharmacy study assistant.
+
+Analyse the student's request and explain the best approach in a natural, concise way suitable for display inside an expandable Thinking panel.
+
+Your public reasoning should state what information needs to be checked or retrieved using student-friendly language, and describe:
+- what the student is asking
+- whether the question is simple, standard, or complex
+- the most useful structure for the final explanation
+- whether current schedule information, curriculum details, or recent external information needs to be checked or retrieved
+
+GUIDELINE EXAMPLES:
+- For a standard academic question:
+  "The student is asking for the different types of ergot alkaloids. This is a standard academic question that will be clearer as a structured classification rather than a long explanation. I will retrieve the relevant academic material and organise the alkaloids into their major classes with suitable examples. No timetable check or recent external information is needed for this question."
+- For a timetable or schedule question:
+  "The student is asking about today's classes. The answer depends on the current schedule, so I will check the available timetable before responding."
+- For a question depending on recent or external information:
+  "This question depends on recent information, so I will check current sources before preparing the response."
+- For a complex academic question:
+  "This question involves several connected concepts. I will retrieve the relevant academic material and build the explanation step by step so the relationship between the concepts is clear."
+
+Do not provide the complete final answer.
+Do not expose hidden chain-of-thought.
+Do NOT mention internal implementation details, such as: "planner", "routing", "pipeline", "RAG", "chunks", "vector search", "embeddings", "database", "model names", "JSON", "system prompts", "hidden instructions", "roles", "constraints", "context blocks", "profile formatting", "source metadata", "lecturer names", "course codes", or "page numbers".
+
+Then output the internal routing decisions privately in the required routing block.
+
+Return exactly:
+
+<public_thought>
+2-5 short natural paragraphs.
+</public_thought>
+<routing>
+{{"rag_chunk_count": <3|6|10>, "run_web_search": <bool>, "fetch_timetable": <bool>, "fetch_faculty": <bool>}}
+</routing>
+
+For simple questions, use 2-3 short paragraphs.
+For complex questions, use up to 5 short paragraphs.
+
+Student profile:
+{student_profile_text}
+
+Student question:
+{user_text}"""
+
+    raw_output = ""
+    emitted_public_length = 0
+    pending_public = ""
+    unsafe_public = False
+    emitted_any_public = False
+
+    try:
+        stream = await llm_engine_instance.generate_completion_with_failover(
+            messages=[{"role": "user", "content": planning_prompt}],
+            temperature=0.2,
+            max_tokens=700,
+            has_images=False,
+            stream=True,
+        )
+        if stream is None:
+            raise RuntimeError("Streaming planner LLM returned None")
+
+        async for chunk in stream:
+            delta = ""
+            try:
+                if chunk and chunk.choices and chunk.choices[0].delta:
+                    delta = chunk.choices[0].delta.content or ""
+            except Exception:
+                delta = ""
+            if not delta:
+                continue
+
+            raw_output += delta
+            holdback = get_holdback_length(raw_output)
+            safe_raw = raw_output[:-holdback] if holdback > 0 else raw_output
+            public_text = _extract_public_thought(safe_raw)
+            if len(public_text) <= emitted_public_length:
+                continue
+
+            new_public = public_text[emitted_public_length:]
+            emitted_public_length = len(public_text)
+            if not new_public or re.search(r"</?public_thought|</?routing", new_public, re.IGNORECASE):
+                continue
+
+            candidate = pending_public + new_public
+            if not _is_safe_public_planner_text(candidate):
+                unsafe_public = True
+                pending_public = ""
+                continue
+
+            pending_public = candidate
+            emit_text, pending_public = _take_public_planner_emit(pending_public)
+            if emit_text and _is_safe_public_planner_text(emit_text):
+                emitted_any_public = True
+                yield {"thinking_update": emit_text}
+
+        holdback = get_holdback_length(raw_output)
+        safe_final_raw = raw_output[:-holdback] if holdback > 0 else raw_output
+        final_public = _extract_public_thought(safe_final_raw)
+        
+        if not emitted_any_public:
+            if _is_safe_public_planner_text(final_public):
+                fallback_or_final = final_public.strip()
+            else:
+                fallback_or_final = PUBLIC_PLANNER_FALLBACK
+            emitted_any_public = True
+            yield {"thinking_update": fallback_or_final}
+        elif pending_public and not unsafe_public:
+            emit_text, _ = _take_public_planner_emit(pending_public, force=True)
+            if emit_text and _is_safe_public_planner_text(emit_text):
+                yield {"thinking_update": emit_text}
+
+        yield {"pipeline_params": _extract_routing_plan(raw_output)}
+    except Exception as exc:
+        logger.warning("Streaming planner failed, using defaults: %s", exc)
+        yield {"thinking_update": PUBLIC_PLANNER_FALLBACK}
+        yield {"pipeline_params": STREAMING_PLANNER_DEFAULTS.copy()}
+
+
 
 # Function to set dependencies (called from main api.py)
 def set_dependencies(supabase, api_key_verifier, supabase_service=None):
