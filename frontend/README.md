@@ -23,6 +23,8 @@ This project uses [`next/font`](https://nextjs.org/docs/app/building-your-applic
 ## Future To-Do
 
 - Revisit desktop academic quick-action chips on the main chat welcome screen. They are currently commented out in `components/main/MainConversation.tsx` until the layout and copy feel right.
+- The Notes feature has been commented out and hidden across the UI (including the PDF viewer, sidebars, and tutorials) per current requirements. The underlying code remains intact and can be re-enabled in the future.
+- The "Thinking Mode" toggle has been temporarily commented out in `components/ChatInput.tsx` to force all queries to the "Fast Mode" path. Re-enable this toggle once the reasoning quality of the Thinking Mode has been improved.
 
 ## Learn More
 

@@ -32,9 +32,11 @@ export function QuizSidebarContent({
         <SidebarLink icon={MessageSquare} label="Chat" onClick={() => routerPush('/main')} isIconOnly={isIconOnly} />
         <SidebarLink icon={BookOpen} label="Study" onClick={() => routerPush('/reader')} isIconOnly={isIconOnly} />
         <SidebarLink icon={Brain} label="Quiz" onClick={() => routerPush('/quiz')} active={pathname === '/quiz' || pathname.startsWith('/quiz/')} isIconOnly={isIconOnly} />
+        {/* COMMENTED OUT: Notes Feature
         {isIconOnly ? (
           <SidebarNotesSection isIconOnly notes={notes} totalNotes={totalNotes} routerPush={routerPush} />
         ) : null}
+        */}
       </nav>
 
       {!isIconOnly ? (
@@ -82,7 +84,9 @@ export function QuizSidebarContent({
             </section>
           ) : null}
 
+          {/* COMMENTED OUT: Notes Feature
           <SidebarNotesSection isIconOnly={false} notes={notes} totalNotes={totalNotes} routerPush={routerPush} />
+          */}
         </>
       ) : null}
     </>

@@ -21,12 +21,14 @@ const STEPS = [
         description: 'Select any text on the page to reveal a quick action bar. You can ask the AI to explain or define the selected text, copy it, or save it as a note instantly.',
         tip: 'Long-press on mobile to select text.',
     },
+    /* COMMENTED OUT: Notes feature hidden
     {
         icon: BookmarkPlus,
         title: 'Notes Panel',
         description: 'Save highlights, image snippets, and your own annotations to the Notes panel. Export all your notes as a PDF when you\'re ready to review.',
         tip: 'Click the Notes button in the top bar to open your notes.',
     },
+    */
 ];
 
 interface StudyModeTutorialProps {
