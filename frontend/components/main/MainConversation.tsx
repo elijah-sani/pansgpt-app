@@ -2,22 +2,32 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'; // changed: added useLayoutEffect for synchronous scroll anchoring after DOM paint
 import type { CSSProperties, ChangeEvent, ClipboardEvent, Dispatch, RefObject, SetStateAction } from 'react';
-import { AlertCircle, BookOpen, Check, ChevronDown, Copy, FileText, GraduationCap, HelpCircle, Layers, Pencil, RotateCw } from 'lucide-react';
+import { AlertCircle, ArrowDown, BookOpen, Check, ChevronDown, Copy, FileText, GraduationCap, HelpCircle, Layers, Pencil, RotateCw } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import ChatInput from '@/components/ChatInput';
 import ChatSkeleton from '@/components/ChatSkeleton';
 import MessageBubble, { type Message } from '@/components/MessageBubble';
 import { api } from '@/lib/api';
-import { CHAT_TEXT_SIZE_EVENT, CHAT_TEXT_SIZE_KEY, type ChatTextSize } from '@/lib/settings-events';
+import {
+  CHAT_TEXT_SIZE_EVENT,
+  CHAT_TEXT_SIZE_KEY,
+  CHAT_TEXT_SIZE_PIXELS,
+  CHAT_TEXT_SIZE_STEPS,
+  type ChatTextSize,
+} from '@/lib/settings-events';
 import type { WebSearchUsage } from './types';
 import { toast } from 'sonner';
+import { QuickActionCards } from "@/components/main/QuickActionCards" // [QUICK ACTION CARDS]
+import { QuickActionModal } from "@/components/main/QuickActionModal" // [QUICK ACTION CARDS]
+import { QUICK_ACTION_CARDS } from "@/components/main/QuickActionCards" // [QUICK ACTION CARDS]
 
 const MESSAGE_COLLAPSE_THRESHOLD = 300;
 // changed: LOAD_OLDER_SCROLL_THRESHOLD removed — IntersectionObserver replaces the scroll threshold check
 const CHAT_TEXT_SIZE_STYLES: Record<ChatTextSize, CSSProperties> = {
-  small: { '--chat-text-size': '14px' } as CSSProperties,
-  medium: { '--chat-text-size': '15px' } as CSSProperties,
-  large: { '--chat-text-size': '17px' } as CSSProperties,
+  small: { '--chat-text-size': CHAT_TEXT_SIZE_PIXELS.small } as CSSProperties,
+  medium: { '--chat-text-size': CHAT_TEXT_SIZE_PIXELS.medium } as CSSProperties,
+  large: { '--chat-text-size': CHAT_TEXT_SIZE_PIXELS.large } as CSSProperties,
+  xl: { '--chat-text-size': CHAT_TEXT_SIZE_PIXELS.xl } as CSSProperties,
 };
 
 const EMPTY_STATE_CHIPS = [
@@ -305,6 +315,7 @@ export function MainConversation({
   const [isSavingBookmark, setIsSavingBookmark] = useState(false);
   const [selectedExistingNoteId, setSelectedExistingNoteId] = useState<string | null>(null);
   const [existingNoteSearch, setExistingNoteSearch] = useState('');
+  const [activeCard, setActiveCard] = useState<typeof QUICK_ACTION_CARDS[number] | null>(null); // [QUICK ACTION CARDS]
   const [welcomeCopy, setWelcomeCopy] = useState<WelcomeCopy>(() => ({
     greeting: `Hello Pharm, ${studentFirstName || 'there'}`,
     mobileGreeting: `Hi, ${studentFirstName || 'there'}`,
@@ -359,13 +370,13 @@ export function MainConversation({
 
   useEffect(() => {
     const savedSize = window.localStorage.getItem(CHAT_TEXT_SIZE_KEY);
-    if (savedSize === 'small' || savedSize === 'medium' || savedSize === 'large') {
-      setChatTextSize(savedSize);
+    if (CHAT_TEXT_SIZE_STEPS.includes(savedSize as ChatTextSize)) {
+      setChatTextSize(savedSize as ChatTextSize);
     }
 
     const handleChatTextSizeUpdated = (event: Event) => {
       const size = (event as CustomEvent<ChatTextSize>).detail;
-      if (size === 'small' || size === 'medium' || size === 'large') {
+      if (CHAT_TEXT_SIZE_STEPS.includes(size)) {
         setChatTextSize(size);
       }
     };
@@ -566,6 +577,11 @@ export function MainConversation({
     });
   };
 
+  const handleQuickActionSubmit = (prompt: string) => { // [QUICK ACTION CARDS]
+    setInputMessage(prompt); // [QUICK ACTION CARDS]
+    window.setTimeout(() => textareaRef.current?.focus(), 0); // [QUICK ACTION CARDS]
+  }; // [QUICK ACTION CARDS]
+
   const renderChatInput = (
     compactSpacing = false,
     variant: 'default' | 'welcome' = 'default',
@@ -633,7 +649,7 @@ export function MainConversation({
         className="flex-1 min-h-0 overflow-y-auto pt-16 pb-4"
         style={{ ...CHAT_TEXT_SIZE_STYLES[chatTextSize], overflowAnchor: 'none' }} // changed: overflowAnchor:'none' lets our useLayoutEffect own scroll anchoring
       >
-        <div className="max-w-4xl mx-auto px-4 min-h-full flex flex-col">
+        <div className="max-w-[741px] mx-auto px-4 min-h-full flex flex-col">
           {isLoadingChat ? (
             <ChatSkeleton />
           ) : !hasMessages ? (
@@ -681,7 +697,14 @@ export function MainConversation({
                   ))}
                 </div>
                 */}
+                {activeCard === null ? <QuickActionCards onCardClick={setActiveCard} /> : null} {/* [QUICK ACTION CARDS] */}
               </div>
+              <QuickActionModal // [QUICK ACTION CARDS]
+                isOpen={activeCard !== null} // [QUICK ACTION CARDS]
+                onClose={() => setActiveCard(null)} // [QUICK ACTION CARDS]
+                card={activeCard} // [QUICK ACTION CARDS]
+                onSubmit={handleQuickActionSubmit} // [QUICK ACTION CARDS]
+              /> {/* [QUICK ACTION CARDS] */}
             </div>
           ) : (
             <div className="py-4 flex flex-col">
@@ -694,7 +717,7 @@ export function MainConversation({
                 const isExpanded = expandedMessages.has(messageKey);
 
                 return (
-                  <div key={index} className={`flex flex-col ${message.role === 'user' ? 'items-end mb-[6px] md:mb-[12px]' : 'items-start mb-8'} w-full group`}>
+                  <div id={`chat-message-${index}`} key={index} className={`flex flex-col ${message.role === 'user' ? 'items-end mb-[6px] md:mb-[12px]' : 'items-start mb-8'} w-full group`}>
                     {message.role === 'user' ? (
                       <>
                         {(() => {
@@ -852,20 +875,7 @@ export function MainConversation({
         </div>
       </div>
 
-      <div
-        className={`pointer-events-none absolute bottom-[70px] left-1/2 z-10 -translate-x-1/2 transition-opacity duration-200 ${
-          showScrollToBottom && !isLoadingChat ? 'opacity-100' : 'opacity-0'
-        }`}
-      >
-        <button
-          type="button"
-          onClick={handleScrollToBottom}
-          aria-label="Scroll to bottom"
-          className="pointer-events-auto bg-background rounded-full shadow-sm p-2"
-        >
-          <ChevronDown className="w-5 h-5" />
-        </button>
-      </div>
+
 
       {isBookmarkModalOpen && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
@@ -963,7 +973,23 @@ export function MainConversation({
         </div>
       )}
 
-      {hasMessages ? renderChatInput() : <div className="sm:hidden">{renderChatInput()}</div>}
+      <div className="relative w-full shrink-0">
+        <div
+          className={`pointer-events-none absolute bottom-[calc(100%+24px)] left-1/2 z-10 -translate-x-1/2 transition-opacity duration-200 ${
+            showScrollToBottom && !isLoadingChat ? 'opacity-100' : 'opacity-0'
+          }`}
+        >
+          <button
+            type="button"
+            onClick={handleScrollToBottom}
+            aria-label="Scroll to bottom"
+            className="pointer-events-auto bg-background border border-border rounded-full shadow-lg p-1.5 hover:bg-accent hover:text-accent-foreground transition-colors flex items-center justify-center"
+          >
+            <ArrowDown className="w-4 h-4" strokeWidth={2.4} />
+          </button>
+        </div>
+        {hasMessages ? renderChatInput() : <div className="sm:hidden">{renderChatInput()}</div>}
+      </div>
     </div>
   );
 }
