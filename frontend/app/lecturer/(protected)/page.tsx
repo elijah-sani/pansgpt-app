@@ -17,7 +17,7 @@ import {
 } from '@/lib/lecturer-dashboard-search';
 
 type RestrictionStatus = 'scheduled' | 'active' | 'completed' | 'cancelled';
-type MaterialStatus = 'pending_review' | 'approved' | 'rejected' | 'ingesting' | 'ingested' | 'failed';
+type MaterialStatus = 'pending_review' | 'approved' | 'rejected' | 'cancelled';
 
 type RestrictionRecord = {
   id: string;
@@ -34,6 +34,9 @@ type MaterialSubmission = {
   title: string;
   course_code: string | null;
   status: MaterialStatus;
+  pans_library_id: string | null;
+  library_embedding_status: 'pending' | 'processing' | 'completed' | 'failed' | string | null;
+  library_embedding_progress: number | null;
   created_at: string | null;
 };
 
@@ -70,18 +73,14 @@ const MATERIAL_STATUS_LABELS: Record<MaterialStatus, string> = {
   pending_review: 'Pending review',
   approved: 'Approved',
   rejected: 'Rejected',
-  ingesting: 'Preparing',
-  ingested: 'Added',
-  failed: 'Needs attention',
+  cancelled: 'Cancelled',
 };
 
 const MATERIAL_STATUS_CLASSNAMES: Record<MaterialStatus, string> = {
   pending_review: 'border-amber-500/20 bg-amber-500/10 text-amber-300',
   approved: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300',
   rejected: 'border-rose-500/20 bg-rose-500/10 text-rose-300',
-  ingesting: 'border-sky-500/20 bg-sky-500/10 text-sky-300',
-  ingested: 'border-primary/20 bg-primary/10 text-primary',
-  failed: 'border-orange-500/20 bg-orange-500/10 text-orange-300',
+  cancelled: 'border-slate-500/20 bg-slate-500/10 text-slate-300',
 };
 
 const RESTRICTION_STATUS_CLASSNAMES: Record<RestrictionStatus, string> = {
@@ -153,7 +152,7 @@ export default function LecturerDashboardPage() {
       id: `material-${material.id}`,
       title: material.title,
       meta: `Material - ${material.course_code || 'Course not set'} - ${formatDateTime(material.created_at)}`,
-      status: MATERIAL_STATUS_LABELS[material.status],
+      status: getMaterialActivityStatus(material),
       statusClassName: MATERIAL_STATUS_CLASSNAMES[material.status],
       timestamp: getTimestamp(material.created_at),
     }));
@@ -288,6 +287,22 @@ export default function LecturerDashboardPage() {
       </div>
     </div>
   );
+}
+
+function getMaterialActivityStatus(material: MaterialSubmission) {
+  if (material.pans_library_id) {
+    const embedding = String(material.library_embedding_status || '').toLowerCase();
+    if (embedding === 'processing') {
+      const pct = typeof material.library_embedding_progress === 'number'
+        ? Math.max(0, Math.min(100, material.library_embedding_progress))
+        : 0;
+      return `Processing ${pct}%`;
+    }
+    if (embedding === 'completed') return 'Completed';
+    if (embedding === 'failed') return 'Failed';
+    if (embedding === 'pending') return 'Pending';
+  }
+  return MATERIAL_STATUS_LABELS[material.status];
 }
 
 function MobileSearchEntry() {

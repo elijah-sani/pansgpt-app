@@ -57,11 +57,19 @@ class RestrictionCreateRequest(BaseModel):
         extra = "forbid"
 
 
+class MaterialSubmissionCancelRequest(BaseModel):
+    reason: Optional[str] = None
+
+    class Config:
+        extra = "forbid"
+
+
 MATERIAL_SUBMISSION_SELECT = (
     "id,university_id,lecturer_id,course_code,course_title,level,material_type,title,"
     "description,file_name,file_url,storage_provider,file_type,mime_type,is_supported_file,"
-    "status,reviewed_by,reviewed_at,review_note,pans_library_id,created_at,updated_at,"
-    "lecturer:lecturer_profiles(title,full_name,email),"
+    "status,reviewed_by,reviewed_at,review_note,pans_library_id,cancelled_at,cancelled_by,"
+    "cancellation_reason,drive_file_id,original_drive_file_id,converted_drive_file_id,created_at,updated_at,"
+    "lecturer:lecturer_profiles!lecturer_material_submissions_lecturer_id_fkey(title,full_name,email),"
     "university:universities(name)"
 )
 
@@ -202,6 +210,37 @@ async def _insert_material_audit_log(
         logger.warning("Material submission audit log failed for %s: %s", submission_id, exc)
 
 
+async def _insert_material_cleanup_audit_log(
+    *,
+    actor_user_id: str,
+    actor_role: str,
+    university_id: str,
+    action: str,
+    metadata: dict,
+    submission_id: Optional[str] = None,
+) -> None:
+    sb = _db()
+    if not sb:
+        return
+
+    try:
+        await _run_db(
+            lambda: sb.table("access_control_audit_logs")
+            .insert({
+                "actor_user_id": actor_user_id,
+                "actor_role": actor_role,
+                "university_id": university_id,
+                "action": action,
+                "target_type": "lecturer_material_submission",
+                "target_id": submission_id,
+                "metadata": metadata,
+            })
+            .execute()
+        )
+    except Exception as exc:
+        logger.warning("Material cleanup audit log failed for %s: %s", submission_id or "upload", exc)
+
+
 def _material_submission_to_response(row: dict) -> dict:
     lecturer = row.get("lecturer")
     if isinstance(lecturer, list):
@@ -247,9 +286,51 @@ def _material_submission_to_response(row: dict) -> dict:
         "reviewed_at": row.get("reviewed_at"),
         "review_note": row.get("review_note"),
         "pans_library_id": row.get("pans_library_id"),
+        "cancelled_at": row.get("cancelled_at"),
+        "cancelled_by": row.get("cancelled_by"),
+        "cancellation_reason": row.get("cancellation_reason"),
+        "drive_file_id": row.get("drive_file_id"),
+        "original_drive_file_id": row.get("original_drive_file_id"),
+        "converted_drive_file_id": row.get("converted_drive_file_id"),
+        "library_embedding_status": row.get("library_embedding_status"),
+        "library_embedding_progress": row.get("library_embedding_progress"),
+        "library_embedding_error": row.get("library_embedding_error"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
     }
+
+
+async def _enrich_material_submissions_with_library_state(rows: list[dict]) -> list[dict]:
+    library_ids = [row.get("pans_library_id") for row in rows if row.get("pans_library_id")]
+    if not library_ids:
+        return rows
+
+    sb = _db()
+    if not sb:
+        return rows
+
+    try:
+        library_res = await _run_db(
+            lambda: sb.table("pans_library")
+            .select("id,embedding_status,embedding_progress,embedding_error")
+            .in_("id", library_ids)
+            .execute()
+        )
+    except Exception as exc:
+        logger.warning("Lecturer material library state lookup failed: %s", exc)
+        return rows
+
+    by_id = {row.get("id"): row for row in (library_res.data or []) if row.get("id")}
+    enriched: list[dict] = []
+    for row in rows:
+        payload = dict(row)
+        linked = by_id.get(row.get("pans_library_id"))
+        if linked:
+            payload["library_embedding_status"] = linked.get("embedding_status")
+            payload["library_embedding_progress"] = linked.get("embedding_progress")
+            payload["library_embedding_error"] = linked.get("embedding_error")
+        enriched.append(payload)
+    return enriched
 
 
 async def _get_material_submission_by_id(submission_id: str) -> Optional[dict]:
@@ -271,6 +352,72 @@ async def _get_material_submission_by_id(submission_id: str) -> Optional[dict]:
 
     rows = res.data or []
     return rows[0] if rows else None
+
+
+async def _is_drive_file_referenced_elsewhere(drive_file_id: str, submission_id: str) -> bool:
+    sb = _db()
+    if not sb:
+        return True
+
+    try:
+        submission_res = await _run_db(
+            lambda: sb.table("lecturer_material_submissions")
+            .select("id")
+            .neq("id", submission_id)
+            .or_(f"drive_file_id.eq.{drive_file_id},original_drive_file_id.eq.{drive_file_id},converted_drive_file_id.eq.{drive_file_id}")
+            .limit(1)
+            .execute()
+        )
+        if submission_res.data:
+            return True
+
+        library_res = await _run_db(
+            lambda: sb.table("pans_library")
+            .select("id")
+            .eq("drive_file_id", drive_file_id)
+            .limit(1)
+            .execute()
+        )
+        return bool(library_res.data)
+    except Exception as exc:
+        logger.warning("Drive file reference check failed for %s: %s", drive_file_id, exc)
+        return True
+
+
+async def _cleanup_cancelled_submission_drive_files(
+    *,
+    submission_id: str,
+    actor_user_id: str,
+    university_id: str,
+    drive_file_ids: list[str],
+) -> list[str]:
+    warnings: list[str] = []
+    unique_ids = list(dict.fromkeys(file_id.strip() for file_id in drive_file_ids if file_id and file_id.strip()))
+    cleanup_results: list[dict] = []
+
+    for drive_file_id in unique_ids:
+        if await _is_drive_file_referenced_elsewhere(drive_file_id, submission_id):
+            cleanup_results.append({"drive_file_id": drive_file_id, "status": "skipped_referenced"})
+            continue
+
+        try:
+            await asyncio.to_thread(drive_service.delete_file, drive_file_id)
+            cleanup_results.append({"drive_file_id": drive_file_id, "status": "deleted"})
+        except Exception as exc:
+            message = f"Drive cleanup failed for file {drive_file_id}: {exc}"
+            warnings.append(message)
+            cleanup_results.append({"drive_file_id": drive_file_id, "status": "failed", "error": str(exc)})
+            logger.warning(message)
+
+    await _insert_material_cleanup_audit_log(
+        actor_user_id=actor_user_id,
+        actor_role="lecturer",
+        university_id=university_id,
+        submission_id=submission_id,
+        action="material_submission_drive_cleanup",
+        metadata={"files": cleanup_results, "warnings": warnings},
+    )
+    return warnings
 
 
 async def _get_restriction_by_id(restriction_id: str) -> Optional[dict]:
@@ -395,7 +542,7 @@ async def list_active_universities():
     try:
         res = await _run_db(
             lambda: sb.table("universities")
-            .select("id,name,short_name,country,state")
+            .select("id,name,short_name,country,state,status")
             .eq("status", "active")
             .order("name", desc=False)
             .execute()
@@ -571,6 +718,8 @@ async def submit_lecturer_material(
         raise HTTPException(status_code=503, detail="Database not active")
     if not drive_service:
         raise HTTPException(status_code=503, detail="The file service is temporarily unavailable. Please try again in a moment.")
+    if not (GOOGLE_DRIVE_FOLDER_ID or "").strip():
+        raise HTTPException(status_code=503, detail="Google Drive upload folder is not configured.")
 
     normalized_topic = normalize_optional_text(topic)
     normalized_level = normalize_optional_text(level)
@@ -647,6 +796,9 @@ async def submit_lecturer_material(
         "file_type": file_type,
         "mime_type": mime_type,
         "is_supported_file": is_supported_file,
+        "drive_file_id": drive_file_id,
+        "original_drive_file_id": drive_file_id,
+        "converted_drive_file_id": None,
         "status": "pending_review",
         "reviewed_by": None,
         "reviewed_at": None,
@@ -662,11 +814,41 @@ async def submit_lecturer_material(
         )
     except Exception as exc:
         logger.error("Material submission failed for lecturer %s: %s", lecturer_profile.id, exc)
+        try:
+            await asyncio.to_thread(drive_service.delete_file, drive_file_id)
+        except Exception as cleanup_exc:
+            logger.warning("Uploaded material cleanup failed after DB insert error for %s: %s", drive_file_id, cleanup_exc)
+            await _insert_material_cleanup_audit_log(
+                actor_user_id=current_user.id,
+                actor_role="lecturer",
+                university_id=lecturer_profile.university_id,
+                action="material_upload_drive_cleanup_failed",
+                metadata={
+                    "drive_file_id": drive_file_id,
+                    "file_name": original_file_name,
+                    "error": str(cleanup_exc),
+                },
+            )
         raise HTTPException(status_code=500, detail="Unable to submit material")
 
     rows = insert_res.data or []
     submission_id = rows[0].get("id") if rows and rows[0].get("id") else None
     if not submission_id:
+        try:
+            await asyncio.to_thread(drive_service.delete_file, drive_file_id)
+        except Exception as cleanup_exc:
+            logger.warning("Uploaded material cleanup failed after missing submission id for %s: %s", drive_file_id, cleanup_exc)
+            await _insert_material_cleanup_audit_log(
+                actor_user_id=current_user.id,
+                actor_role="lecturer",
+                university_id=lecturer_profile.university_id,
+                action="material_upload_drive_cleanup_failed",
+                metadata={
+                    "drive_file_id": drive_file_id,
+                    "file_name": original_file_name,
+                    "error": str(cleanup_exc),
+                },
+            )
         raise HTTPException(status_code=500, detail="Material was submitted but could not be loaded")
 
     created_row = await _get_material_submission_by_id(submission_id)
@@ -697,6 +879,83 @@ async def submit_lecturer_material(
     return {"data": _material_submission_to_response(created_row)}
 
 
+@router.post("/lecturer/materials/{submission_id}/cancel", dependencies=[Depends(verify_api_key)])
+async def cancel_lecturer_material_submission(
+    submission_id: str,
+    payload: MaterialSubmissionCancelRequest,
+    current_user: User = Depends(get_current_user),
+    lecturer_profile=Depends(get_current_active_lecturer),
+):
+    sb = _db()
+    if not sb:
+        raise HTTPException(status_code=503, detail="Database not active")
+    if not drive_service:
+        raise HTTPException(status_code=503, detail="The file service is temporarily unavailable. Please try again in a moment.")
+
+    reason = normalize_optional_text(payload.reason)
+
+    try:
+        rpc_res = await _run_db(
+            lambda: sb.rpc(
+                "cancel_lecturer_material_submission",
+                {
+                    "p_submission_id": submission_id,
+                    "p_lecturer_user_id": current_user.id,
+                    "p_reason": reason,
+                },
+            ).execute()
+        )
+    except Exception as exc:
+        message = str(exc) or "Unable to cancel material submission"
+        if "Material submission not found" in message:
+            raise HTTPException(status_code=404, detail="Material submission not found")
+        if "only cancel your own" in message:
+            raise HTTPException(status_code=403, detail="You can only cancel your own material submissions")
+        if "Approved submissions cannot be cancelled" in message:
+            raise HTTPException(status_code=409, detail="Approved submissions cannot be cancelled")
+        if "Rejected submissions cannot be cancelled" in message:
+            raise HTTPException(status_code=409, detail="Rejected submissions cannot be cancelled")
+        if "Only pending submissions can be cancelled" in message or "Linked submissions cannot be cancelled" in message:
+            raise HTTPException(status_code=409, detail=message)
+        logger.error("Material submission cancellation failed for %s: %s", submission_id, exc)
+        raise HTTPException(status_code=500, detail="Unable to cancel material submission")
+
+    rpc_rows = rpc_res.data or []
+    rpc_row = rpc_rows[0] if rpc_rows else None
+    if not rpc_row:
+        raise HTTPException(status_code=500, detail="Cancellation did not return a result")
+
+    tracked_drive_ids = [
+        rpc_row.get("drive_file_id"),
+        rpc_row.get("original_drive_file_id"),
+        rpc_row.get("converted_drive_file_id"),
+    ]
+    cleanup_warnings = await _cleanup_cancelled_submission_drive_files(
+        submission_id=submission_id,
+        actor_user_id=current_user.id,
+        university_id=lecturer_profile.university_id,
+        drive_file_ids=[str(file_id) for file_id in tracked_drive_ids if file_id],
+    )
+
+    row = await _get_material_submission_by_id(submission_id)
+    if not row:
+        raise HTTPException(status_code=500, detail="Material was cancelled but could not be loaded")
+
+    await _insert_material_audit_log(
+        actor_user_id=current_user.id,
+        actor_role="lecturer",
+        university_id=lecturer_profile.university_id,
+        submission_id=submission_id,
+        action="material_submission_cancelled",
+        metadata={
+            "reason": reason,
+            "cleanup_warnings": cleanup_warnings,
+        },
+    )
+
+    return {"data": _material_submission_to_response(row), "cleanup_warnings": cleanup_warnings}
+
+
 @router.get("/lecturer/materials", dependencies=[Depends(verify_api_key)])
 async def list_lecturer_materials(lecturer_profile=Depends(get_current_active_lecturer)):
     sb = _db()
@@ -725,7 +984,8 @@ async def list_lecturer_materials(lecturer_profile=Depends(get_current_active_le
         MATERIAL_SUBMISSION_SELECT_SIMPLE = (
             "id,university_id,lecturer_id,course_code,course_title,level,material_type,title,"
             "description,file_name,file_url,storage_provider,file_type,mime_type,is_supported_file,"
-            "status,reviewed_by,reviewed_at,review_note,pans_library_id,created_at,updated_at"
+            "status,reviewed_by,reviewed_at,review_note,pans_library_id,cancelled_at,cancelled_by,"
+            "cancellation_reason,drive_file_id,original_drive_file_id,converted_drive_file_id,created_at,updated_at"
         )
         try:
             res = await _run_db(
@@ -743,7 +1003,9 @@ async def list_lecturer_materials(lecturer_profile=Depends(get_current_active_le
             )
             raise HTTPException(status_code=500, detail="Unable to load material submissions")
 
-    return {"data": [_material_submission_to_response(row) for row in (res.data or [])]}
+    rows = [_material_submission_to_response(row) for row in (res.data or [])]
+    rows = await _enrich_material_submissions_with_library_state(rows)
+    return {"data": rows}
 
 
 @router.post("/lecturer/restrictions", dependencies=[Depends(verify_api_key)], status_code=status.HTTP_201_CREATED)

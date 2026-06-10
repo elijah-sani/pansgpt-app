@@ -184,7 +184,7 @@ create table if not exists public.lecturer_material_submissions (
   file_name text,
   file_url text,
   storage_provider text,
-  status text not null default 'pending_review' check (status in ('pending_review', 'approved', 'rejected', 'ingesting', 'ingested', 'failed')),
+  status text not null default 'pending_review' check (status in ('pending_review', 'approved', 'rejected')),
   reviewed_by uuid references auth.users(id) on delete set null,
   reviewed_at timestamptz,
   review_note text,

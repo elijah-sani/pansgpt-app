@@ -7,16 +7,17 @@ import {
     ExternalLink,
     FileText,
     Loader2,
-    MoreHorizontal,
+    MoreVertical,
     RefreshCcw,
     Search,
+    Filter,
     X,
     XCircle,
 } from 'lucide-react';
 
 import { api } from '@/lib/api';
 
-type MaterialStatus = 'pending_review' | 'approved' | 'rejected' | 'ingesting' | 'ingested' | 'failed';
+type MaterialStatus = 'pending_review' | 'approved' | 'rejected' | 'cancelled';
 
 type MaterialSubmission = {
     id: string;
@@ -34,6 +35,8 @@ type MaterialSubmission = {
     is_supported_file: boolean;
     status: MaterialStatus;
     review_note: string | null;
+    cancelled_at: string | null;
+    cancellation_reason: string | null;
     pans_library_id: string | null;
     library_embedding_status: string | null;
     library_embedding_progress: number | null;
@@ -65,18 +68,14 @@ const STATUS_LABELS: Record<MaterialStatus, string> = {
     pending_review: 'Pending review',
     approved: 'Approved',
     rejected: 'Rejected',
-    ingesting: 'Preparing',
-    ingested: 'Added',
-    failed: 'Needs attention',
+    cancelled: 'Cancelled',
 };
 
 const STATUS_CLASSES: Record<MaterialStatus, string> = {
     pending_review: 'border-amber-500/20 bg-amber-500/10 text-amber-600',
     approved: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-600',
     rejected: 'border-rose-500/20 bg-rose-500/10 text-rose-600',
-    ingesting: 'border-blue-500/20 bg-blue-500/10 text-blue-600',
-    ingested: 'border-primary/20 bg-primary/10 text-primary',
-    failed: 'border-orange-500/20 bg-orange-500/10 text-orange-600',
+    cancelled: 'border-slate-500/20 bg-slate-500/10 text-slate-600',
 };
 
 const STATUS_OPTIONS: Array<{ value: 'all' | MaterialStatus; label: string }> = [
@@ -84,9 +83,7 @@ const STATUS_OPTIONS: Array<{ value: 'all' | MaterialStatus; label: string }> = 
     { value: 'pending_review', label: 'Pending' },
     { value: 'approved', label: 'Approved' },
     { value: 'rejected', label: 'Rejected' },
-    { value: 'ingesting', label: 'Preparing' },
-    { value: 'ingested', label: 'Added' },
-    { value: 'failed', label: 'Needs attention' },
+    { value: 'cancelled', label: 'Cancelled' },
 ];
 
 async function readApiError(response: Response, fallback: string) {
@@ -170,9 +167,7 @@ export default function AdminMaterialSubmissionsPage() {
                 pending_review: 0,
                 approved: 0,
                 rejected: 0,
-                ingesting: 0,
-                ingested: 0,
-                failed: 0,
+                cancelled: 0,
             } as Record<'total' | MaterialStatus, number>,
         );
     }, [submissions]);
@@ -294,9 +289,7 @@ export default function AdminMaterialSubmissionsPage() {
     };
 
     return (
-        <div className="w-full max-w-5xl mx-auto md:pt-6 md:px-4 pb-12">
-            <div className="space-y-6 md:grid md:grid-cols-12 md:gap-8 md:space-y-0">
-                <div className="space-y-6 md:col-span-10 md:col-start-2">
+        <div className="mx-auto w-full max-w-6xl space-y-6 pb-12 md:px-4 md:pt-6">
                     <header>
                         <h1 className="text-xl font-bold text-foreground md:text-3xl">Material Submissions</h1>
                         <p className="mt-2 text-sm text-muted-foreground md:text-base">
@@ -304,10 +297,17 @@ export default function AdminMaterialSubmissionsPage() {
                         </p>
                     </header>
 
-                    <section className="grid gap-3 sm:grid-cols-3">
+                    <section className="hidden gap-3 sm:grid-cols-3 md:grid">
                         <SummaryItem label="Pending" value={summary.pending_review} tone="text-amber-600" />
                         <SummaryItem label="Approved" value={summary.approved} tone="text-emerald-600" />
                         <SummaryItem label="Total shown" value={summary.total} tone="text-foreground" />
+                    </section>
+                    <section className="grid grid-cols-2 gap-3 md:hidden">
+                        <MobileQuickStatCard label="Pending" value={summary.pending_review} color="text-amber-500" bg="bg-amber-500/10" />
+                        <MobileQuickStatCard label="Approved" value={summary.approved} color="text-emerald-500" bg="bg-emerald-500/10" />
+                        <MobileQuickStatCard label="Rejected" value={summary.rejected} color="text-rose-500" bg="bg-rose-500/10" />
+                        <MobileQuickStatCard label="Cancelled" value={summary.cancelled} color="text-slate-500" bg="bg-slate-500/10" />
+                        <MobileQuickStatCard label="Total" value={summary.total} color="text-primary" bg="bg-primary/10" />
                     </section>
 
                     <section className="space-y-4">
@@ -325,14 +325,14 @@ export default function AdminMaterialSubmissionsPage() {
                             </div>
 
                             {/* Mobile Search Toggle */}
-                            <div className="md:hidden flex-1 w-full">
+                            <div className="md:hidden flex w-full items-center gap-2">
                                 {!showMobileSearch ? (
-                                    <button onClick={() => setShowMobileSearch(true)} className="flex items-center gap-2 text-sm text-muted-foreground bg-card border border-border rounded-xl px-4 py-2.5 w-full transition-colors hover:border-primary/50">
+                                    <button onClick={() => setShowMobileSearch(true)} className="flex h-11 flex-1 items-center gap-2 rounded-xl border border-border bg-card px-4 text-sm text-muted-foreground transition-colors hover:border-primary/50">
                                         <Search className="w-4 h-4 shrink-0" />
                                         <span>Search submissions...</span>
                                     </button>
                                 ) : (
-                                    <div className="flex items-center gap-2 w-full bg-card border border-border rounded-xl px-4 py-2.5 focus-within:border-primary/50 transition-colors">
+                                    <div className="flex h-11 flex-1 items-center gap-2 rounded-xl border border-border bg-card px-4 py-2.5 transition-colors focus-within:border-primary/50">
                                         <Search className="w-4 h-4 text-muted-foreground shrink-0" />
                                         <input
                                             autoFocus
@@ -348,9 +348,35 @@ export default function AdminMaterialSubmissionsPage() {
                                         </button>
                                     </div>
                                 )}
+                                <div className="relative">
+                                    <button type="button" className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-border bg-card text-muted-foreground" aria-label="Filter status">
+                                        <Filter className="h-4 w-4" />
+                                    </button>
+                                    <select
+                                        value={statusFilter}
+                                        onChange={(event) => setStatusFilter(event.target.value as 'all' | MaterialStatus)}
+                                        className="absolute inset-0 h-11 w-11 cursor-pointer opacity-0"
+                                        aria-label="Filter status"
+                                    >
+                                        {STATUS_OPTIONS.map((option) => (
+                                            <option key={option.value} value={option.value}>
+                                                {option.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => void fetchSubmissions(true)}
+                                    disabled={isRefreshing}
+                                    className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-border bg-card text-muted-foreground transition-colors hover:bg-muted disabled:opacity-60"
+                                    aria-label="Refresh submissions"
+                                >
+                                    <RefreshCcw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                                </button>
                             </div>
 
-                            <div className="flex flex-wrap gap-2">
+                            <div className="hidden grid-cols-1 gap-2 sm:flex sm:flex-wrap">
                                 <select
                                     value={statusFilter}
                                     onChange={(event) => setStatusFilter(event.target.value as 'all' | MaterialStatus)}
@@ -366,7 +392,7 @@ export default function AdminMaterialSubmissionsPage() {
                                     type="button"
                                     onClick={() => void fetchSubmissions(true)}
                                     disabled={isRefreshing}
-                                    className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-xs font-semibold text-foreground transition-colors hover:bg-muted disabled:opacity-60"
+                                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-xs font-semibold text-foreground transition-colors hover:bg-muted disabled:opacity-60"
                                 >
                                     <RefreshCcw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
                                     Refresh
@@ -393,7 +419,8 @@ export default function AdminMaterialSubmissionsPage() {
                             ) : (
                                 <>
                                     <div className="hidden overflow-hidden rounded-2xl border border-border bg-card md:block">
-                                        <table className="w-full table-fixed text-left text-sm">
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-left text-sm min-w-[1000px]">
                                             <colgroup>
                                                 <col className="w-[22%]" />
                                                 <col className="w-[18%]" />
@@ -448,9 +475,11 @@ export default function AdminMaterialSubmissionsPage() {
                                                         </td>
                                                         <td className="px-4 py-4">
                                                             <div className="min-w-0">
+                                                                <div className="text-[11px] font-semibold uppercase text-muted-foreground">Review</div>
                                                                 <StatusBadge status={submission.status} />
                                                                 {submission.pans_library_id ? (
                                                                     <div className="mt-2 truncate text-xs text-muted-foreground">
+                                                                        <span className="font-semibold">Processing:</span>{' '}
                                                                         {formatLibraryStatus(submission.library_embedding_status, submission.library_embedding_progress)}
                                                                     </div>
                                                                 ) : null}
@@ -468,7 +497,7 @@ export default function AdminMaterialSubmissionsPage() {
                                                                     className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                                                                     aria-label="Open actions"
                                                                 >
-                                                                    <MoreHorizontal className="h-4 w-4" />
+                                                                    <MoreVertical className="h-4 w-4" />
                                                                 </button>
                                                             </div>
                                                         </td>
@@ -476,6 +505,7 @@ export default function AdminMaterialSubmissionsPage() {
                                                 ))}
                                             </tbody>
                                         </table>
+                                        </div>
                                     </div>
 
                                     <div className="space-y-3 md:hidden">
@@ -487,15 +517,22 @@ export default function AdminMaterialSubmissionsPage() {
                                                             {submission.title || 'Untitled material'}
                                                         </div>
                                                         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                                                            <span>Level {submission.level || 'Unknown'} · {submission.course_code || 'No course code'}</span>
+                                                            <span>Level {submission.level || 'Unknown'} - {submission.course_code || 'No course code'}</span>
+                                                            <span className="font-semibold">Review:</span>
+                                                            <StatusBadge status={submission.status} />
                                                             <FileTypeBadge fileType={submission.file_type} isSupported={submission.is_supported_file} />
                                                         </div>
+                                                        {submission.pans_library_id ? (
+                                                            <div className="mt-1 truncate text-xs text-muted-foreground">
+                                                                <span className="font-semibold">Processing:</span>{' '}
+                                                                {formatLibraryStatus(submission.library_embedding_status, submission.library_embedding_progress)}
+                                                            </div>
+                                                        ) : null}
                                                         <div className="mt-1 truncate text-xs text-muted-foreground">
                                                             {submission.lecturer_name || 'Unknown lecturer'}
                                                         </div>
                                                     </div>
                                                     <div className="flex items-start gap-2">
-                                                        <StatusBadge status={submission.status} />
                                                         <button
                                                             type="button"
                                                             data-material-menu-trigger
@@ -503,7 +540,7 @@ export default function AdminMaterialSubmissionsPage() {
                                                             className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                                                             aria-label="Open actions"
                                                         >
-                                                            <MoreHorizontal className="h-4 w-4" />
+                                                            <MoreVertical className="h-4 w-4" />
                                                         </button>
                                                     </div>
                                                 </div>
@@ -518,9 +555,6 @@ export default function AdminMaterialSubmissionsPage() {
                             )}
                         </div>
                     </section>
-                </div>
-            </div>
-
             {detailsSubmission ? (
                 <DetailsDialog
                     submission={detailsSubmission}
@@ -559,6 +593,27 @@ function SummaryItem({ label, value, tone }: { label: string; value: number; ton
         <div className="rounded-2xl border border-border bg-card px-5 py-4">
             <div className="text-xs font-semibold uppercase text-muted-foreground">{label}</div>
             <div className={`mt-2 text-2xl font-semibold ${tone}`}>{value}</div>
+        </div>
+    );
+}
+
+function MobileQuickStatCard({
+    label,
+    value,
+    color,
+    bg,
+}: {
+    label: string;
+    value: number;
+    color: string;
+    bg: string;
+}) {
+    return (
+        <div className="rounded-2xl border border-border bg-background/90 p-4">
+            <div className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.08em] ${bg} ${color}`}>
+                {label}
+            </div>
+            <p className="mt-3 text-lg font-bold text-foreground">{value}</p>
         </div>
     );
 }
@@ -678,7 +733,7 @@ function DetailsDialog({
 }) {
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-            <div className="w-full max-w-2xl rounded-2xl border border-border bg-background p-6 shadow-xl">
+            <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-border bg-background p-6 shadow-xl">
                 <div className="flex items-start justify-between gap-4">
                     <div>
                         <h2 className="text-lg font-semibold text-foreground">Material details</h2>
@@ -753,6 +808,16 @@ function DetailsDialog({
                             <p className="mt-1">{submission.review_note}</p>
                         </div>
                     ) : null}
+
+                    {submission.status === 'cancelled' ? (
+                        <div className="rounded-xl border border-slate-500/20 bg-slate-500/10 p-3 text-sm text-slate-700">
+                            <div className="font-medium text-foreground">Cancellation</div>
+                            <p className="mt-1">
+                                Cancelled{submission.cancelled_at ? ` on ${formatDateTime(submission.cancelled_at)}` : ''}.
+                            </p>
+                            {submission.cancellation_reason ? <p className="mt-1">{submission.cancellation_reason}</p> : null}
+                        </div>
+                    ) : null}
                 </div>
             </div>
         </div>
@@ -796,7 +861,7 @@ function ReviewDialog({
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-            <div className="w-full max-w-lg rounded-2xl border border-border bg-background p-6 shadow-xl">
+            <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-background p-6 shadow-xl">
                 <div className="flex items-start justify-between gap-4">
                     <div className="flex items-start gap-3">
                         <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${isRejecting ? 'bg-rose-500/10 text-rose-600' : isConverting ? 'bg-blue-500/10 text-blue-600' : 'bg-emerald-500/10 text-emerald-600'}`}>
@@ -897,3 +962,4 @@ function formatFileType(fileType: string | null) {
     if (!fileType) return 'Unknown';
     return fileType.toUpperCase();
 }
+

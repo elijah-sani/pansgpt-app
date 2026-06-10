@@ -8,7 +8,7 @@ import { INPUT_CLASS_NAME, LEVELS, PRIMARY_BUTTON_CLASS_NAME } from '@/component
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 
-type MaterialStatus = 'pending_review' | 'approved' | 'rejected' | 'ingesting' | 'ingested' | 'failed';
+type MaterialStatus = 'pending_review' | 'approved' | 'rejected' | 'cancelled';
 
 type MaterialSubmission = {
   id: string;
@@ -23,6 +23,12 @@ type MaterialSubmission = {
   is_supported_file: boolean;
   status: MaterialStatus;
   review_note: string | null;
+  cancelled_at: string | null;
+  cancellation_reason: string | null;
+  pans_library_id: string | null;
+  library_embedding_status: 'pending' | 'processing' | 'completed' | 'failed' | string | null;
+  library_embedding_progress: number | null;
+  library_embedding_error: string | null;
   created_at: string | null;
 };
 
@@ -48,18 +54,14 @@ const STATUS_LABELS: Record<MaterialStatus, string> = {
   pending_review: 'Pending review',
   approved: 'Approved',
   rejected: 'Rejected',
-  ingesting: 'Preparing',
-  ingested: 'Added',
-  failed: 'Needs attention',
+  cancelled: 'Cancelled',
 };
 
 const STATUS_CLASSES: Record<MaterialStatus, string> = {
   pending_review: 'border-amber-500/20 bg-amber-500/10 text-amber-600',
   approved: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-600',
   rejected: 'border-rose-500/20 bg-rose-500/10 text-rose-600',
-  ingesting: 'border-blue-500/20 bg-blue-500/10 text-blue-600',
-  ingested: 'border-primary/20 bg-primary/10 text-primary',
-  failed: 'border-orange-500/20 bg-orange-500/10 text-orange-600',
+  cancelled: 'border-slate-500/20 bg-slate-500/10 text-slate-600',
 };
 
 async function readApiError(response: Response, fallback: string) {
@@ -92,6 +94,7 @@ export default function LecturerMaterialsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [cancellingIds, setCancellingIds] = useState<Set<string>>(new Set());
   const [loadError, setLoadError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -197,6 +200,39 @@ export default function LecturerMaterialsPage() {
       setFormError(error instanceof Error ? error.message : 'Unable to submit material');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const cancelSubmission = async (material: MaterialSubmission) => {
+    if (material.status !== 'pending_review') return;
+
+    const confirmed = window.confirm('Cancel this pending submission? The uploaded file will be removed where it is not used anywhere else.');
+    if (!confirmed) return;
+
+    setCancellingIds((current) => new Set(current).add(material.id));
+    try {
+      const response = await api.post(`/lecturer/materials/${material.id}/cancel`, { reason: null });
+      if (!response.ok) {
+        throw new Error(await readApiError(response, 'Unable to cancel submission'));
+      }
+
+      const payload = (await response.json()) as { cleanup_warnings?: string[] };
+      const warnings = payload.cleanup_warnings || [];
+      if (warnings.length > 0) {
+        toast.warning('Submission cancelled. Some Drive cleanup needs manual review.');
+      } else {
+        toast.success('Submission cancelled.');
+      }
+      await fetchMaterials(true);
+    } catch (error) {
+      console.error('Failed to cancel lecturer material:', error);
+      toast.error(error instanceof Error ? error.message : 'Unable to cancel submission');
+    } finally {
+      setCancellingIds((current) => {
+        const next = new Set(current);
+        next.delete(material.id);
+        return next;
+      });
     }
   };
 
@@ -351,7 +387,11 @@ export default function LecturerMaterialsPage() {
                 </p>
               </div>
             ) : (
-              <MaterialList materials={orderedMaterials} />
+              <MaterialList
+                materials={orderedMaterials}
+                cancellingIds={cancellingIds}
+                onCancel={cancelSubmission}
+              />
             )}
           </section>
         </div>
@@ -379,7 +419,15 @@ function Field({
   );
 }
 
-function MaterialList({ materials }: { materials: MaterialSubmission[] }) {
+function MaterialList({
+  materials,
+  cancellingIds,
+  onCancel,
+}: {
+  materials: MaterialSubmission[];
+  cancellingIds: Set<string>;
+  onCancel: (material: MaterialSubmission) => void;
+}) {
   return (
     <div className="space-y-3">
       {materials.map((material) => {
@@ -398,24 +446,58 @@ function MaterialList({ materials }: { materials: MaterialSubmission[] }) {
                   <span>Level: {material.level || 'Not set'}</span>
                   <span>Submitted: {formatDateTime(material.created_at)}</span>
                 </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                  <span className="font-semibold text-muted-foreground">Review:</span>
+                  <StatusBadge status={material.status} />
+                  {material.pans_library_id ? (
+                    <>
+                      <span className="ml-2 font-semibold text-muted-foreground">Processing:</span>
+                      <ProcessingBadge status={material.library_embedding_status} progress={material.library_embedding_progress} />
+                    </>
+                  ) : null}
+                </div>
+                {material.library_embedding_error ? (
+                  <p className="mt-3 rounded-xl border border-orange-500/20 bg-orange-500/10 px-3 py-2 text-sm text-orange-700">
+                    Processing error: {material.library_embedding_error}
+                  </p>
+                ) : null}
                 {material.review_note && material.status === 'rejected' ? (
                   <p className="mt-3 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm text-rose-700">
                     Note: {material.review_note}
                   </p>
                 ) : null}
+                {material.status === 'cancelled' ? (
+                  <p className="mt-3 rounded-xl border border-slate-500/20 bg-slate-500/10 px-3 py-2 text-sm text-slate-700">
+                    Cancelled{material.cancelled_at ? ` on ${formatDateTime(material.cancelled_at)}` : ''}
+                    {material.cancellation_reason ? `: ${material.cancellation_reason}` : ''}
+                  </p>
+                ) : null}
               </div>
 
-              {material.file_url ? (
-                <a
-                  href={material.file_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-border px-3 py-2 text-sm font-semibold text-foreground transition-colors hover:bg-muted"
-                >
-                  <ExternalLink className="h-4 w-4" />
-                  Open file
-                </a>
-              ) : null}
+              <div className="flex shrink-0 flex-col gap-2 sm:flex-row md:flex-col">
+                {material.file_url ? (
+                  <a
+                    href={material.file_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-border px-3 py-2 text-sm font-semibold text-foreground transition-colors hover:bg-muted"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    Open file
+                  </a>
+                ) : null}
+                {material.status === 'pending_review' ? (
+                  <button
+                    type="button"
+                    onClick={() => onCancel(material)}
+                    disabled={cancellingIds.has(material.id)}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-500/30 px-3 py-2 text-sm font-semibold text-rose-600 transition-colors hover:bg-rose-500/10 disabled:opacity-60"
+                  >
+                    {cancellingIds.has(material.id) ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
+                    Cancel Submission
+                  </button>
+                ) : null}
+              </div>
             </div>
           </article>
         );
@@ -430,6 +512,30 @@ function StatusBadge({ status }: { status: MaterialStatus }) {
       {STATUS_LABELS[status]}
     </span>
   );
+}
+
+function ProcessingBadge({
+  status,
+  progress,
+}: {
+  status: MaterialSubmission['library_embedding_status'];
+  progress: number | null;
+}) {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'completed') {
+    return <span className="inline-flex rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-600">Completed</span>;
+  }
+  if (normalized === 'failed') {
+    return <span className="inline-flex rounded-full border border-rose-500/20 bg-rose-500/10 px-2.5 py-1 text-xs font-semibold text-rose-600">Failed</span>;
+  }
+  if (normalized === 'processing') {
+    const pct = typeof progress === 'number' ? Math.max(0, Math.min(100, progress)) : 0;
+    return <span className="inline-flex rounded-full border border-blue-500/20 bg-blue-500/10 px-2.5 py-1 text-xs font-semibold text-blue-600">Processing {pct}%</span>;
+  }
+  if (normalized === 'pending') {
+    return <span className="inline-flex rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-1 text-xs font-semibold text-amber-600">Pending</span>;
+  }
+  return <span className="inline-flex rounded-full border border-border px-2.5 py-1 text-xs font-semibold text-muted-foreground">Not started</span>;
 }
 
 function formatDateTime(value: string | null | undefined) {

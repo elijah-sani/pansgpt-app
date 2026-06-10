@@ -17,6 +17,7 @@ import type { LucideIcon } from 'lucide-react';
 
 import { fetchBootstrap } from '@/lib/bootstrap-cache';
 import { supabase } from '@/lib/supabase';
+import UniversitySuspendedBlocker from '@/components/UniversitySuspendedBlocker';
 
 type LecturerStatus = 'pending' | 'active' | 'rejected' | 'suspended' | 'revoked';
 
@@ -64,6 +65,7 @@ export default function LecturerProtectedLayout({ children }: { children: React.
   const [guardState, setGuardState] = useState<GuardState>({ status: 'allowed', bootstrap: {}, userEmail: null });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileHeaderLocked, setMobileHeaderLocked] = useState(false);
+  const [isUniversitySuspended, setIsUniversitySuspended] = useState(false);
   const mobileHeaderSentinelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -88,6 +90,15 @@ export default function LecturerProtectedLayout({ children }: { children: React.
           return;
         }
         const lecturerStatus = bootstrap.lecturer_status;
+
+        // University suspension gate — checked before lecturer-status gating.
+        if (bootstrap.is_university_suspended) {
+          if (active) {
+            setIsUniversitySuspended(true);
+            setGuardState({ status: 'allowed', bootstrap, userEmail: sessionEmail });
+          }
+          return;
+        }
 
         if (bootstrap?.is_admin || bootstrap?.is_super_admin) {
           router.replace('/admin');
@@ -213,6 +224,14 @@ export default function LecturerProtectedLayout({ children }: { children: React.
       );
     }
     return null;
+  }
+
+  if (isUniversitySuspended) {
+    const handleSignOut = async () => {
+      await supabase.auth.signOut();
+      window.location.replace('/login');
+    };
+    return <UniversitySuspendedBlocker onLogout={() => void handleSignOut()} />;
   }
 
   const lecturerProfile = guardState.bootstrap.lecturer_profile;
