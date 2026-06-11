@@ -7,6 +7,7 @@ from typing import List, Optional
 import asyncio
 import uuid
 import os
+import sys
 import time
 import httpx
 from pathlib import Path
@@ -370,7 +371,13 @@ API_KEYS = os.getenv("API_KEYS", "").split(",")
 GOOGLE_DRIVE_FOLDER_ID = (os.getenv("GOOGLE_DRIVE_FOLDER_ID") or "").strip()
 if not GOOGLE_DRIVE_FOLDER_ID:
     # During testing, we allow this to be empty to avoid collection errors
-    if os.getenv("PYTEST_CURRENT_TEST") or os.getenv("ENVIRONMENT") == "testing":
+    is_testing = (
+        os.getenv("PYTEST_CURRENT_TEST") or 
+        os.getenv("ENVIRONMENT") == "testing" or 
+        "pytest" in sys.modules or 
+        (len(sys.argv) > 0 and "pytest" in sys.argv[0])
+    )
+    if is_testing:
         logger.warning("GOOGLE_DRIVE_FOLDER_ID is not configured. Proceeding anyway for testing.")
         GOOGLE_DRIVE_FOLDER_ID = "test-folder-id"
     else:
