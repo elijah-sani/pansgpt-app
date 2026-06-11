@@ -653,21 +653,21 @@ export function MainConversation({
           {isLoadingChat ? (
             <ChatSkeleton />
           ) : !hasMessages ? (
-            <div className="flex-1 flex flex-col items-center justify-center px-4 pb-28 pt-10 text-center sm:px-0 sm:pb-56 sm:pt-4">
-              <div className="w-full max-w-4xl">
-                <div className="mx-auto max-w-4xl text-center sm:px-4">
-                  <div className="mb-3 flex flex-col items-center justify-center gap-3 sm:flex-row">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center">
-                      <img src="/avatar.png" alt="PansGPT" className="h-7 w-7 object-contain drop-shadow-sm" />
+            <div className="flex-1 flex flex-col items-start justify-start px-4 pb-0 pt-16 text-left sm:items-center sm:justify-center sm:px-0 sm:pb-56 sm:pt-4 sm:text-center">
+              <div className="w-full max-w-[440px] flex flex-col flex-1 sm:mx-auto sm:max-w-4xl sm:block">
+                <div className="text-left sm:px-4 sm:text-center">
+                  <div className="mb-4 flex flex-col items-start justify-start gap-3 sm:mb-3 sm:flex-row sm:items-center sm:justify-center">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center sm:h-9 sm:w-9">
+                      <img src="/avatar.png" alt="PansGPT" className="h-8 w-8 object-contain drop-shadow-sm sm:h-7 sm:w-7" />
                     </div>
                     <h2
-                      className="text-[26px] font-medium leading-tight text-foreground sm:text-4xl"
+                      className="text-2xl font-semibold leading-tight text-foreground sm:text-[26px] sm:font-medium sm:text-4xl"
                     >
                       <span className="sm:hidden">{welcomeCopy.mobileGreeting}</span>
                       <span className="hidden sm:inline">{welcomeCopy.greeting}</span>
                     </h2>
                   </div>
-                  <p className="mt-2 min-h-[24px] text-base leading-relaxed text-muted-foreground sm:hidden">
+                  <p className="mt-4 min-h-[24px] text-sm leading-relaxed text-muted-foreground sm:mt-2 sm:text-base">
                     {typedWelcomeSubtext}
                     {typedWelcomeSubtext.length < currentWelcomeSubtext.length && (
                       <span className="ml-0.5 inline-block h-[1em] w-px translate-y-0.5 animate-pulse bg-muted-foreground" />
@@ -679,25 +679,22 @@ export function MainConversation({
                   {renderChatInput(true, 'welcome', typedWelcomeSubtext || currentWelcomeSubtext || 'Ask anything...')}
                 </div>
 
-                {/* Future idea: academic quick-action chips for the welcome screen.
-                <div className="mt-2 hidden w-full justify-center gap-2 px-4 pb-1 sm:flex">
-                  {EMPTY_STATE_CHIPS.map(({ label, prompt, icon: Icon }) => (
-                    <button
-                      key={label}
-                      type="button"
-                      onClick={() => {
-                        setInputMessage(prompt);
-                        window.setTimeout(() => textareaRef.current?.focus(), 0);
-                      }}
-                      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[6px] border border-border/60 bg-card px-3 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-muted"
-                    >
-                      <Icon className="h-4 w-4 text-muted-foreground" />
-                      <span>{label}</span>
-                    </button>
-                  ))}
-                </div>
-                */}
-                {activeCard === null ? <QuickActionCards onCardClick={setActiveCard} /> : null} {/* [QUICK ACTION CARDS] */}
+                {activeCard === null && !inputMessage.trim() ? (
+                  <>
+                    <div className="flex-1 sm:hidden" />
+                    <AnimatePresence>
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 10 }}
+                        transition={{ duration: 0.2, ease: "easeOut" }}
+                        className="mt-24 sm:mt-0"
+                      >
+                        <QuickActionCards onCardClick={setActiveCard} />
+                      </motion.div>
+                    </AnimatePresence>
+                  </>
+                ) : null}
               </div>
               <QuickActionModal // [QUICK ACTION CARDS]
                 isOpen={activeCard !== null} // [QUICK ACTION CARDS]

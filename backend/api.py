@@ -369,8 +369,13 @@ app.include_router(system.router)
 API_KEYS = os.getenv("API_KEYS", "").split(",")
 GOOGLE_DRIVE_FOLDER_ID = (os.getenv("GOOGLE_DRIVE_FOLDER_ID") or "").strip()
 if not GOOGLE_DRIVE_FOLDER_ID:
-    logger.critical("GOOGLE_DRIVE_FOLDER_ID is not configured. Refusing to start because uploads would go to My Drive root.")
-    raise RuntimeError("GOOGLE_DRIVE_FOLDER_ID is not configured.")
+    # During testing, we allow this to be empty to avoid collection errors
+    if os.getenv("PYTEST_CURRENT_TEST") or os.getenv("ENVIRONMENT") == "testing":
+        logger.warning("GOOGLE_DRIVE_FOLDER_ID is not configured. Proceeding anyway for testing.")
+        GOOGLE_DRIVE_FOLDER_ID = "test-folder-id"
+    else:
+        logger.critical("GOOGLE_DRIVE_FOLDER_ID is not configured. Refusing to start because uploads would go to My Drive root.")
+        raise RuntimeError("GOOGLE_DRIVE_FOLDER_ID is not configured.")
 # Initialize dual-provider LLM clients through service layer
 llm_engine.initialize_clients()
 

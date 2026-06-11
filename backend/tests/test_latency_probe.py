@@ -1,7 +1,15 @@
 import time
 import os
+import sys
+from pathlib import Path
 from dotenv import load_dotenv
-from backend.google_drive import get_drive_service
+
+# Add backend directory to sys.path
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+from google_drive import get_drive_service
 
 # Load environment variables
 load_dotenv()

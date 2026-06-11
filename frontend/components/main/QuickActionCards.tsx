@@ -68,27 +68,30 @@ interface QuickActionCardsProps { // [QUICK ACTION CARDS]
   onCardClick: (card: typeof QUICK_ACTION_CARDS[number]) => void; // [QUICK ACTION CARDS]
 } // [QUICK ACTION CARDS]
  // [QUICK ACTION CARDS]
-export function QuickActionCards({ onCardClick }: QuickActionCardsProps) { // [QUICK ACTION CARDS]
-  return ( // [QUICK ACTION CARDS]
-    <div className="w-full px-4 pt-2 pb-1"> {/* [QUICK ACTION CARDS] */}
-      <div className="flex flex-wrap justify-center gap-2"> {/* [QUICK ACTION CARDS] */}
-        {QUICK_ACTION_CARDS.map((card, index) => { /* [QUICK ACTION CARDS] */
-          const Icon = card.icon; // [QUICK ACTION CARDS]
-          return ( // [QUICK ACTION CARDS]
-            <motion.button // [QUICK ACTION CARDS]
-              key={card.id} // [QUICK ACTION CARDS]
-              type="button" // [QUICK ACTION CARDS]
-              whileHover={{ scale: 1.02 }} // [QUICK ACTION CARDS]
-              transition={{ duration: 0.15 }} // [QUICK ACTION CARDS]
-              onClick={() => onCardClick(card)} // [QUICK ACTION CARDS]
-              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[6px] border border-border/60 bg-card px-3 text-sm font-medium text-foreground shadow-sm cursor-pointer transition-colors hover:bg-muted" // [QUICK ACTION CARDS]
-            > {/* [QUICK ACTION CARDS] */}
-              <Icon className="h-4 w-4 text-muted-foreground" /> {/* [QUICK ACTION CARDS] */}
-              <span>{card.title}</span> {/* [QUICK ACTION CARDS] */}
-              {/* [QUICK ACTION CARDS] */}</motion.button>
-          ); // [QUICK ACTION CARDS]
-        })} {/* [QUICK ACTION CARDS] */}
-      </div> {/* [QUICK ACTION CARDS] */}
-      {/* [QUICK ACTION CARDS] */}</div>
-  ); // [QUICK ACTION CARDS]
-} // [QUICK ACTION CARDS]
+export function QuickActionCards({ onCardClick }: QuickActionCardsProps) {
+  return (
+    <div className="w-full px-0 pt-4 pb-1 sm:px-4 sm:pt-2">
+      <div className="flex flex-col gap-0.5 sm:flex-row sm:flex-wrap sm:justify-center sm:gap-2">
+        {QUICK_ACTION_CARDS.map((card, index) => {
+          const Icon = card.icon;
+          return (
+            <motion.button
+              key={card.id}
+              type="button"
+              whileHover={{ scale: 1.01 }}
+              transition={{ duration: 0.1 }}
+              onClick={() => onCardClick(card)}
+              className="group flex w-full items-center gap-4 rounded-xl bg-transparent px-2 py-3.5 text-left transition-colors hover:bg-muted/50 sm:inline-flex sm:h-8 sm:w-auto sm:items-center sm:gap-1.5 sm:rounded-[6px] sm:border sm:border-border/60 sm:bg-card sm:px-3 sm:text-sm sm:font-medium sm:shadow-sm sm:hover:bg-muted"
+            >
+              <Icon className="h-5 w-5 text-foreground/80 transition-colors group-hover:text-foreground sm:h-4 sm:w-4 sm:text-muted-foreground sm:group-hover:text-foreground" />
+              <span className="text-[15px] font-medium text-foreground/90 transition-colors group-hover:text-foreground sm:text-sm sm:text-foreground">
+                {card.title}
+              </span>
+            </motion.button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+

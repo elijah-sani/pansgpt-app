@@ -4,7 +4,7 @@ from datetime import timedelta
 from email.utils import parseaddr
 from uuid import uuid4
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Response, UploadFile, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional
 import logging
 
@@ -39,8 +39,7 @@ class LecturerRegistrationRequest(BaseModel):
     full_name: str
     phone_number: str
 
-    class Config:
-        extra = "forbid"
+    model_config = ConfigDict(extra="forbid")
 
 
 class RestrictionCreateRequest(BaseModel):
@@ -53,15 +52,13 @@ class RestrictionCreateRequest(BaseModel):
     duration_minutes: Optional[int] = None
     reason: Optional[str] = None
 
-    class Config:
-        extra = "forbid"
+    model_config = ConfigDict(extra="forbid")
 
 
 class MaterialSubmissionCancelRequest(BaseModel):
     reason: Optional[str] = None
 
-    class Config:
-        extra = "forbid"
+    model_config = ConfigDict(extra="forbid")
 
 
 MATERIAL_SUBMISSION_SELECT = (
