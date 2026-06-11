@@ -54,12 +54,12 @@ export function QuickActionModal({ isOpen, onClose, card, onSubmit }: QuickActio
           className="mx-auto mt-3 w-[90%] max-w-[43.2rem] rounded-xl border border-border/60 bg-card px-3 py-2 text-left shadow-sm" // [QUICK ACTION CARDS]
         > {/* [QUICK ACTION CARDS] */}
           <div className="mb-2 flex items-center justify-between gap-3"> {/* [QUICK ACTION CARDS] */}
-            <div className="flex items-center gap-1.5 text-sm font-medium text-foreground"> {/* [QUICK ACTION CARDS] */}
-              {ActiveIcon ? <ActiveIcon className="h-4 w-4 text-muted-foreground" /> : null} {/* [QUICK ACTION CARDS] */}
+            <div className="flex items-center gap-1.5 text-base font-medium text-foreground sm:text-sm"> {/* [QUICK ACTION CARDS] */}
+              {ActiveIcon ? <ActiveIcon className="h-5 w-5 text-muted-foreground sm:h-4 sm:w-4" /> : null} {/* [QUICK ACTION CARDS] */}
               <span>{card.title}</span> {/* [QUICK ACTION CARDS] */}
             </div> {/* [QUICK ACTION CARDS] */}
             <button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground"> {/* [QUICK ACTION CARDS] */}
-              <X className="h-4 w-4" /> {/* [QUICK ACTION CARDS] */}
+              <X className="h-5 w-5 sm:h-4 sm:w-4" /> {/* [QUICK ACTION CARDS] */}
             </button> {/* [QUICK ACTION CARDS] */}
           </div> {/* [QUICK ACTION CARDS] */}
           <div className="flex items-center gap-2 border-t border-border/60 pt-2"> {/* [QUICK ACTION CARDS] */}
@@ -70,20 +70,20 @@ export function QuickActionModal({ isOpen, onClose, card, onSubmit }: QuickActio
               onChange={(event) => { setInputValue(event.target.value); setShowValidation(false); }} // [QUICK ACTION CARDS]
               onKeyDown={(event) => { if (event.key === "Enter") handleSubmit(); if (event.key === "Escape") onClose(); }} // [QUICK ACTION CARDS]
               placeholder={card.modalLabel} // [QUICK ACTION CARDS]
-              className="h-9 min-w-0 flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none" // [QUICK ACTION CARDS]
+              className="h-10 min-w-0 flex-1 bg-transparent text-base text-foreground placeholder:text-muted-foreground focus:outline-none sm:h-9 sm:text-sm" // [QUICK ACTION CARDS]
             /> {/* [QUICK ACTION CARDS] */}
-            <button type="button" onClick={handleSubmit} className="rounded-[6px] bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90 transition-opacity">Use</button> {/* [QUICK ACTION CARDS] */}
+            <button type="button" onClick={handleSubmit} className="rounded-[6px] bg-primary px-3 py-2 text-base font-medium text-primary-foreground hover:opacity-90 transition-opacity sm:py-1.5 sm:text-sm">Use</button> {/* [QUICK ACTION CARDS] */}
           </div> {/* [QUICK ACTION CARDS] */}
             {card.hasCountSelector ? ( // [QUICK ACTION CARDS]
               <div> {/* [QUICK ACTION CARDS] */}
-                <p className="text-xs text-muted-foreground mt-3 mb-1">Number of questions</p> {/* [QUICK ACTION CARDS] */}
+                <p className="mt-3 mb-2 text-sm text-muted-foreground sm:mb-1 sm:text-xs">Number of questions</p> {/* [QUICK ACTION CARDS] */}
                 <div className="flex gap-2"> {/* [QUICK ACTION CARDS] */}
                   {[5, 10, 15].map((count) => ( // [QUICK ACTION CARDS]
                     <button // [QUICK ACTION CARDS]
                       key={count} // [QUICK ACTION CARDS]
                       type="button" // [QUICK ACTION CARDS]
                       onClick={() => setSelectedCount(count)} // [QUICK ACTION CARDS]
-                      className={`rounded-full px-4 py-1 text-sm font-medium transition-colors cursor-pointer ${selectedCount === count ? "bg-primary text-primary-foreground" : "border border-border/60 bg-card text-foreground hover:bg-muted"}`} // [QUICK ACTION CARDS]
+                      className={`rounded-full px-5 py-1.5 text-base font-medium transition-colors cursor-pointer sm:px-4 sm:py-1 sm:text-sm ${selectedCount === count ? "bg-primary text-primary-foreground" : "border border-border/60 bg-card text-foreground hover:bg-muted"}`} // [QUICK ACTION CARDS]
                     > {/* [QUICK ACTION CARDS] */}
                       {count} {/* [QUICK ACTION CARDS] */}
                       {/* [QUICK ACTION CARDS] */}</button>
@@ -91,7 +91,7 @@ export function QuickActionModal({ isOpen, onClose, card, onSubmit }: QuickActio
                 </div> {/* [QUICK ACTION CARDS] */}
                 {/* [QUICK ACTION CARDS] */}</div>
             ) : null} {/* [QUICK ACTION CARDS] */}
-            {showValidation ? <p className="text-xs text-destructive mt-1">Please enter a topic first</p> : null} {/* [QUICK ACTION CARDS] */}
+            {showValidation ? <p className="mt-2 text-sm text-destructive sm:mt-1 sm:text-xs">Please enter a topic first</p> : null} {/* [QUICK ACTION CARDS] */}
           {/* [QUICK ACTION CARDS] */}</motion.div>
       ) : null} {/* [QUICK ACTION CARDS] */}
       {/* [QUICK ACTION CARDS] */}</AnimatePresence>
