@@ -12,25 +12,32 @@ TEXT_SECONDARY = "gemma-4-26b-a4b-it"         # Google AI Studio fallback
 TEXT_TERTIARY = "qwen/qwen3-vl-235b-a22b-thinking"  # OpenRouter last resort
 # Compatibility alias for callers still referencing TEXT_FALLBACK.
 TEXT_FALLBACK = TEXT_SECONDARY
-TEXT_FAST = TEXT_SECONDARY                  # Smaller and faster model for quick tasks (e.g. titles)
+
+SMALL_PRIMARY = "gemma-4-12b-it"           # Google AI Studio (Gemma 4 12b)
+SMALL_SECONDARY = "llama-3.1-8b-instant"   # Groq (Grok)
+SMALL_TERTIARY = "meta-llama/llama-3.1-8b-instruct:free"  # OpenRouter free fallback
+TEXT_FAST = SMALL_PRIMARY                  # Smaller and faster model for quick tasks (e.g. titles)
 
 VISION_PRIMARY = "gemma-4-31b-it"           # Google AI Studio vision primary
 VISION_FALLBACK = "qwen/qwen3-vl-235b-a22b-thinking"  # OpenRouter vision fallback
 
 openrouter_client = None
 google_client = None
+groq_client = None
 
 
 def initialize_clients() -> None:
-    global openrouter_client, google_client
+    global openrouter_client, google_client, groq_client
     try:
         from openai import AsyncOpenAI
 
         openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
         gemini_api_key = os.getenv("GOOGLE_AI_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        groq_api_key = os.getenv("GROQ_API_KEY")
 
         openrouter_client = None
         google_client = None
+        groq_client = None
 
         if openrouter_api_key:
             openrouter_client = AsyncOpenAI(
@@ -53,14 +60,26 @@ def initialize_clients() -> None:
             logger.info("[INFO] Google AI Studio Client Initialized")
         else:
             logger.warning("[WARNING] GEMINI_API_KEY not set! Google fallback AI will fail.")
+
+        if groq_api_key:
+            groq_client = AsyncOpenAI(
+                api_key=groq_api_key,
+                base_url="https://api.groq.com/openai/v1",
+                max_retries=0,
+                timeout=30.0,
+            )
+            logger.info("[INFO] Groq Client Initialized")
+        else:
+            logger.warning("[WARNING] GROQ_API_KEY not set! Groq AI will fail.")
     except Exception as exc:
         logger.error(f"[ERROR] Failed to initialize AI clients: {exc}")
         openrouter_client = None
         google_client = None
+        groq_client = None
 
 
 def has_available_client() -> bool:
-    return openrouter_client is not None or google_client is not None
+    return openrouter_client is not None or google_client is not None or groq_client is not None
 
 
 async def generate_completion_with_failover(
@@ -202,3 +221,68 @@ async def generate_response_async(prompt: str, messages: list[dict] = None, forc
         raise RuntimeError("LLM generation failed on all available clients")
         
     return response.choices[0].message.content
+
+
+async def generate_small_completion_with_failover(
+    messages: list[dict],
+    temperature: float,
+    max_tokens: int,
+    stream: bool = False,
+) -> Optional[Any]:
+    """
+    Failover chain for small/fast tasks:
+    1. SMALL_PRIMARY (gemma-3-12b-it) using google_client
+    2. SMALL_SECONDARY (llama-3.1-8b-instant) using groq_client
+    3. SMALL_TERTIARY (meta-llama/llama-3.1-8b-instruct:free) using openrouter_client
+    4. Fall back to the main generate_completion_with_failover chain if all small clients fail.
+    """
+    # 1. Try Google AI Studio (SMALL_PRIMARY)
+    if google_client is not None:
+        try:
+            logger.info(f"[INFO] SMALL failover chain: attempting SMALL_PRIMARY ({SMALL_PRIMARY})")
+            return await google_client.chat.completions.create(
+                model=SMALL_PRIMARY,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=stream,
+            )
+        except Exception as exc:
+            logger.warning(f"SMALL_PRIMARY failed ({SMALL_PRIMARY}), trying next: {exc}")
+
+    # 2. Try Groq (SMALL_SECONDARY)
+    if groq_client is not None:
+        try:
+            logger.info(f"[INFO] SMALL failover chain: attempting SMALL_SECONDARY ({SMALL_SECONDARY})")
+            return await groq_client.chat.completions.create(
+                model=SMALL_SECONDARY,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=stream,
+            )
+        except Exception as exc:
+            logger.warning(f"SMALL_SECONDARY failed ({SMALL_SECONDARY}), trying next: {exc}")
+
+    # 3. Try OpenRouter (SMALL_TERTIARY)
+    if openrouter_client is not None:
+        try:
+            logger.info(f"[INFO] SMALL failover chain: attempting SMALL_TERTIARY ({SMALL_TERTIARY})")
+            return await openrouter_client.chat.completions.create(
+                model=SMALL_TERTIARY,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=stream,
+            )
+        except Exception as exc:
+            logger.warning(f"SMALL_TERTIARY failed ({SMALL_TERTIARY}), falling back to main chain: {exc}")
+
+    # 4. Final fallback: Use main chain
+    logger.info("All small models failed or clients uninitialized, falling back to main failover chain.")
+    return await generate_completion_with_failover(
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        stream=stream,
+    )

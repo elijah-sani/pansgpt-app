@@ -165,7 +165,7 @@ async def _summarize_previous_session(user_id: str, exclude_session_id: str):
         needs_title = _is_generic_title(prev_title) or prev_title == "New Chat" or not prev_title
 
         prompt = (
-            "/no_think\n"
+            "/nothink\n"
             "You are summarizing a pharmacy tutoring conversation between a student and an AI tutor.\n\n"
             f"Conversation:\n{conversation_text}\n\n"
             "Based on this conversation, provide:\n"
@@ -187,16 +187,12 @@ async def _summarize_previous_session(user_id: str, exclude_session_id: str):
                 "SUMMARY: <summary here>"
             )
 
-        # Step 5: Call Gemma 3 12B
-        response = await _call_background_llm_with_retry(
-            lambda: llm_engine.google_client.chat.completions.create(
-                model=llm_engine.TEXT_SECONDARY,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=768,
-                stream=False,
-            ),
-            "Background session summarization",
+        # Step 5: Call LLM with small failover chain (Gemma 12B -> Llama 3.1 8B Groq -> OpenRouter)
+        response = await llm_engine.generate_small_completion_with_failover(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=768,
+            stream=False,
         )
 
         raw_output = (response.choices[0].message.content or "").strip()

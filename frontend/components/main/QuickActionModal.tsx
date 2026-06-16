@@ -70,7 +70,7 @@ export function QuickActionModal({ isOpen, onClose, card, onSubmit }: QuickActio
               onChange={(event) => { setInputValue(event.target.value); setShowValidation(false); }} // [QUICK ACTION CARDS]
               onKeyDown={(event) => { if (event.key === "Enter") handleSubmit(); if (event.key === "Escape") onClose(); }} // [QUICK ACTION CARDS]
               placeholder={card.modalLabel} // [QUICK ACTION CARDS]
-              className="h-10 min-w-0 flex-1 bg-transparent text-base text-foreground placeholder:text-muted-foreground focus:outline-none sm:h-9 sm:text-sm" // [QUICK ACTION CARDS]
+              className="h-10 min-w-0 flex-1 bg-transparent text-base text-foreground placeholder:text-muted-foreground placeholder:text-[13px] sm:placeholder:text-sm focus:outline-none sm:h-9 sm:text-sm" // [QUICK ACTION CARDS]
             /> {/* [QUICK ACTION CARDS] */}
             <button type="button" onClick={handleSubmit} className="rounded-[6px] bg-primary px-3 py-2 text-base font-medium text-primary-foreground hover:opacity-90 transition-opacity sm:py-1.5 sm:text-sm">Use</button> {/* [QUICK ACTION CARDS] */}
           </div> {/* [QUICK ACTION CARDS] */}

@@ -836,7 +836,7 @@ async def _generate_and_save_title(session_id: str, user_text: str, current_user
             logger.warning(f"Could not build title conversation excerpt for session {session_id}: {excerpt_err}")
 
         title_prompt = (
-            "/no_think\n"
+            "/nothink\n"
             "Generate a chat session title based on the conversation below.\n\n"
             "Rules:\n"
             "- Return ONLY the title — no explanation, no punctuation at the end, no quotes.\n"
@@ -845,36 +845,23 @@ async def _generate_and_save_title(session_id: str, user_text: str, current_user
             "- Never use vague words like 'Chat', 'Question', 'Discussion', 'Help', 'Query', or 'Inquiry'.\n"
             "- If the conversation is purely casual greeting/small talk with no real topic, return exactly: Small Talk\n\n"
             f"Conversation:\n{conversation_excerpt}\n\n"
-            f"Latest message:\n{(user_text or '').strip()}"
+            f"Latest message:\n{(user_text or '').strip()[:200]}"
         )
 
         title_completion = None
         try:
-            title_completion = await _call_background_llm_with_retry(
-                lambda: llm_engine.google_client.chat.completions.create(
-                    model=llm_engine.TEXT_FAST,
-                    messages=[{"role": "user", "content": title_prompt}],
-                    temperature=0.7,
-                    max_tokens=512,
-                    stream=False
-                ),
-                "Background title generation (fast)",
+            title_completion = await llm_engine.generate_small_completion_with_failover(
+                messages=[{"role": "user", "content": title_prompt}],
+                temperature=0.7,
+                max_tokens=64,
+                stream=False,
             )
-        except Exception as fast_err:
-            logger.warning(f"Fast title generation with {llm_engine.TEXT_FAST} failed: {fast_err}. Falling back to fallback model.")
-            title_completion = await _call_background_llm_with_retry(
-                lambda: llm_engine.google_client.chat.completions.create(
-                    model=llm_engine.TEXT_FALLBACK,
-                    messages=[{"role": "user", "content": title_prompt}],
-                    temperature=0.7,
-                    max_tokens=512,
-                    stream=False
-                ),
-                "Background title generation (fallback)",
-            )
+            logger.info("Background title generation succeeded via small failover chain")
+        except Exception as title_err:
+            logger.warning(f"Title generation failover failed: {title_err}")
 
         if title_completion is None:
-            raise RuntimeError("Title generation failed on Google model")
+            raise RuntimeError("Title generation failed on all models")
 
         new_title = _clean_generated_title(title_completion.choices[0].message.content)
         if _is_generic_title(new_title):
@@ -886,30 +873,14 @@ async def _generate_and_save_title(session_id: str, user_text: str, current_user
             )
             retry_completion = None
             try:
-                retry_completion = await _call_background_llm_with_retry(
-                    lambda: llm_engine.google_client.chat.completions.create(
-                        model=llm_engine.TEXT_FAST,
-                        messages=[{"role": "user", "content": stricter_prompt}],
-                        temperature=0.1,
-                        max_tokens=512,
-                        stream=False
-                    ),
-                    "Background title regeneration (fast)",
-                    max_attempts=2,
+                retry_completion = await llm_engine.generate_small_completion_with_failover(
+                    messages=[{"role": "user", "content": stricter_prompt}],
+                    temperature=0.1,
+                    max_tokens=64,
+                    stream=False,
                 )
-            except Exception as fast_retry_err:
-                logger.warning(f"Fast title regeneration with {llm_engine.TEXT_FAST} failed: {fast_retry_err}. Falling back to fallback model.")
-                retry_completion = await _call_background_llm_with_retry(
-                    lambda: llm_engine.google_client.chat.completions.create(
-                        model=llm_engine.TEXT_FALLBACK,
-                        messages=[{"role": "user", "content": stricter_prompt}],
-                        temperature=0.1,
-                        max_tokens=512,
-                        stream=False
-                    ),
-                    "Background title regeneration (fallback)",
-                    max_attempts=2,
-                )
+            except Exception as retry_err:
+                logger.warning(f"Title retry failover failed: {retry_err}")
             if retry_completion is not None:
                 regenerated = _clean_generated_title(retry_completion.choices[0].message.content)
                 if regenerated:

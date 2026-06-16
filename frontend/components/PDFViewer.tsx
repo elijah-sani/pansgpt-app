@@ -2775,6 +2775,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
                             {/* Left: Notes, Snip */}
                             <div className="flex items-center gap-1.5 flex-1 justify-start">
+                                {/* COMMENTED OUT: Notes feature hidden
                                 <div className="relative group">
                                     <button 
                                         onClick={toggleNotesPanel} 
@@ -2792,6 +2793,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                     </span>
                                 </div>
                                 <div className="w-px h-5 bg-border mx-1" />
+                                */}
                                 <div className="relative group">
                                     <button 
                                         onClick={() => {

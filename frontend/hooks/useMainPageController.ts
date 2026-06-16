@@ -872,11 +872,15 @@ export function useMainPageController() {
     [activeSessionId, createSession, fetchHistory, fetchWebSearchUsage, isError, isWebSearchEnabled, messages, setActiveSessionId]
   );
 
-  const handleSendMessage = useCallback(() => {
-    if (!inputMessage.trim() && pendingAttachments.length === 0) return;
-    const messageText = inputMessage.trim();
+  const handleSendMessage = useCallback((overrideText?: string) => {
+    const textToUse = typeof overrideText === 'string' ? overrideText : inputMessage;
+    if (!textToUse.trim() && pendingAttachments.length === 0) return;
+    const messageText = textToUse.trim();
     const attachments = [...pendingAttachments];
-    setInputMessage('');
+    
+    if (typeof overrideText !== 'string') {
+      setInputMessage('');
+    }
     setPendingAttachments([]);
 
     if (isLoading || isSyncingBackend) {
@@ -888,7 +892,7 @@ export function useMainPageController() {
     }
 
     void sendMessageApi(messageText, attachments);
-  }, [inputMessage, isLoading, isSyncingBackend, pendingAttachments, sendMessageApi]);
+  }, [inputMessage, isLoading, isSyncingBackend, pendingAttachments, sendMessageApi, setInputMessage]);
 
   // Drain the queue: when isLoading goes false and there are queued messages, send the next one
   useEffect(() => {

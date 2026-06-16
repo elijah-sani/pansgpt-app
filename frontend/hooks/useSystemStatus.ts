@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+import { api } from '@/lib/api';
 
 export function useSystemStatus() {
     const [maintenanceMode, setMaintenanceMode] = useState(false);
@@ -9,7 +8,7 @@ export function useSystemStatus() {
     useEffect(() => {
         const checkSystem = async () => {
             try {
-                const res = await fetch(`${API_URL}/sys/status`);
+                const res = await api.get('/sys/status');
                 if (res.ok) {
                     const data = await res.json();
                     setMaintenanceMode(data.maintenance_mode);

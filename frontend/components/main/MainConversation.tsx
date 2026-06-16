@@ -209,7 +209,7 @@ type MainConversationProps = {
   handlePaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
   handleRegenerate: () => Promise<void>;
   handleRetryFailure: () => void;
-  handleSendMessage: () => void;
+  handleSendMessage: (overrideText?: string) => void;
   handleStopGeneration: () => void;
   handleVoiceToggle: (event: React.MouseEvent<HTMLButtonElement>) => void;
   hasMessages: boolean;
@@ -578,8 +578,7 @@ export function MainConversation({
   };
 
   const handleQuickActionSubmit = (prompt: string) => { // [QUICK ACTION CARDS]
-    setInputMessage(prompt); // [QUICK ACTION CARDS]
-    window.setTimeout(() => textareaRef.current?.focus(), 0); // [QUICK ACTION CARDS]
+    handleSendMessage(prompt); // [QUICK ACTION CARDS]
   }; // [QUICK ACTION CARDS]
 
   const renderChatInput = (
@@ -653,7 +652,7 @@ export function MainConversation({
           {isLoadingChat ? (
             <ChatSkeleton />
           ) : !hasMessages ? (
-            <div className="flex-1 flex flex-col items-start justify-start px-4 pb-0 pt-16 text-left sm:items-center sm:justify-center sm:px-0 sm:pb-56 sm:pt-4 sm:text-center">
+            <div className="flex-1 flex flex-col items-start justify-start px-4 pb-0 pt-16 text-left sm:items-center sm:justify-center sm:px-0 sm:pb-56 sm:pt-40 sm:text-center">
               <div className="w-full max-w-[440px] flex flex-col flex-1 sm:mx-auto sm:max-w-4xl sm:block">
                 <div className="text-left sm:px-4 sm:text-center">
                   <div className="mb-4 flex flex-col items-start justify-start gap-3 sm:mb-3 sm:flex-row sm:items-center sm:justify-center">
@@ -667,7 +666,7 @@ export function MainConversation({
                       <span className="hidden sm:inline">{welcomeCopy.greeting}</span>
                     </h2>
                   </div>
-                  <p className="mt-4 min-h-[24px] text-sm leading-relaxed text-muted-foreground sm:mt-2 sm:text-base">
+                  <p className="mt-4 min-h-[24px] text-sm leading-relaxed text-muted-foreground sm:hidden">
                     {typedWelcomeSubtext}
                     {typedWelcomeSubtext.length < currentWelcomeSubtext.length && (
                       <span className="ml-0.5 inline-block h-[1em] w-px translate-y-0.5 animate-pulse bg-muted-foreground" />
@@ -677,6 +676,15 @@ export function MainConversation({
 
                 <div className="mt-6 hidden sm:block">
                   {renderChatInput(true, 'welcome', typedWelcomeSubtext || currentWelcomeSubtext || 'Ask anything...')}
+                </div>
+
+                <div className="hidden sm:block">
+                  <QuickActionModal // [QUICK ACTION CARDS]
+                    isOpen={activeCard !== null} // [QUICK ACTION CARDS]
+                    onClose={() => setActiveCard(null)} // [QUICK ACTION CARDS]
+                    card={activeCard} // [QUICK ACTION CARDS]
+                    onSubmit={handleQuickActionSubmit} // [QUICK ACTION CARDS]
+                  /> {/* [QUICK ACTION CARDS] */}
                 </div>
 
                 {activeCard === null && !inputMessage.trim() ? (
@@ -696,12 +704,6 @@ export function MainConversation({
                   </>
                 ) : null}
               </div>
-              <QuickActionModal // [QUICK ACTION CARDS]
-                isOpen={activeCard !== null} // [QUICK ACTION CARDS]
-                onClose={() => setActiveCard(null)} // [QUICK ACTION CARDS]
-                card={activeCard} // [QUICK ACTION CARDS]
-                onSubmit={handleQuickActionSubmit} // [QUICK ACTION CARDS]
-              /> {/* [QUICK ACTION CARDS] */}
             </div>
           ) : (
             <div className="py-4 flex flex-col">
@@ -985,6 +987,16 @@ export function MainConversation({
             <ArrowDown className="w-4 h-4" strokeWidth={2.4} />
           </button>
         </div>
+
+        <div className="sm:hidden">
+          <QuickActionModal // [QUICK ACTION CARDS]
+            isOpen={activeCard !== null} // [QUICK ACTION CARDS]
+            onClose={() => setActiveCard(null)} // [QUICK ACTION CARDS]
+            card={activeCard} // [QUICK ACTION CARDS]
+            onSubmit={handleQuickActionSubmit} // [QUICK ACTION CARDS]
+          /> {/* [QUICK ACTION CARDS] */}
+        </div>
+
         {hasMessages ? renderChatInput() : <div className="sm:hidden">{renderChatInput()}</div>}
       </div>
     </div>

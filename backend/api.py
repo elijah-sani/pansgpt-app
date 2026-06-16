@@ -390,8 +390,13 @@ llm_engine.initialize_clients()
 allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "")
 origins = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
 if not origins:
-    origins = ["http://localhost:3000"] # Default fallback
-    logger.info("Using default CORS origin: http://localhost:3000")
+    origins = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+    ] # Default fallback
+    logger.info("Using default CORS origins: %s", origins)
 else:
     logger.info(f"Loaded CORS origins: {origins}")
 
