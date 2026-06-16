@@ -10,9 +10,10 @@ interface QuickActionModalProps { // [QUICK ACTION CARDS]
   onClose: () => void; // [QUICK ACTION CARDS]
   card: QuickActionCard | null; // [QUICK ACTION CARDS]
   onSubmit: (prompt: string) => void; // [QUICK ACTION CARDS]
+  isInlineMobile?: boolean; // [QUICK ACTION CARDS]
 } // [QUICK ACTION CARDS]
  // [QUICK ACTION CARDS]
-export function QuickActionModal({ isOpen, onClose, card, onSubmit }: QuickActionModalProps) { // [QUICK ACTION CARDS]
+export function QuickActionModal({ isOpen, onClose, card, onSubmit, isInlineMobile = false }: QuickActionModalProps) { // [QUICK ACTION CARDS]
   const [inputValue, setInputValue] = useState(""); // [QUICK ACTION CARDS]
   const [selectedCount, setSelectedCount] = useState(5); // [QUICK ACTION CARDS]
   const [showValidation, setShowValidation] = useState(false); // [QUICK ACTION CARDS]
@@ -47,11 +48,15 @@ export function QuickActionModal({ isOpen, onClose, card, onSubmit }: QuickActio
     <AnimatePresence> {/* [QUICK ACTION CARDS] */}
       {isOpen && card ? ( // [QUICK ACTION CARDS]
         <motion.div // [QUICK ACTION CARDS]
-          initial={{ opacity: 0, y: -6 }} // [QUICK ACTION CARDS]
+          initial={{ opacity: 0, y: isInlineMobile ? 12 : -6 }} // [QUICK ACTION CARDS]
           animate={{ opacity: 1, y: 0 }} // [QUICK ACTION CARDS]
-          exit={{ opacity: 0, y: -6 }} // [QUICK ACTION CARDS]
+          exit={{ opacity: 0, y: isInlineMobile ? 12 : -6 }} // [QUICK ACTION CARDS]
           transition={{ duration: 0.15 }} // [QUICK ACTION CARDS]
-          className="mx-auto mt-3 w-[90%] max-w-[43.2rem] rounded-xl border border-border/60 bg-card px-3 py-2 text-left shadow-sm" // [QUICK ACTION CARDS]
+          className={
+            isInlineMobile
+              ? "w-full max-w-[43.2rem] mx-auto rounded-2xl border border-border/60 bg-card p-3 text-left shadow-sm" // [QUICK ACTION CARDS]
+              : "mx-auto mt-3 w-[90%] max-w-[43.2rem] rounded-xl border border-border/60 bg-card px-3 py-2 text-left shadow-sm" // [QUICK ACTION CARDS]
+          }
         > {/* [QUICK ACTION CARDS] */}
           <div className="mb-2 flex items-center justify-between gap-3"> {/* [QUICK ACTION CARDS] */}
             <div className="flex items-center gap-1.5 text-base font-medium text-foreground sm:text-sm"> {/* [QUICK ACTION CARDS] */}

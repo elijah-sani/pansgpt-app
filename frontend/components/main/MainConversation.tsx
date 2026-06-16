@@ -988,16 +988,19 @@ export function MainConversation({
           </button>
         </div>
 
-        <div className="sm:hidden">
-          <QuickActionModal // [QUICK ACTION CARDS]
-            isOpen={activeCard !== null} // [QUICK ACTION CARDS]
-            onClose={() => setActiveCard(null)} // [QUICK ACTION CARDS]
-            card={activeCard} // [QUICK ACTION CARDS]
-            onSubmit={handleQuickActionSubmit} // [QUICK ACTION CARDS]
-          /> {/* [QUICK ACTION CARDS] */}
-        </div>
-
-        {hasMessages ? renderChatInput() : <div className="sm:hidden">{renderChatInput()}</div>}
+        {activeCard !== null ? (
+          <div className="sm:hidden w-full px-4 pb-4">
+            <QuickActionModal // [QUICK ACTION CARDS]
+              isOpen={activeCard !== null} // [QUICK ACTION CARDS]
+              onClose={() => setActiveCard(null)} // [QUICK ACTION CARDS]
+              card={activeCard} // [QUICK ACTION CARDS]
+              onSubmit={handleQuickActionSubmit} // [QUICK ACTION CARDS]
+              isInlineMobile={true} // [QUICK ACTION CARDS]
+            /> {/* [QUICK ACTION CARDS] */}
+          </div>
+        ) : (
+          hasMessages ? renderChatInput() : <div className="sm:hidden">{renderChatInput()}</div>
+        )}
       </div>
     </div>
   );
