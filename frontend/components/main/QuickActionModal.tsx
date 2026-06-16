@@ -20,12 +20,27 @@ export function QuickActionModal({ isOpen, onClose, card, onSubmit, isInlineMobi
   const inputRef = useRef<HTMLInputElement>(null); // [QUICK ACTION CARDS]
   const ActiveIcon = card?.icon; // [QUICK ACTION CARDS]
  // [QUICK ACTION CARDS]
-  useEffect(() => { // [QUICK ACTION CARDS]
+   useEffect(() => { // [QUICK ACTION CARDS]
     if (isOpen) { // [QUICK ACTION CARDS]
       setInputValue(""); // [QUICK ACTION CARDS]
       setSelectedCount(5); // [QUICK ACTION CARDS]
       setShowValidation(false); // [QUICK ACTION CARDS]
-      window.setTimeout(() => inputRef.current?.focus(), 0); // [QUICK ACTION CARDS]
+      
+      // Synchronous attempt if already in DOM
+      if (inputRef.current) {
+        inputRef.current.focus();
+      }
+      
+      // Sequenced timeouts to catch mounting delays on mobile/desktop
+      const t1 = window.setTimeout(() => inputRef.current?.focus(), 0);
+      const t2 = window.setTimeout(() => inputRef.current?.focus(), 50);
+      const t3 = window.setTimeout(() => inputRef.current?.focus(), 150);
+      
+      return () => {
+        window.clearTimeout(t1);
+        window.clearTimeout(t2);
+        window.clearTimeout(t3);
+      };
     } // [QUICK ACTION CARDS]
   }, [isOpen]); // [QUICK ACTION CARDS]
  // [QUICK ACTION CARDS]
@@ -71,6 +86,7 @@ export function QuickActionModal({ isOpen, onClose, card, onSubmit, isInlineMobi
             <input // [QUICK ACTION CARDS]
               id="quick-action-input" // [QUICK ACTION CARDS]
               ref={inputRef} // [QUICK ACTION CARDS]
+              autoFocus // [QUICK ACTION CARDS]
               value={inputValue} // [QUICK ACTION CARDS]
               onChange={(event) => { setInputValue(event.target.value); setShowValidation(false); }} // [QUICK ACTION CARDS]
               onKeyDown={(event) => { if (event.key === "Enter") handleSubmit(); if (event.key === "Escape") onClose(); }} // [QUICK ACTION CARDS]
