@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import httpx  # [GROQ TERTIARY FIX]
 from typing import Any, AsyncIterator, Optional
 
 logger = logging.getLogger("PansGPT")
@@ -9,13 +10,13 @@ OPENROUTER_FALLBACK_MAX_TOKENS = 1024
 
 TEXT_PRIMARY = "gemma-4-31b-it"           # Google AI Studio
 TEXT_SECONDARY = "gemma-4-26b-a4b-it"         # Google AI Studio fallback
-TEXT_TERTIARY = "qwen/qwen3-vl-235b-a22b-thinking"  # OpenRouter last resort
+TEXT_TERTIARY = "meta-llama/llama-4-scout-17b-16e-instruct"  # [GROQ TERTIARY FIX]
 # Compatibility alias for callers still referencing TEXT_FALLBACK.
 TEXT_FALLBACK = TEXT_SECONDARY
 
-SMALL_PRIMARY = "gemma-4-12b-it"           # Google AI Studio (Gemma 4 12b)
-SMALL_SECONDARY = "llama-3.1-8b-instant"   # Groq (Grok)
-SMALL_TERTIARY = "meta-llama/llama-3.1-8b-instruct:free"  # OpenRouter free fallback
+SMALL_PRIMARY = "meta-llama/llama-3.3-70b-instruct:free"   # OpenRouter (Llama 3.3 70B Free)
+SMALL_SECONDARY = "llama-3.1-8b-instant"                  # Groq (Llama 3.1 8b)
+SMALL_TERTIARY = "qwen/qwen-2.5-72b-instruct:free"         # OpenRouter (Qwen 2.5 72B Free)
 TEXT_FAST = SMALL_PRIMARY                  # Smaller and faster model for quick tasks (e.g. titles)
 
 VISION_PRIMARY = "gemma-4-31b-it"           # Google AI Studio vision primary
@@ -24,10 +25,11 @@ VISION_FALLBACK = "qwen/qwen3-vl-235b-a22b-thinking"  # OpenRouter vision fallba
 openrouter_client = None
 google_client = None
 groq_client = None
+groq_text_client = None  # [GROQ TERTIARY FIX]
 
 
 def initialize_clients() -> None:
-    global openrouter_client, google_client, groq_client
+    global openrouter_client, google_client, groq_client, groq_text_client  # [GROQ TERTIARY FIX]
     try:
         from openai import AsyncOpenAI
 
@@ -38,6 +40,7 @@ def initialize_clients() -> None:
         openrouter_client = None
         google_client = None
         groq_client = None
+        groq_text_client = None  # [GROQ TERTIARY FIX]
 
         if openrouter_api_key:
             openrouter_client = AsyncOpenAI(
@@ -69,17 +72,25 @@ def initialize_clients() -> None:
                 timeout=30.0,
             )
             logger.info("[INFO] Groq Client Initialized")
+            groq_text_client = AsyncOpenAI(
+                api_key=groq_api_key,
+                base_url="https://api.groq.com/openai/v1",
+                timeout=httpx.Timeout(60.0, connect=10.0),
+            )  # [GROQ TERTIARY FIX]
+            logger.info("[INFO] Groq Text Client Initialized")  # [GROQ TERTIARY FIX]
         else:
             logger.warning("[WARNING] GROQ_API_KEY not set! Groq AI will fail.")
+            logger.warning("[WARNING] GROQ_API_KEY not set! Groq text client failover will fail.")  # [GROQ TERTIARY FIX]
     except Exception as exc:
         logger.error(f"[ERROR] Failed to initialize AI clients: {exc}")
         openrouter_client = None
         google_client = None
         groq_client = None
+        groq_text_client = None  # [GROQ TERTIARY FIX]
 
 
 def has_available_client() -> bool:
-    return openrouter_client is not None or google_client is not None or groq_client is not None
+    return openrouter_client is not None or google_client is not None or groq_client is not None or groq_text_client is not None  # [GROQ TERTIARY FIX]
 
 
 async def generate_completion_with_failover(
@@ -134,29 +145,35 @@ async def generate_completion_with_failover(
             stream=stream,
         )
 
-    # --- Text path: Gemma 27B <-> Gemma 12B -> OpenRouter Qwen ---
-    if requested_model == "TEXT_SECONDARY":
-        model_order = [
-            ("TEXT_SECONDARY", TEXT_SECONDARY),
-            ("TEXT_PRIMARY", TEXT_PRIMARY),
-            ("TEXT_TERTIARY", TEXT_TERTIARY)
+    # [MODEL ROUTING FIX]
+    full_order = [
+        ("TEXT_PRIMARY", TEXT_PRIMARY),
+        ("TEXT_SECONDARY", TEXT_SECONDARY),
+        ("TEXT_TERTIARY", TEXT_TERTIARY)
+    ]
+    matched_tuple = None
+    if requested_model:
+        for alias, name in full_order:
+            if name == requested_model or alias == requested_model:
+                matched_tuple = (alias, name)
+                break
+    if matched_tuple:
+        model_order = [matched_tuple] + [
+            item for item in full_order if item != matched_tuple
         ]
     else:
-        model_order = [
-            ("TEXT_PRIMARY", TEXT_PRIMARY),
-            ("TEXT_SECONDARY", TEXT_SECONDARY),
-            ("TEXT_TERTIARY", TEXT_TERTIARY)
-        ]
+        model_order = full_order
+    # [MODEL ROUTING FIX]
 
     for model_alias, model_name in model_order:
         if model_name == TEXT_TERTIARY:
-            if openrouter_client is None:
-                logger.error("All models failed and OpenRouter client is not initialized.")
-                return None
+            if groq_text_client is None:  # [GROQ TERTIARY FIX]
+                logger.error("All models failed and Groq text client is not initialized.")  # [GROQ TERTIARY FIX]
+                return None  # [GROQ TERTIARY FIX]
             try:
                 fallback_max_tokens = min(max_tokens, OPENROUTER_FALLBACK_MAX_TOKENS)
                 logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "TEXT_PRIMARY", model_name)
-                return await openrouter_client.chat.completions.create(
+                return await groq_text_client.chat.completions.create(  # [GROQ TERTIARY FIX]
                     model=model_name,
                     messages=messages,
                     temperature=temperature,
@@ -231,16 +248,16 @@ async def generate_small_completion_with_failover(
 ) -> Optional[Any]:
     """
     Failover chain for small/fast tasks:
-    1. SMALL_PRIMARY (gemma-3-12b-it) using google_client
+    1. SMALL_PRIMARY (meta-llama/llama-3.3-70b-instruct:free) using openrouter_client
     2. SMALL_SECONDARY (llama-3.1-8b-instant) using groq_client
-    3. SMALL_TERTIARY (meta-llama/llama-3.1-8b-instruct:free) using openrouter_client
+    3. SMALL_TERTIARY (qwen/qwen-2.5-72b-instruct:free) using openrouter_client
     4. Fall back to the main generate_completion_with_failover chain if all small clients fail.
     """
-    # 1. Try Google AI Studio (SMALL_PRIMARY)
-    if google_client is not None:
+    # 1. Try OpenRouter (SMALL_PRIMARY)
+    if openrouter_client is not None:
         try:
             logger.info(f"[INFO] SMALL failover chain: attempting SMALL_PRIMARY ({SMALL_PRIMARY})")
-            return await google_client.chat.completions.create(
+            return await openrouter_client.chat.completions.create(
                 model=SMALL_PRIMARY,
                 messages=messages,
                 temperature=temperature,

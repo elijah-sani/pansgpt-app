@@ -418,7 +418,7 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
               <p className="mt-1 text-xs text-muted-foreground">answered questions</p>
             </div>
 
-            {quiz.questions.length > 15 ? (
+            {quiz.questions.length > 10 ? (
               <div className="hidden rounded-[5px] bg-[#edf4ff] p-4 dark:bg-muted/60 lg:block">
                 <div className="grid grid-cols-6 gap-2">
                   {quiz.questions.map((question, index) => {
