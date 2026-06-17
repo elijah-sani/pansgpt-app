@@ -51,11 +51,12 @@ export default function QuizGeneratingScreen({ jobId }: { jobId: string }) {
     let questionTimeoutId: number | undefined;
     let navigated = false;
     let knownQuizId: string | null = null;
+    let jobFailedOrCancelled = false;
 
     // Poll questions as soon as we know the quiz_id.
     // Navigate as soon as the first batch (≥1 question) is saved.
     const pollQuestions = async () => {
-      if (cancelled || navigated || !knownQuizId) return;
+      if (cancelled || navigated || jobFailedOrCancelled || !knownQuizId) return;
       try {
         const res = await api.get(`/api/quiz/${knownQuizId}`);
         if (!res.ok) return;
@@ -70,7 +71,7 @@ export default function QuizGeneratingScreen({ jobId }: { jobId: string }) {
       } catch {
         // silently retry
       }
-      if (!cancelled && !navigated) {
+      if (!cancelled && !navigated && !jobFailedOrCancelled) {
         questionTimeoutId = window.setTimeout(pollQuestions, 2000);
       }
     };
@@ -90,6 +91,10 @@ export default function QuizGeneratingScreen({ jobId }: { jobId: string }) {
         const nextJob = data.job as QuizGenerationJob;
         setJob(nextJob);
         setError(null);
+
+        if (nextJob.status === 'failed' || nextJob.status === 'cancelled') {
+          jobFailedOrCancelled = true;
+        }
 
         if (typeof window !== 'undefined') {
           if (nextJob.status === 'completed' || nextJob.status === 'failed' || nextJob.status === 'cancelled') {
