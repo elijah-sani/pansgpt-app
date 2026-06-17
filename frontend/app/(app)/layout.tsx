@@ -71,6 +71,7 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
     const [restrictionNow, setRestrictionNow] = useState(() => Date.now());
     const [isUniversitySuspended, setIsUniversitySuspended] = useState(false);
     const hasResolvedInitialShellRef = useRef(false);
+    const isLoadingShellUserRef = useRef(false);
     const sidebarTouchStartRef = useRef<{ x: number; y: number } | null>(null);
 
     useEffect(() => {
@@ -146,74 +147,80 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
 
     useEffect(() => {
         const loadShellUser = async () => {
-            const isInitialShellLoad = !hasResolvedInitialShellRef.current;
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session?.user) {
-                setShellUser(null);
-                setIsAdmin(false);
-                setRestriction(null);
-                setIsRestrictionLoading(false);
-                setIsUniversitySuspended(false);
-                hasResolvedInitialShellRef.current = false;
-                return;
-            }
+            if (isLoadingShellUserRef.current) return;
+            isLoadingShellUserRef.current = true;
+            try {
+                const isInitialShellLoad = !hasResolvedInitialShellRef.current;
+                const { data: { session } } = await supabase.auth.getSession();
+                if (!session?.user) {
+                    setShellUser(null);
+                    setIsAdmin(false);
+                    setRestriction(null);
+                    setIsRestrictionLoading(false);
+                    setIsUniversitySuspended(false);
+                    hasResolvedInitialShellRef.current = false;
+                    return;
+                }
 
-            const data = await fetchBootstrap();
-            if (!data) {
-                setIsAdmin(false);
+                const data = await fetchBootstrap();
+                if (!data) {
+                    setIsAdmin(false);
+                    setShellUser({
+                        id: session.user.id,
+                        email: session.user.email || "",
+                        name: session.user.user_metadata?.full_name || "",
+                        avatarUrl: session.user.user_metadata?.avatar_url || "",
+                        level: session.user.user_metadata?.level || "",
+                        university: session.user.user_metadata?.university || "",
+                        subscriptionTier: "free",
+                    });
+                    setRestriction(null);
+                    setIsRestrictionLoading(false);
+                    hasResolvedInitialShellRef.current = true;
+                    return;
+                }
+
+                if (data?.is_lecturer) {
+                    if (data.lecturer_status === "active") {
+                        router.replace("/lecturer");
+                        return;
+                    }
+
+                    if (data.lecturer_status === "pending") {
+                        router.replace("/lecturer/pending");
+                        return;
+                    }
+
+                    if (data.lecturer_status && ["rejected", "suspended", "revoked"].includes(data.lecturer_status)) {
+                        router.replace("/lecturer");
+                        return;
+                    }
+
+                    router.replace("/lecturer");
+                    return;
+                }
+
+                const profile = data?.profile;
                 setShellUser({
                     id: session.user.id,
                     email: session.user.email || "",
-                    name: session.user.user_metadata?.full_name || "",
-                    avatarUrl: session.user.user_metadata?.avatar_url || "",
-                    level: session.user.user_metadata?.level || "",
-                    university: session.user.user_metadata?.university || "",
-                    subscriptionTier: "free",
+                    name:
+                        profile?.full_name ||
+                        [profile?.first_name, profile?.other_names].filter(Boolean).join(" ").trim() ||
+                        session.user.user_metadata?.full_name ||
+                        "",
+                    avatarUrl: profile?.avatar_url || session.user.user_metadata?.avatar_url || "",
+                    level: profile?.level || session.user.user_metadata?.level || "",
+                    university: profile?.university || session.user.user_metadata?.university || "",
+                    subscriptionTier: profile?.subscription_tier || "free",
                 });
-                setRestriction(null);
-                setIsRestrictionLoading(false);
+                setIsAdmin(Boolean(data?.is_admin));
+                setIsUniversitySuspended(Boolean((data as Record<string, unknown>)?.is_university_suspended));
+                await loadRestrictionStatus({ foreground: isInitialShellLoad });
                 hasResolvedInitialShellRef.current = true;
-                return;
+            } finally {
+                isLoadingShellUserRef.current = false;
             }
-
-            if (data?.is_lecturer) {
-                if (data.lecturer_status === "active") {
-                    router.replace("/lecturer");
-                    return;
-                }
-
-                if (data.lecturer_status === "pending") {
-                    router.replace("/lecturer/pending");
-                    return;
-                }
-
-                if (data.lecturer_status && ["rejected", "suspended", "revoked"].includes(data.lecturer_status)) {
-                    router.replace("/lecturer");
-                    return;
-                }
-
-                router.replace("/lecturer");
-                return;
-            }
-
-            const profile = data?.profile;
-            setShellUser({
-                id: session.user.id,
-                email: session.user.email || "",
-                name:
-                    profile?.full_name ||
-                    [profile?.first_name, profile?.other_names].filter(Boolean).join(" ").trim() ||
-                    session.user.user_metadata?.full_name ||
-                    "",
-                avatarUrl: profile?.avatar_url || session.user.user_metadata?.avatar_url || "",
-                level: profile?.level || session.user.user_metadata?.level || "",
-                university: profile?.university || session.user.user_metadata?.university || "",
-                subscriptionTier: profile?.subscription_tier || "free",
-            });
-            setIsAdmin(Boolean(data?.is_admin));
-            setIsUniversitySuspended(Boolean((data as Record<string, unknown>)?.is_university_suspended));
-            await loadRestrictionStatus({ foreground: isInitialShellLoad });
-            hasResolvedInitialShellRef.current = true;
         };
 
         void loadShellUser();
