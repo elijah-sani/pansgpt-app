@@ -167,13 +167,13 @@ async def generate_completion_with_failover(
 
     for model_alias, model_name in model_order:
         if model_name == TEXT_TERTIARY:
-            if openrouter_client is None:
-                logger.error("All models failed and OpenRouter client is not initialized.")
-                return None
+            if groq_text_client is None:  # [GROQ TERTIARY FIX]
+                logger.error("All models failed and Groq text client is not initialized.")  # [GROQ TERTIARY FIX]
+                return None  # [GROQ TERTIARY FIX]
             try:
                 fallback_max_tokens = min(max_tokens, OPENROUTER_FALLBACK_MAX_TOKENS)
                 logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "TEXT_PRIMARY", model_name)
-                return await openrouter_client.chat.completions.create(
+                return await groq_text_client.chat.completions.create(  # [GROQ TERTIARY FIX]
                     model=model_name,
                     messages=messages,
                     temperature=temperature,
