@@ -1138,6 +1138,9 @@ Return only the JSON array."""
         await _update_quiz_generation_job(
             sb,
             job_id,
+            status="generating",
+            progress=20,
+            current_step="Generating questions",
             quiz_id=quiz_id,
         )
 
