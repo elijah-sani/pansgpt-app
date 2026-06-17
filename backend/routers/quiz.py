@@ -1023,15 +1023,12 @@ async def _generate_quiz_now(
             detail="No active processed materials were found for this course in your university.",
         )
 
-    # Expose quiz_id as soon as generation starts so the frontend can poll
-    # GET /api/quiz/{quiz_id} immediately and render questions as they arrive.
     await _update_quiz_generation_job(
         sb,
         job_id,
         status="generating",
         progress=20,
         current_step="Generating questions",
-        quiz_id=quiz_id,
     )
 
     # Keep prompt size bounded for high question counts.
@@ -1134,7 +1131,15 @@ Return only the JSON array."""
             }).execute()
         )
         quiz_id = quiz_res.data[0]["id"]
-        # [QUIZ BATCH FIX]
+
+        # Expose quiz_id in the job record now that the quiz row exists.
+        # The frontend polls this and navigates as soon as the first batch
+        # of questions is inserted — no need to wait for full completion.
+        await _update_quiz_generation_job(
+            sb,
+            job_id,
+            quiz_id=quiz_id,
+        )
 
         while len(questions) < target_count:
             remaining = target_count - len(questions)
