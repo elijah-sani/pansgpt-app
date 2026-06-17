@@ -47,7 +47,33 @@ export default function QuizGeneratingScreen({ jobId }: { jobId: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    let timeoutId: number | undefined;
+    let jobTimeoutId: number | undefined;
+    let questionTimeoutId: number | undefined;
+    let navigated = false;
+    let knownQuizId: string | null = null;
+
+    // Poll questions as soon as we know the quiz_id.
+    // Navigate as soon as the first batch (≥1 question) is saved.
+    const pollQuestions = async () => {
+      if (cancelled || navigated || !knownQuizId) return;
+      try {
+        const res = await api.get(`/api/quiz/${knownQuizId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const questions: unknown[] = data?.quiz?.questions ?? [];
+        if (questions.length >= 1 && !navigated) {
+          navigated = true;
+          window.localStorage.removeItem('pansgpt-active-quiz-job-id');
+          router.replace(`/quiz/${knownQuizId}`);
+          return;
+        }
+      } catch {
+        // silently retry
+      }
+      if (!cancelled && !navigated) {
+        questionTimeoutId = window.setTimeout(pollQuestions, 2000);
+      }
+    };
 
     const poll = async () => {
       try {
@@ -73,13 +99,23 @@ export default function QuizGeneratingScreen({ jobId }: { jobId: string }) {
           }
         }
 
-        if (nextJob.status === 'completed' && nextJob.quiz_id) {
+        // As soon as the backend exposes a quiz_id (happens at the start of
+        // generation), kick off question polling so we navigate the moment
+        // the first batch of questions is ready — no need to wait for 100%.
+        if (nextJob.quiz_id && !knownQuizId && !navigated) {
+          knownQuizId = nextJob.quiz_id;
+          void pollQuestions();
+        }
+
+        // Fallback: if job is fully complete and we haven't navigated yet
+        if (nextJob.status === 'completed' && nextJob.quiz_id && !navigated) {
+          navigated = true;
           router.replace(`/quiz/${nextJob.quiz_id}`);
           return;
         }
 
         if (nextJob.status !== 'failed' && nextJob.status !== 'cancelled') {
-          timeoutId = window.setTimeout(poll, 1600);
+          jobTimeoutId = window.setTimeout(poll, 1600);
         }
       } catch (err) {
         if (!cancelled) {
@@ -89,7 +125,7 @@ export default function QuizGeneratingScreen({ jobId }: { jobId: string }) {
             return;
           }
           setError(err instanceof Error ? err.message : 'Unable to check quiz generation status.');
-          timeoutId = window.setTimeout(poll, 2500);
+          jobTimeoutId = window.setTimeout(poll, 2500);
         }
       }
     };
@@ -98,7 +134,8 @@ export default function QuizGeneratingScreen({ jobId }: { jobId: string }) {
 
     return () => {
       cancelled = true;
-      if (timeoutId) window.clearTimeout(timeoutId);
+      if (jobTimeoutId) window.clearTimeout(jobTimeoutId);
+      if (questionTimeoutId) window.clearTimeout(questionTimeoutId);
     };
   }, [jobId, router]);
 

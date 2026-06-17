@@ -837,7 +837,8 @@ def _serialize_http_detail(detail: Any) -> str:
         return str(detail)
 
 
-def _update_quiz_generation_job(
+# [QUIZ BATCH FIX] — make async
+async def _update_quiz_generation_job(
     sb,
     job_id: Optional[str],
     *,
@@ -862,12 +863,15 @@ def _update_quiz_generation_job(
         payload["completed_at"] = datetime.now(timezone.utc).isoformat()
 
     try:
-        query = sb.table("quiz_generation_jobs").update(payload).eq("id", job_id)
-        if status != "cancelled":
-            query = query.neq("status", "cancelled")
-        query.execute()
+        def _update():
+            query = sb.table("quiz_generation_jobs").update(payload).eq("id", job_id)
+            if status != "cancelled":
+                query = query.neq("status", "cancelled")
+            query.execute()
+        await asyncio.to_thread(_update)
     except Exception as exc:
         logger.warning("Failed to update quiz generation job %s: %s", job_id, exc)
+# [QUIZ BATCH FIX]
 
 
 async def _generate_quiz_json_response(system_prompt: str, user_prompt: str) -> str:
@@ -882,6 +886,7 @@ async def _generate_quiz_json_response(system_prompt: str, user_prompt: str) -> 
         has_images=False,
         stream=False,
         force_google=False,
+        requested_model=llm_engine.TEXT_SECONDARY,  # [QUIZ BATCH FIX]
     )
     if response is None:
         raise RuntimeError("LLM generation failed on all available clients")
@@ -938,7 +943,8 @@ async def _generate_quiz_now(
         return JSONResponse(status_code=423, content=build_restriction_block_payload(restriction))
 
     sb = _get_supabase()
-    _update_quiz_generation_job(
+    # [QUIZ BATCH FIX] — await async update
+    await _update_quiz_generation_job(
         sb,
         job_id,
         status="retrieving",
@@ -1017,12 +1023,15 @@ async def _generate_quiz_now(
             detail="No active processed materials were found for this course in your university.",
         )
 
-    _update_quiz_generation_job(
+    # Expose quiz_id as soon as generation starts so the frontend can poll
+    # GET /api/quiz/{quiz_id} immediately and render questions as they arrive.
+    await _update_quiz_generation_job(
         sb,
         job_id,
         status="generating",
-        progress=42,
+        progress=20,
         current_step="Generating questions",
+        quiz_id=quiz_id,
     )
 
     # Keep prompt size bounded for high question counts.
@@ -1063,7 +1072,8 @@ async def _generate_quiz_now(
                 f"{used_lines}\n"
             )
 
-        system_prompt = f"""You are PANSGPT's quiz generation engine for pharmacy students.
+        system_prompt = f"""/no_think
+You are PANSGPT's quiz generation engine for pharmacy students.
 
 You must return only machine-parseable JSON. Do not include markdown, code fences, prose, comments, headings, or thinking tags.
 
@@ -1084,7 +1094,7 @@ Diversity rules:
 Grounding rules:
 - Build questions from the retrieved curriculum context when provided.
 - Cover multiple different excerpts/sources in the context, not just one narrow subsection.
-- Do not invent facts outside the retrieved context unless needed for wording clarity."""
+- Do not invent facts outside the retrieved context unless needed for wording clarity."""  # [QUIZ NO-THINK FIX]
 
         user_prompt = f"""Generate {batch_count} {type_desc} quiz questions.
 
@@ -1108,6 +1118,23 @@ Return only the JSON array."""
         target_count = max(1, int(body.numQuestions or 10))
         batch_size = 5
         questions: list[dict] = []
+
+        # [QUIZ BATCH FIX] — Insert quiz header BEFORE the generation loop
+        quiz_res = await asyncio.to_thread(
+            lambda: sb.table("quizzes").insert({
+                "user_id": current_user.id,
+                "title": f"{body.courseTitle} - {body.topic or 'General'} Quiz",
+                "course_code": body.courseCode,
+                "course_title": body.courseTitle,
+                "topic": body.topic,
+                "level": body.level,
+                "difficulty": body.difficulty,
+                "num_questions": target_count,
+                "time_limit": body.timeLimit,
+            }).execute()
+        )
+        quiz_id = quiz_res.data[0]["id"]
+        # [QUIZ BATCH FIX]
 
         while len(questions) < target_count:
             remaining = target_count - len(questions)
@@ -1161,35 +1188,11 @@ Return only the JSON array."""
 
             questions.extend(generated_this_batch)
 
-        questions = questions[:target_count]
-
-        _update_quiz_generation_job(
-            sb,
-            job_id,
-            status="saving",
-            progress=86,
-            current_step="Saving quiz",
-        )
-
-        try:
-            # Save quiz to database
-            quiz_res = sb.table("quizzes").insert({
-                "user_id": current_user.id,
-                "title": f"{body.courseTitle} - {body.topic or 'General'} Quiz",
-                "course_code": body.courseCode,
-                "course_title": body.courseTitle,
-                "topic": body.topic,
-                "level": body.level,
-                "difficulty": body.difficulty,
-                "num_questions": len(questions),
-                "time_limit": body.timeLimit,
-            }).execute()
-
-            quiz_id = quiz_res.data[0]["id"]
-
-            # Save questions
-            questions_to_insert = []
-            for idx, q in enumerate(questions):
+            # [QUIZ BATCH FIX] — save this batch immediately, don't wait for loop end
+            questions_saved_so_far = len(questions) - len(generated_this_batch)
+            batch_to_insert = []
+            for idx, q in enumerate(generated_this_batch):
+                question_order = questions_saved_so_far + idx + 1
                 question_type = q.get("questionType", "multiple_choice")
                 options = q.get("options")
                 correct_answer = q.get("correctAnswer", "")
@@ -1251,7 +1254,7 @@ Return only the JSON array."""
                     correct_answer = json.dumps(deduped_true_options)
                     points = 5
 
-                questions_to_insert.append({
+                batch_to_insert.append({
                     "quiz_id": quiz_id,
                     "question_text": _sanitize_question_stem(q["questionText"], options),
                     "question_type": question_type,
@@ -1259,15 +1262,41 @@ Return only the JSON array."""
                     "correct_answer": correct_answer,
                     "explanation": q.get("explanation"),
                     "points": points,
-                    "question_order": idx + 1,
+                    "question_order": question_order,
                 })
 
-            sb.table("quiz_questions").insert(questions_to_insert).execute()
-        except Exception as db_err:
-            logger.error(f"[ERROR] Quiz DB Insertion Failed: {db_err}")
-            raise HTTPException(status_code=500, detail="Quiz was generated but could not be saved. Please try again.")
+            if batch_to_insert:
+                try:
+                    await asyncio.to_thread(
+                        lambda b=batch_to_insert: sb.table("quiz_questions").insert(b).execute()
+                    )
+                except Exception as db_err:
+                    logger.error(f"[ERROR] Quiz DB Insertion Failed: {db_err}")
+                    raise HTTPException(status_code=500, detail="Quiz was generated but could not be saved. Please try again.")
 
-        _update_quiz_generation_job(
+            # [QUIZ BATCH FIX] — update progress after each batch
+            batch_progress = int((len(questions) / target_count) * 65) + 20
+            batch_progress = min(batch_progress, 85)
+            await _update_quiz_generation_job(
+                sb, job_id,
+                status="generating",
+                progress=batch_progress,
+                current_step=f"Generated {len(questions)} of {target_count} questions",
+            )
+            # [QUIZ BATCH FIX]
+
+        questions = questions[:target_count]
+
+        # [QUIZ BATCH FIX] — update job progress to saving phase
+        await _update_quiz_generation_job(
+            sb,
+            job_id,
+            status="saving",
+            progress=86,
+            current_step="Saving quiz",
+        )
+        # [QUIZ BATCH FIX] — completed progress update
+        await _update_quiz_generation_job(
             sb,
             job_id,
             status="completed",
@@ -1296,7 +1325,8 @@ async def _process_quiz_generation_job(job_id: str, body_payload: dict, user_pay
         current_user = User.model_validate(user_payload)
         await _generate_quiz_now(body, current_user, job_id=job_id)
     except HTTPException as exc:
-        _update_quiz_generation_job(
+        # [QUIZ BATCH FIX] — await async update
+        await _update_quiz_generation_job(
             sb,
             job_id,
             status="failed",
@@ -1306,7 +1336,8 @@ async def _process_quiz_generation_job(job_id: str, body_payload: dict, user_pay
         )
     except Exception as exc:
         logger.error("Quiz generation job %s failed: %s", job_id, exc)
-        _update_quiz_generation_job(
+        # [QUIZ BATCH FIX] — await async update
+        await _update_quiz_generation_job(
             sb,
             job_id,
             status="failed",

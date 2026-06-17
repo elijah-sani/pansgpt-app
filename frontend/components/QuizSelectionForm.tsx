@@ -1,11 +1,10 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { api } from '@/lib/api';
 import { useRouter } from 'next/navigation';
-import QuizLoadingModal from './QuizLoadingModal';
 import { useQuizCache } from '@/lib/QuizCacheContext';
 import {
   CheckCircleIcon,
@@ -34,11 +33,8 @@ export default function QuizSelectionForm() {
 
   const router = useRouter();
   const [isGenerating, setIsGenerating] = useState(false);
-  const [showLoadingModal, setShowLoadingModal] = useState(false);
-  const [isQuizComplete, setIsQuizComplete] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
-  const [abortController, setAbortController] = useState<AbortController | null>(null);
 
   const [formData, setFormData] = useState<QuizFormData>({
     courseCode: '',
@@ -51,8 +47,6 @@ export default function QuizSelectionForm() {
     timeLimit: undefined,
   });
 
-  const [topicOptions, setTopicOptions] = useState<string[]>([]);
-  const [filteredTopics, setFilteredTopics] = useState<string[]>([]);
   const [showAllTopics, setShowAllTopics] = useState(false);
 
   const {
@@ -91,33 +85,24 @@ export default function QuizSelectionForm() {
     });
   }, [documents.length, documentsLoaded, fetchDocuments]);
 
-  useEffect(() => {
-    if (!documentsLoaded && documents.length === 0) {
-      return;
-    }
+  const topicOptions = useMemo(() => {
+    if (!documentsLoaded && documents.length === 0) return [];
     const activeDocuments = documents.filter((doc) => String(doc.material_status || 'active').toLowerCase() === 'active');
     const relevantDocuments = formData.courseCode
       ? activeDocuments.filter((doc) => doc.course_code === formData.courseCode)
       : activeDocuments;
-
-    const topics = [
+    return [
       ...new Set(
         relevantDocuments
           .map((document) => document.topic)
           .filter((topic): topic is string => Boolean(topic && topic.trim()))
       ),
     ];
-    setTopicOptions(topics);
   }, [documents, documentsLoaded, formData.courseCode]);
 
-  useEffect(() => {
-    if (!formData.topic || showAllTopics) {
-      setFilteredTopics(topicOptions);
-    } else {
-      setFilteredTopics(
-        topicOptions.filter((t) => t.toLowerCase().includes(formData.topic.toLowerCase()))
-      );
-    }
+  const filteredTopics = useMemo(() => {
+    if (!formData.topic || showAllTopics) return topicOptions;
+    return topicOptions.filter((t) => t.toLowerCase().includes(formData.topic.toLowerCase()));
   }, [formData.topic, topicOptions, showAllTopics]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -155,18 +140,15 @@ export default function QuizSelectionForm() {
       setError('User session not found. Please log in again.');
       return;
     }
-    const userId = session.user.id;
 
-    const controller = new AbortController();
-    setAbortController(controller);
     setIsGenerating(true);
-    setShowLoadingModal(true);
-    setIsQuizComplete(false);
     setError(null);
     setInfo(null);
 
     try {
-      const response = await api.post('/api/quiz/generate', {
+      // Use the job-based endpoint so generation runs in the background
+      // and the user is taken to the real-time generating screen.
+      const response = await api.post('/api/quiz/jobs', {
         courseCode: formData.courseCode,
         courseTitle: formData.courseTitle,
         topic: formData.topic,
@@ -175,11 +157,10 @@ export default function QuizSelectionForm() {
         questionType: formData.questionType,
         difficulty: formData.difficulty,
         timeLimit: formData.timeLimit,
-        userId,
       });
 
       const rawText = await response.clone().text().catch(() => '');
-      let data: any = {};
+      let data: { job?: { id?: string }; detail?: string | { msg?: string }[] } = {};
       try {
         data = rawText ? JSON.parse(rawText) : {};
       } catch {
@@ -187,52 +168,32 @@ export default function QuizSelectionForm() {
       }
 
       if (!response.ok) {
-        console.error('Quiz Gen API Error Payload:', data);
+        const detail = data.detail;
         throw new Error(
-          data.error ||
-          data.detail?.[0]?.msg ||
-          data.detail ||
-          rawText ||
-          'Failed to generate quiz'
+          typeof detail === 'string'
+            ? detail
+            : Array.isArray(detail)
+            ? (detail[0]?.msg ?? 'Failed to start quiz generation')
+            : rawText || 'Failed to start quiz generation'
         );
       }
 
-      if (data.message) {
-        setInfo(data.message);
+      const jobId = data.job?.id;
+      if (!jobId) {
+        throw new Error('No job ID returned. Please try again.');
       }
 
-      setIsQuizComplete(true);
-      setTimeout(() => {
-        router.push(`/quiz/${data.quiz.id}`);
-      }, 1000);
+      // Persist job ID so QuizGeneratingScreen can resume if the user refreshes.
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem('pansgpt-active-quiz-job-id', jobId);
+      }
+
+      router.push(`/quiz/generating/${jobId}`);
     } catch (err: unknown) {
-      if (err instanceof DOMException && err.name === 'AbortError') {
-        setError('Quiz generation cancelled');
-      } else {
-        const message = err instanceof Error ? err.message : 'Failed to generate quiz';
-        setError(message);
-      }
-      setShowLoadingModal(false);
-    } finally {
+      const message = err instanceof Error ? err.message : 'Failed to start quiz generation';
+      setError(message);
       setIsGenerating(false);
-      setAbortController(null);
     }
-  };
-
-  const handleCloseLoadingModal = () => {
-    setShowLoadingModal(false);
-    setIsGenerating(false);
-    setIsQuizComplete(false);
-  };
-
-  const handleCancelQuizGeneration = () => {
-    if (abortController) {
-      abortController.abort();
-    }
-    setShowLoadingModal(false);
-    setIsGenerating(false);
-    setIsQuizComplete(false);
-    setError('Quiz generation cancelled');
   };
 
   return (
@@ -455,7 +416,7 @@ export default function QuizSelectionForm() {
             {isGenerating ? (
               <>
                 <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                <span>Generating Quiz...</span>
+                <span>Starting Quiz Generation...</span>
               </>
             ) : (
               <>
@@ -466,16 +427,6 @@ export default function QuizSelectionForm() {
           </button>
         </div>
       </form>
-
-      <QuizLoadingModal
-        isOpen={showLoadingModal}
-        onClose={handleCloseLoadingModal}
-        onCancel={handleCancelQuizGeneration}
-        isComplete={isQuizComplete}
-      />
     </div>
   );
 }
-
-
-
