@@ -104,6 +104,21 @@ def _is_empty_or_thinking_only(content: Optional[str]) -> bool:
         return False
 
 
+def _should_reject_response_content(res: Optional[Any], *, stream: bool) -> bool:
+    if stream or res is None:
+        return False
+
+    try:
+        choices = getattr(res, "choices", None)
+        if not choices:
+            return False
+        message = getattr(choices[0], "message", None)
+        content = getattr(message, "content", None) if message is not None else None
+        return _is_empty_or_thinking_only(content)
+    except Exception:
+        return False
+
+
 async def generate_completion_with_failover(
     messages: list[dict],
     temperature: float,
@@ -132,7 +147,7 @@ async def generate_completion_with_failover(
             kwargs["response_format"] = response_format
         try:
             res = await google_client.chat.completions.create(**kwargs)
-            if res and res.choices and _is_empty_or_thinking_only(res.choices[0].message.content):
+            if _should_reject_response_content(res, stream=stream):
                 raise ValueError("Google client returned empty or thinking-only response content")
             return res
         except Exception as exc:
@@ -141,14 +156,14 @@ async def generate_completion_with_failover(
                 try:
                     kwargs["response_format"] = {"type": "json_object"}
                     res = await google_client.chat.completions.create(**kwargs)
-                    if res and res.choices and _is_empty_or_thinking_only(res.choices[0].message.content):
+                    if _should_reject_response_content(res, stream=stream):
                         raise ValueError("Google client returned empty or thinking-only response content under json_object")
                     return res
                 except Exception as inner_exc:
                     logger.warning(f"Google forced model failed with standard json_object format, retrying without format: {inner_exc}")
                     kwargs.pop("response_format", None)
                     res = await google_client.chat.completions.create(**kwargs)
-                    if res and res.choices and _is_empty_or_thinking_only(res.choices[0].message.content):
+                    if _should_reject_response_content(res, stream=stream):
                         raise ValueError("Google client returned empty or thinking-only response content without format")
                     return res
             raise exc
@@ -221,7 +236,7 @@ async def generate_completion_with_failover(
                     kwargs["response_format"] = response_format
                 try:
                     res = await groq_text_client.chat.completions.create(**kwargs)
-                    if res and res.choices and _is_empty_or_thinking_only(res.choices[0].message.content):
+                    if _should_reject_response_content(res, stream=stream):
                         raise ValueError("Groq client returned empty or thinking-only response content")
                     return res
                 except Exception as exc:
@@ -230,14 +245,14 @@ async def generate_completion_with_failover(
                         try:
                             kwargs["response_format"] = {"type": "json_object"}
                             res = await groq_text_client.chat.completions.create(**kwargs)
-                            if res and res.choices and _is_empty_or_thinking_only(res.choices[0].message.content):
+                            if _should_reject_response_content(res, stream=stream):
                                 raise ValueError("Groq client returned empty or thinking-only response content under json_object")
                             return res
                         except Exception as inner_exc:
                             logger.warning(f"Groq client failed with standard json_object format, retrying without format: {inner_exc}")
                             kwargs.pop("response_format", None)
                             res = await groq_text_client.chat.completions.create(**kwargs)
-                            if res and res.choices and _is_empty_or_thinking_only(res.choices[0].message.content):
+                            if _should_reject_response_content(res, stream=stream):
                                 raise ValueError("Groq client returned empty or thinking-only response content without format")
                             return res
                     raise exc
@@ -259,7 +274,7 @@ async def generate_completion_with_failover(
                         kwargs["response_format"] = response_format
                     try:
                         res = await google_client.chat.completions.create(**kwargs)
-                        if res and res.choices and _is_empty_or_thinking_only(res.choices[0].message.content):
+                        if _should_reject_response_content(res, stream=stream):
                             raise ValueError("Google client returned empty or thinking-only response content")
                         return res
                     except Exception as exc:
@@ -268,14 +283,14 @@ async def generate_completion_with_failover(
                             try:
                                 kwargs["response_format"] = {"type": "json_object"}
                                 res = await google_client.chat.completions.create(**kwargs)
-                                if res and res.choices and _is_empty_or_thinking_only(res.choices[0].message.content):
+                                if _should_reject_response_content(res, stream=stream):
                                     raise ValueError("Google client returned empty or thinking-only response content under json_object")
                                 return res
                             except Exception as inner_exc:
                                 logger.warning(f"Google client failed with standard json_object format for model {model_name}, retrying without format: {inner_exc}")
                                 kwargs.pop("response_format", None)
                                 res = await google_client.chat.completions.create(**kwargs)
-                                if res and res.choices and _is_empty_or_thinking_only(res.choices[0].message.content):
+                                if _should_reject_response_content(res, stream=stream):
                                     raise ValueError("Google client returned empty or thinking-only response content without format")
                                 return res
                         raise exc

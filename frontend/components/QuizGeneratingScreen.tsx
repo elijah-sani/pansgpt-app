@@ -15,6 +15,8 @@ type QuizGenerationJob = {
   current_step?: string;
   error_message?: string | null;
   quiz_id?: string | null;
+  generated_question_count?: number;
+  target_question_count?: number;
   request_payload?: {
     courseCode?: string;
     courseTitle?: string;
@@ -40,8 +42,6 @@ export default function QuizGeneratingScreen({ jobId }: { jobId: string }) {
   const router = useRouter();
   const [job, setJob] = useState<QuizGenerationJob | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [readyQuestionCount, setReadyQuestionCount] = useState(0);
-  const [targetQuestionCount, setTargetQuestionCount] = useState(0);
   const [factDeck, setFactDeck] = useState<DidYouKnowFact[]>(() => shuffleFacts(DID_YOU_KNOW_FACTS));
   const [factIndex, setFactIndex] = useState(0);
   const [isFactPopupDismissed, setIsFactPopupDismissed] = useState(false);
@@ -50,37 +50,7 @@ export default function QuizGeneratingScreen({ jobId }: { jobId: string }) {
   useEffect(() => {
     let cancelled = false;
     let jobTimeoutId: number | undefined;
-    let questionTimeoutId: number | undefined;
     let navigated = false;
-    let knownQuizId: string | null = null;
-    let jobFailedOrCancelled = false;
-
-    // Poll questions as soon as we know the quiz_id.
-    // Navigate as soon as the first batch (≥1 question) is saved.
-    const pollQuestions = async () => {
-      if (cancelled || navigated || jobFailedOrCancelled || !knownQuizId) return;
-      try {
-        const res = await api.get(`/api/quiz/${knownQuizId}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        const questions: unknown[] = data?.quiz?.questions ?? [];
-        const nextReadyCount = questions.length;
-        const nextTargetCount = Number(data?.quiz?.target_question_count ?? data?.quiz?.num_questions ?? 0);
-        setReadyQuestionCount(nextReadyCount);
-        setTargetQuestionCount(nextTargetCount);
-        if (questions.length >= 1 && !navigated) {
-          navigated = true;
-          window.localStorage.removeItem('pansgpt-active-quiz-job-id');
-          router.replace(`/quiz/${knownQuizId}`);
-          return;
-        }
-      } catch {
-        // silently retry
-      }
-      if (!cancelled && !navigated && !jobFailedOrCancelled) {
-        questionTimeoutId = window.setTimeout(pollQuestions, 800);
-      }
-    };
 
     const poll = async () => {
       try {
@@ -98,10 +68,6 @@ export default function QuizGeneratingScreen({ jobId }: { jobId: string }) {
         setJob(nextJob);
         setError(null);
 
-        if (nextJob.status === 'failed' || nextJob.status === 'cancelled') {
-          jobFailedOrCancelled = true;
-        }
-
         if (typeof window !== 'undefined') {
           if (nextJob.status === 'completed' || nextJob.status === 'failed' || nextJob.status === 'cancelled') {
             window.localStorage.removeItem('pansgpt-active-quiz-job-id');
@@ -110,15 +76,7 @@ export default function QuizGeneratingScreen({ jobId }: { jobId: string }) {
           }
         }
 
-        // As soon as the backend exposes a quiz_id (happens at the start of
-        // generation), kick off question polling so we navigate the moment
-        // the first batch of questions is ready — no need to wait for 100%.
-        if (nextJob.quiz_id && !knownQuizId && !navigated) {
-          knownQuizId = nextJob.quiz_id;
-          void pollQuestions();
-        }
-
-        // Fallback: if job is fully complete and we haven't navigated yet
+        // Redirect only when the job is fully completed.
         if (nextJob.status === 'completed' && nextJob.quiz_id && !navigated) {
           navigated = true;
           router.replace(`/quiz/${nextJob.quiz_id}`);
@@ -146,7 +104,6 @@ export default function QuizGeneratingScreen({ jobId }: { jobId: string }) {
     return () => {
       cancelled = true;
       if (jobTimeoutId) window.clearTimeout(jobTimeoutId);
-      if (questionTimeoutId) window.clearTimeout(questionTimeoutId);
     };
   }, [jobId, router]);
 
@@ -185,10 +142,12 @@ export default function QuizGeneratingScreen({ jobId }: { jobId: string }) {
 
   const progress = Math.max(4, Math.min(100, job?.progress || 8));
   const failed = job?.status === 'failed' || job?.status === 'cancelled';
+  const readyQuestionCount = job?.generated_question_count || 0;
+  const targetQuestionCount = job?.target_question_count || job?.request_payload?.numQuestions || 0;
   const statusText = failed
     ? job?.error_message || 'Unable to generate this quiz.'
     : readyQuestionCount > 0
-      ? `${readyQuestionCount}${targetQuestionCount > 0 ? ` of ${targetQuestionCount}` : ''} question${readyQuestionCount === 1 ? '' : 's'} ready. Opening quiz...`
+      ? `${readyQuestionCount}${targetQuestionCount > 0 ? ` of ${targetQuestionCount}` : ''} question${readyQuestionCount === 1 ? '' : 's'} generated. ${job?.current_step || 'Generating more questions...'}`
       : job?.current_step || 'Generating practice exam...';
   const currentFact = factDeck[factIndex] || DID_YOU_KNOW_FACTS[0];
   const shouldShowFactPopup = Boolean(currentFact && !isFactPopupDismissed);

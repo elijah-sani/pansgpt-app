@@ -8,6 +8,13 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import pytest
 import services.llm_engine as llm_engine
 
+class _FakeAsyncStream:
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        raise StopAsyncIteration
+
 @pytest.mark.anyio
 async def test_llm_engine_routing():
     print("Running LLM engine routing tests...")
@@ -156,6 +163,28 @@ async def test_llm_engine_routing():
             )
 
         print("[SUCCESS] LLM routing verification passed.")
+
+
+@pytest.mark.anyio
+async def test_llm_engine_streaming_response_does_not_touch_choices():
+    messages = [{"role": "user", "content": "hello"}]
+    fake_stream = _FakeAsyncStream()
+    mock_google = AsyncMock()
+    mock_google.chat.completions.create.return_value = fake_stream
+
+    with patch("services.llm_engine.google_client", mock_google), \
+         patch("services.llm_engine.openrouter_client", AsyncMock()), \
+         patch("services.llm_engine.groq_client", AsyncMock()), \
+         patch("services.llm_engine.groq_text_client", AsyncMock()):
+        result = await llm_engine.generate_completion_with_failover(
+            messages=messages,
+            temperature=0.7,
+            max_tokens=100,
+            requested_model="TEXT_SECONDARY",
+            stream=True,
+        )
+
+    assert result is fake_stream
 
 if __name__ == "__main__":
     import asyncio

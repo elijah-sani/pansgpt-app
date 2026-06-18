@@ -56,6 +56,8 @@ QUIZ_GENERATION_TEMPERATURE = 0.25
 QUIZ_GENERATION_MAX_TOKENS = 2048
 QUIZ_GRADING_TEMPERATURE = 0.1
 QUIZ_GRADING_MAX_TOKENS = 2048
+QUIZ_BATCH_SIZE = max(1, int(os.getenv("QUIZ_BATCH_SIZE", "5")))
+QUIZ_LLM_ATTEMPT_TIMEOUT_SECONDS = max(1, int(os.getenv("QUIZ_LLM_ATTEMPT_TIMEOUT_SECONDS", "60")))
 QUIZ_CONTEXT_CACHE_TTL_SECONDS = 900
 QUIZ_CONTEXT_CACHE_MAXSIZE = 128
 
@@ -1581,7 +1583,7 @@ Return only the JSON object."""
 
     try:
         target_count = max(1, int(body.numQuestions or 10))
-        batch_size = 2
+        batch_size = QUIZ_BATCH_SIZE
         questions: list[dict] = []
 
         # [QUIZ BATCH FIX] — Insert quiz header BEFORE the generation loop
@@ -1668,7 +1670,10 @@ Return only the JSON object."""
                 batch_attempt_started = time.perf_counter()
                 try:
                     llm_started = time.perf_counter()
-                    raw = await _generate_quiz_json_response(system_prompt, user_prompt, response_format=current_response_format)
+                    raw = await asyncio.wait_for(
+                        _generate_quiz_json_response(system_prompt, user_prompt, response_format=current_response_format),
+                        timeout=QUIZ_LLM_ATTEMPT_TIMEOUT_SECONDS,
+                    )
                     _quiz_timing_log(
                         "generate_quiz_json_response",
                         (time.perf_counter() - llm_started) * 1000,
@@ -1692,6 +1697,33 @@ Return only the JSON object."""
                             "generated_count_so_far": len(questions),
                         },
                     )
+                except asyncio.TimeoutError:
+                    _quiz_timing_log(
+                        "generate_quiz_json_response_timeout",
+                        (time.perf_counter() - llm_started) * 1000,
+                        quiz_id=quiz_id,
+                        batch_number=batch_number,
+                        batch_size=current_batch,
+                        attempt_number=attempt,
+                        response_format_mode=response_format_mode,
+                        generated_count_so_far=len(questions),
+                        timeout_seconds=QUIZ_LLM_ATTEMPT_TIMEOUT_SECONDS,
+                        **request_meta,
+                    )
+                    _quiz_timing_log(
+                        "llm_batch_attempt_failure",
+                        (time.perf_counter() - batch_attempt_started) * 1000,
+                        quiz_id=quiz_id,
+                        batch_number=batch_number,
+                        batch_size=current_batch,
+                        attempt_number=attempt,
+                        response_format_mode=response_format_mode,
+                        generated_count_so_far=len(questions),
+                        error_type="TimeoutError",
+                        timeout_seconds=QUIZ_LLM_ATTEMPT_TIMEOUT_SECONDS,
+                        **request_meta,
+                    )
+                    continue
                 except Exception as e:
                     logger.warning(f"Quiz batch generation or parse failed (batch={current_batch}, attempt={attempt}): {e}")
                     _quiz_timing_log(
@@ -2021,18 +2053,20 @@ async def _process_quiz_generation_job(job_id: str, body_payload: dict, user_pay
 
 
 def _normalize_quiz_generation_job(row: dict) -> dict:
-    return {
-        "id": row.get("id"),
-        "status": row.get("status"),
-        "progress": row.get("progress") or 0,
-        "current_step": row.get("current_step") or "Preparing quiz",
-        "error_message": row.get("error_message"),
-        "quiz_id": row.get("quiz_id"),
-        "request_payload": row.get("request_payload") or {},
-        "created_at": row.get("created_at"),
-        "updated_at": row.get("updated_at"),
-        "completed_at": row.get("completed_at"),
-    }
+        return {
+            "id": row.get("id"),
+            "status": row.get("status"),
+            "progress": row.get("progress") or 0,
+            "current_step": row.get("current_step") or "Preparing quiz",
+            "error_message": row.get("error_message"),
+            "quiz_id": row.get("quiz_id"),
+            "generated_question_count": row.get("generated_question_count") or 0,
+            "target_question_count": row.get("target_question_count") or row.get("request_payload", {}).get("numQuestions", 0),
+            "request_payload": row.get("request_payload") or {},
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
+            "completed_at": row.get("completed_at"),
+        }
 
 
 @router.post("/generate", dependencies=[Depends(_verify_api_key)])
@@ -2227,13 +2261,12 @@ async def quiz_generation_events(
 
 @router.get("/jobs/{job_id}", dependencies=[Depends(_verify_api_key)])
 async def get_quiz_generation_job(job_id: str, current_user: User = Depends(get_current_user)):
-    await resolve_student_university_context(current_user)
-
     sb = _get_supabase()
+    started = time.perf_counter()
     try:
-        res = (
-            sb.table("quiz_generation_jobs")
-            .select("id,status,progress,current_step,error_message,quiz_id,request_payload,created_at,updated_at,completed_at")
+        res = await asyncio.to_thread(
+            lambda: sb.table("quiz_generation_jobs")
+            .select("id,user_id,status,progress,current_step,error_message,quiz_id,request_payload,created_at,updated_at,completed_at")
             .eq("id", job_id)
             .eq("user_id", current_user.id)
             .limit(1)
@@ -2247,7 +2280,48 @@ async def get_quiz_generation_job(job_id: str, current_user: User = Depends(get_
     if not rows:
         raise HTTPException(status_code=404, detail="Quiz generation job not found.")
 
-    return {"job": _normalize_quiz_generation_job(rows[0])}
+    row = rows[0]
+    generated_question_count = 0
+    target_question_count = int((row.get("request_payload") or {}).get("numQuestions") or 0)
+
+    quiz_id = row.get("quiz_id")
+    if quiz_id:
+        try:
+            count_res = await asyncio.to_thread(
+                lambda: sb.table("quiz_questions").select("id", count="exact").eq("quiz_id", quiz_id).execute()
+            )
+            generated_question_count = int(count_res.count or 0)
+        except Exception as exc:
+            logger.warning("Could not count generated quiz questions for job %s: %s", job_id, exc)
+
+        if target_question_count <= 0:
+            try:
+                quiz_res = await asyncio.to_thread(
+                    lambda: sb.table("quizzes").select("num_questions").eq("id", quiz_id).limit(1).execute()
+                )
+                quiz_rows = quiz_res.data or []
+                if quiz_rows:
+                    target_question_count = int(quiz_rows[0].get("num_questions") or 0)
+            except Exception as exc:
+                logger.warning("Could not resolve target question count for job %s: %s", job_id, exc)
+
+    normalized = _normalize_quiz_generation_job(
+        {
+            **row,
+            "generated_question_count": generated_question_count,
+            "target_question_count": target_question_count,
+        }
+    )
+    _quiz_timing_log(
+        "get_quiz_generation_job",
+        (time.perf_counter() - started) * 1000,
+        job_id=job_id,
+        quiz_id=quiz_id,
+        generated_question_count=generated_question_count,
+        target_question_count=target_question_count,
+        status=normalized.get("status"),
+    )
+    return {"job": normalized}
 
 
 @router.post("/jobs/{job_id}/cancel", dependencies=[Depends(_verify_api_key)])
