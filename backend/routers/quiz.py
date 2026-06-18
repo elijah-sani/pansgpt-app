@@ -1131,30 +1131,85 @@ async def _generate_quiz_now(
         type_desc = "multiple-choice"
         if q_type == "MCQ":
             format_reqs = '''- "questionType": "MCQ"
-- "options": an array of exactly 5 option strings
-- "correctAnswer": an array of exactly 3 option labels from ["A","B","C","D","E"], e.g. ["A","C","E"]
+- "options": an array of exactly 5 option strings, e.g. ["A. Option A", "B. Option B", "C. Option C", "D. Option D", "E. Option E"]
+- "correctAnswer": a string of comma-separated option labels from ["A","B","C","D","E"], e.g. "A, C, E"
 - Include in the question stem: "Select one or more."
-- EXACTLY 3 options must be true and EXACTLY 2 options must be false.
-- The false options must be plausible and easily confusable with true ones.'''
+- EXACTLY 3 options must be true and EXACTLY 2 options must be false.'''
+            example_json = '''{
+  "questions": [
+    {
+      "questionText": "Which of the following are primary side effects of drug X? Select one or more.",
+      "questionType": "MCQ",
+      "options": ["A. Side effect 1", "B. Side effect 2", "C. Side effect 3", "D. Side effect 4", "E. Side effect 5"],
+      "correctAnswer": "A, C, E",
+      "explanation": "Brief explanation of why A, C, and E are the correct side effects."
+    }
+  ]
+}'''
         else:
             format_reqs = '''- "questionType": "multiple_choice"
-- "options": an array of 4 option strings ["A. ...", "B. ...", "C. ...", "D. ..."]
-- "correctAnswer": the letter of the correct option (e.g. "A")'''
+- "options": an array of exactly 4 option strings, e.g. ["A. Option A", "B. Option B", "C. Option C", "D. Option D"]
+- "correctAnswer": the letter of the correct option (e.g. "A") or the full labeled option (e.g. "A. Option A")'''
+            example_json = '''{
+  "questions": [
+    {
+      "questionText": "Example pharmacy question?",
+      "questionType": "multiple_choice",
+      "options": ["A. Option one", "B. Option two", "C. Option three", "D. Option four"],
+      "correctAnswer": "A. Option one",
+      "explanation": "Brief explanation of why A is correct."
+    }
+  ]
+}'''
     elif q_type == "TRUE_FALSE":
         type_desc = "true/false"
         format_reqs = '''- "questionType": "TRUE_FALSE"
 - "options": ["True", "False"]
 - "correctAnswer": "True" or "False"'''
+        example_json = '''{
+  "questions": [
+    {
+      "questionText": "Drug X is classified as a beta-blocker.",
+      "questionType": "TRUE_FALSE",
+      "options": ["True", "False"],
+      "correctAnswer": "True",
+      "explanation": "Brief explanation of why it is True."
+    }
+  ]
+}'''
     elif q_type == "SHORT_ANSWER":
         type_desc = "short answer"
         format_reqs = '''- "questionType": "SHORT_ANSWER"
 - "correctAnswer": the exact short phrase or word that answers the question
-(Do not include an "options" field)'''
+(Do not include an options field)'''
+        example_json = '''{
+  "questions": [
+    {
+      "questionText": "What is the chemical name of drug Y?",
+      "questionType": "SHORT_ANSWER",
+      "options": null,
+      "correctAnswer": "Y-name",
+      "explanation": "Brief explanation of why Y-name is correct."
+    }
+  ]
+}'''
     else:
         type_desc = "multiple-choice"
         format_reqs = '''- "questionType": "multiple_choice"
 - "options": an array of 4 option strings ["A. ...", "B. ...", "C. ...", "D. ..."]
-- "correctAnswer": the letter of the correct option (e.g. "A")'''
+- "correctAnswer": the letter of the correct option (e.g. "A") or the full labeled option (e.g. "A. Option A")'''
+        example_json = '''{
+  "questions": [
+    {
+      "questionText": "Example pharmacy question?",
+      "questionType": "multiple_choice",
+      "options": ["A. Option one", "B. Option two", "C. Option three", "D. Option four"],
+      "correctAnswer": "A. Option one",
+      "explanation": "Brief explanation of why A is correct."
+    }
+  ]
+}'''
+
 
     try:
         recent_question_block = _build_recent_question_block(
