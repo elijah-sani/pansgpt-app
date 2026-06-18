@@ -1,13 +1,15 @@
 """
 Quiz router – Generate, submit, and retrieve quizzes.
 """
-from fastapi import APIRouter, HTTPException, Request, Depends, Header, BackgroundTasks
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, HTTPException, Request, Depends, Header, BackgroundTasks, Query
+from fastapi.responses import JSONResponse, StreamingResponse
 from dependencies import get_current_user, User, UNIVERSITY_SUSPENDED_MESSAGE
 from pydantic import BaseModel, field_validator
 from typing import Optional, List, Union, Any
 import json
 import logging
+import jwt
+import time
 import re
 import uuid
 import os
@@ -19,6 +21,33 @@ from utils.thinking_token_utils import strip_thinking_tokens
 from services import llm_engine
 
 logger = logging.getLogger("PansGPT")
+
+STREAM_TOKEN_SECRET = uuid.uuid4().hex
+
+def generate_stream_token(user_id: str, quiz_id: str) -> str:
+    payload = {
+        "sub": user_id,
+        "quiz_id": quiz_id,
+        "exp": int(time.time()) + 120,
+        "type": "quiz_stream"
+    }
+    return jwt.encode(payload, STREAM_TOKEN_SECRET, algorithm="HS256")
+
+def verify_stream_token(token: str, quiz_id: str) -> str:
+    try:
+        payload = jwt.decode(token, STREAM_TOKEN_SECRET, algorithms=["HS256"])
+        if payload.get("type") != "quiz_stream":
+            raise HTTPException(status_code=401, detail="Invalid token type")
+        if payload.get("quiz_id") != quiz_id:
+            raise HTTPException(status_code=403, detail="Token does not match quiz_id")
+        user_id = payload.get("sub")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token payload")
+        return user_id
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Stream token has expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid stream token")
 
 router = APIRouter(prefix="/api/quiz", tags=["quiz"])
 
@@ -1153,12 +1182,11 @@ Return only the JSON array."""
             for attempt in range(1, 4):
                 compact_mode = attempt >= 2 and target_count >= 15
                 system_prompt, user_prompt = _build_generation_prompts(current_batch, already_used, compact=compact_mode)
-                raw = await _generate_quiz_json_response(system_prompt, user_prompt)
-
                 try:
+                    raw = await _generate_quiz_json_response(system_prompt, user_prompt)
                     parsed = _parse_json_array(raw)
-                except Exception:
-                    logger.warning(f"Quiz batch parse failed (batch={current_batch}, attempt={attempt})")
+                except Exception as e:
+                    logger.warning(f"Quiz batch generation or parse failed (batch={current_batch}, attempt={attempt}): {e}")
                     continue
 
                 # Dynamic repetition tolerance: slightly relaxed for larger requested sets.
@@ -1417,6 +1445,143 @@ async def create_quiz_generation_job(
     return {"job": _normalize_quiz_generation_job(job)}
 
 
+@router.post("/{quiz_id}/stream-token", dependencies=[Depends(_verify_api_key)])
+async def generate_quiz_stream_token(quiz_id: str, current_user: User = Depends(get_current_user)):
+    """Generate a short-lived transient JWT for the EventSource route to verify ownership."""
+    await resolve_student_university_context(current_user)
+    sb = _get_supabase()
+    
+    try:
+        quiz_res = sb.table("quizzes").select("user_id").eq("id", quiz_id).limit(1).execute()
+        if not quiz_res.data:
+            raise HTTPException(status_code=404, detail="Quiz not found")
+        if quiz_res.data[0].get("user_id") != current_user.id:
+            raise HTTPException(status_code=403, detail="Forbidden: You do not own this quiz")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error checking quiz ownership for token generation: {e}")
+        raise HTTPException(status_code=500, detail="Database access error")
+        
+    token = generate_stream_token(current_user.id, quiz_id)
+    return {"stream_token": token, "expires_in": 120}
+
+
+@router.get("/{quiz_id}/events")
+async def quiz_generation_events(
+    quiz_id: str,
+    request: Request,
+    stream_token: str = Query(...),
+    after: int = Query(0),
+):
+    """
+    Server-Sent Events endpoint to stream quiz questions as they are generated.
+    Auth is performed using the quiz-specific stream_token.
+    """
+    user_id = verify_stream_token(stream_token, quiz_id)
+    sb = _get_supabase()
+    
+    async def event_generator():
+        last_sent_order = after
+        heartbeat_interval = 10.0
+        check_interval = 1.0
+        last_heartbeat = time.time()
+        
+        while True:
+            if await request.is_disconnected():
+                logger.info(f"Client disconnected from SSE for quiz {quiz_id}")
+                break
+                
+            try:
+                questions_res = sb.table("quiz_questions") \
+                    .select("*") \
+                    .eq("quiz_id", quiz_id) \
+                    .gt("question_order", last_sent_order) \
+                    .order("question_order", desc=False) \
+                    .execute()
+                new_questions = questions_res.data or []
+            except Exception as e:
+                logger.error(f"Error fetching questions in SSE generator: {e}")
+                new_questions = []
+                
+            try:
+                job_res = sb.table("quiz_generation_jobs") \
+                    .select("status,error_message,progress,request_payload") \
+                    .eq("quiz_id", quiz_id) \
+                    .order("created_at", desc=True) \
+                    .limit(1) \
+                    .execute()
+                job = job_res.data[0] if job_res.data else None
+            except Exception as e:
+                logger.error(f"Error fetching job status in SSE generator: {e}")
+                job = None
+                
+            for q in new_questions:
+                payload = {
+                    "quiz_id": quiz_id,
+                    "question": q,
+                    "generated_question_count": q["question_order"],
+                    "target_question_count": 0
+                }
+                
+                if job and job.get("request_payload"):
+                    payload["target_question_count"] = job["request_payload"].get("numQuestions", 10)
+                
+                yield f"id: {q['question_order']}\n"
+                yield f"event: question_added\n"
+                yield f"data: {json.dumps(payload)}\n\n"
+                
+                last_sent_order = q["question_order"]
+                last_heartbeat = time.time()
+                
+            if job:
+                status = job.get("status")
+                error_msg = job.get("error_message")
+                target_count = job.get("request_payload", {}).get("numQuestions", 10)
+                
+                try:
+                    count_res = sb.table("quiz_questions").select("id", count="exact").eq("quiz_id", quiz_id).execute()
+                    gen_count = count_res.count or last_sent_order
+                except Exception:
+                    gen_count = last_sent_order
+                
+                if status == "completed":
+                    payload = {
+                        "quiz_id": quiz_id,
+                        "status": "completed",
+                        "generated_question_count": gen_count,
+                        "target_question_count": target_count
+                    }
+                    yield f"event: completed\n"
+                    yield f"data: {json.dumps(payload)}\n\n"
+                    break
+                    
+                elif status in ("failed", "cancelled"):
+                    payload = {
+                        "quiz_id": quiz_id,
+                        "status": status,
+                        "generated_question_count": gen_count,
+                        "target_question_count": target_count,
+                        "error": error_msg or "Generation stopped."
+                    }
+                    yield f"event: failed\n"
+                    yield f"data: {json.dumps(payload)}\n\n"
+                    break
+                    
+            if time.time() - last_heartbeat >= heartbeat_interval:
+                yield f": keep-alive\n\n"
+                last_heartbeat = time.time()
+                
+            await asyncio.sleep(check_interval)
+
+    headers = {
+        "Cache-Control": "no-cache, no-transform",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
+
+
 @router.get("/jobs/{job_id}", dependencies=[Depends(_verify_api_key)])
 async def get_quiz_generation_job(job_id: str, current_user: User = Depends(get_current_user)):
     await resolve_student_university_context(current_user)
@@ -1556,10 +1721,27 @@ async def get_quiz(quiz_id: str, current_user: User = Depends(get_current_user))
             .order("question_order", desc=False) \
             .execute()
 
+        job_res = sb.table("quiz_generation_jobs") \
+            .select("status,error_message") \
+            .eq("quiz_id", quiz_id) \
+            .order("created_at", desc=True) \
+            .limit(1) \
+            .execute()
+
+        job_status = "completed"
+        job_error = None
+        if job_res.data:
+            job_status = job_res.data[0].get("status")
+            job_error = job_res.data[0].get("error_message")
+
         return {
             "quiz": {
                 **quiz_rows[0],
                 "questions": questions_res.data or [],
+                "target_question_count": quiz_rows[0].get("num_questions", len(questions_res.data or [])),
+                "generated_question_count": len(questions_res.data or []),
+                "generation_job_status": job_status,
+                "generation_job_error": job_error,
             }
         }
 
@@ -1586,104 +1768,160 @@ async def submit_quiz(body: QuizSubmitRequest, current_user: User = Depends(get_
 
         questions = {q["id"]: q for q in (questions_res.data or [])}
 
+        # Create a mapping from questionId to user answer
+        answers_map = {ans.questionId: ans for ans in body.answers}
+
         score = 0
         max_score = 0
         feedback_items = []
 
         # Separate short-answer questions for AI grading
         short_answer_items = []  # (index_in_feedback, answer, question)
-        deterministic_items = []
 
-        for answer in body.answers:
-            question = questions.get(answer.questionId)
-            if not question:
-                continue
-            # max_score is updated per question type below
+        for q_id, question in questions.items():
+            ans_obj = answers_map.get(q_id)
+            selected_answer = ans_obj.selectedAnswer if ans_obj else ""
 
             q_type = question.get("question_type", "")
             if q_type == "SHORT_ANSWER":
                 max_score += question.get("points", 1)
-                short_answer_items.append((len(feedback_items), answer, question))
-                # Placeholder — will be filled by AI grading
-                feedback_items.append({
-                    "questionId": answer.questionId,
-                    "questionText": question.get("question_text", ""),
-                    "selectedAnswer": ", ".join(answer.selectedAnswer) if isinstance(answer.selectedAnswer, list) else answer.selectedAnswer,
-                    "correctAnswer": question["correct_answer"],
-                    "isCorrect": False,
-                    "partiallyCorrect": False,
-                    "earnedPoints": 0,
-                    "points": question.get("points", 1),
-                    "explanation": question.get("explanation"),
-                })
+                if not selected_answer or (isinstance(selected_answer, str) and not selected_answer.strip()):
+                    feedback_items.append({
+                        "questionId": q_id,
+                        "questionText": question.get("question_text", ""),
+                        "selectedAnswer": "",
+                        "correctAnswer": question["correct_answer"],
+                        "isCorrect": False,
+                        "partiallyCorrect": False,
+                        "earnedPoints": 0,
+                        "points": question.get("points", 1),
+                        "explanation": question.get("explanation"),
+                    })
+                else:
+                    short_answer_items.append((len(feedback_items), ans_obj, question))
+                    # Placeholder — will be filled by AI grading
+                    feedback_items.append({
+                        "questionId": q_id,
+                        "questionText": question.get("question_text", ""),
+                        "selectedAnswer": ", ".join(ans_obj.selectedAnswer) if isinstance(ans_obj.selectedAnswer, list) else ans_obj.selectedAnswer,
+                        "correctAnswer": question["correct_answer"],
+                        "isCorrect": False,
+                        "partiallyCorrect": False,
+                        "earnedPoints": 0,
+                        "points": question.get("points", 1),
+                        "explanation": question.get("explanation"),
+                    })
             elif q_type == "MCQ":
                 options = question.get("options") or []
                 if not isinstance(options, list):
                     options = []
 
-                selected_options = _extract_selected_mcq_options(answer.selectedAnswer, options)
-
-                true_options = _extract_mcq_true_options(question)
-                selected_norm = {_normalize_option(item) for item in selected_options}
-                true_norm = {_normalize_option(item) for item in true_options}
-
-                option_details = []
-                question_score = 0
-                for option in options:
-                    norm = _normalize_option(option)
-                    user_selected = norm in selected_norm
-                    is_true_option = norm in true_norm
-                    decision_correct = user_selected == is_true_option
-                    delta = 1 if decision_correct else -1
-                    question_score += delta
-                    option_details.append({
-                        "option": option,
-                        "isCorrect": is_true_option,
-                        "userSelected": user_selected,
-                        "score": delta,
-                    })
-
                 max_points = len(options)
                 max_score += max_points
-                score += question_score
-                feedback_items.append({
-                    "questionId": answer.questionId,
-                    "questionText": question.get("question_text", ""),
-                    "selectedAnswer": ", ".join(selected_options),
-                    "correctAnswer": ", ".join(true_options),
-                    "isCorrect": question_score == max_points,
-                    "partiallyCorrect": (question_score > 0 and question_score < max_points),
-                    "earnedPoints": question_score,
-                    "points": max_points,
-                    "optionDetails": option_details,
-                    "explanation": question.get("explanation"),
-                })
+
+                # If no answer was submitted for this MCQ, score is 0 without penalty
+                if not selected_answer or (isinstance(selected_answer, list) and not selected_answer) or (isinstance(selected_answer, str) and not selected_answer.strip()):
+                    option_details = []
+                    true_options = _extract_mcq_true_options(question)
+                    true_norm = {_normalize_option(item) for item in true_options}
+                    for option in options:
+                        norm = _normalize_option(option)
+                        is_true_option = norm in true_norm
+                        option_details.append({
+                            "option": option,
+                            "isCorrect": is_true_option,
+                            "userSelected": False,
+                            "score": 0,
+                        })
+
+                    feedback_items.append({
+                        "questionId": q_id,
+                        "questionText": question.get("question_text", ""),
+                        "selectedAnswer": "",
+                        "correctAnswer": ", ".join(true_options),
+                        "isCorrect": False,
+                        "partiallyCorrect": False,
+                        "earnedPoints": 0,
+                        "points": max_points,
+                        "optionDetails": option_details,
+                        "explanation": question.get("explanation"),
+                    })
+                else:
+                    selected_options = _extract_selected_mcq_options(selected_answer, options)
+                    true_options = _extract_mcq_true_options(question)
+                    selected_norm = {_normalize_option(item) for item in selected_options}
+                    true_norm = {_normalize_option(item) for item in true_options}
+
+                    option_details = []
+                    question_score = 0
+                    for option in options:
+                        norm = _normalize_option(option)
+                        user_selected = norm in selected_norm
+                        is_true_option = norm in true_norm
+                        decision_correct = user_selected == is_true_option
+                        delta = 1 if decision_correct else -1
+                        question_score += delta
+                        option_details.append({
+                            "option": option,
+                            "isCorrect": is_true_option,
+                            "userSelected": user_selected,
+                            "score": delta,
+                        })
+
+                    score += question_score
+                    feedback_items.append({
+                        "questionId": q_id,
+                        "questionText": question.get("question_text", ""),
+                        "selectedAnswer": ", ".join(selected_options),
+                        "correctAnswer": ", ".join(true_options),
+                        "isCorrect": question_score == max_points,
+                        "partiallyCorrect": (question_score > 0 and question_score < max_points),
+                        "earnedPoints": question_score,
+                        "points": max_points,
+                        "optionDetails": option_details,
+                        "explanation": question.get("explanation"),
+                    })
             else:
                 max_score += question.get("points", 1)
-                # Deterministic grading for OBJECTIVE, TRUE_FALSE, multiple_choice
-                raw_answer = answer.selectedAnswer
-                if isinstance(raw_answer, list):
-                    ans_str = (str(raw_answer[0]).strip().upper() if raw_answer else "")
+                
+                if not selected_answer or (isinstance(selected_answer, list) and not selected_answer) or (isinstance(selected_answer, str) and not selected_answer.strip()):
+                    feedback_items.append({
+                        "questionId": q_id,
+                        "questionText": question.get("question_text", ""),
+                        "selectedAnswer": "",
+                        "correctAnswer": question["correct_answer"],
+                        "isCorrect": False,
+                        "partiallyCorrect": False,
+                        "earnedPoints": 0,
+                        "points": question.get("points", 1),
+                        "explanation": question.get("explanation"),
+                    })
                 else:
-                    ans_str = str(raw_answer).strip().upper()
-                corr_str = question["correct_answer"].strip().upper()
-                if q_type in ("multiple_choice", "OBJECTIVE"):
-                    is_correct = bool(ans_str and corr_str and ans_str[0] == corr_str[0])
-                else:
-                    is_correct = ans_str == corr_str
-                if is_correct:
-                    score += question.get("points", 1)
-                feedback_items.append({
-                    "questionId": answer.questionId,
-                    "questionText": question.get("question_text", ""),
-                    "selectedAnswer": ", ".join(answer.selectedAnswer) if isinstance(answer.selectedAnswer, list) else answer.selectedAnswer,
-                    "correctAnswer": question["correct_answer"],
-                    "isCorrect": is_correct,
-                    "partiallyCorrect": False,
-                    "earnedPoints": question.get("points", 1) if is_correct else 0,
-                    "points": question.get("points", 1),
-                    "explanation": question.get("explanation"),
-                })
+                    # Deterministic grading for OBJECTIVE, TRUE_FALSE, multiple_choice
+                    raw_answer = selected_answer
+                    if isinstance(raw_answer, list):
+                        ans_str = (str(raw_answer[0]).strip().upper() if raw_answer else "")
+                    else:
+                        ans_str = str(raw_answer).strip().upper()
+                    corr_str = question["correct_answer"].strip().upper()
+                    if q_type in ("multiple_choice", "OBJECTIVE"):
+                        is_correct = bool(ans_str and corr_str and ans_str[0] == corr_str[0])
+                    else:
+                        is_correct = ans_str == corr_str
+                    if is_correct:
+                        score += question.get("points", 1)
+                    feedback_items.append({
+                        "questionId": q_id,
+                        "questionText": question.get("question_text", ""),
+                        "selectedAnswer": ", ".join(selected_answer) if isinstance(selected_answer, list) else selected_answer,
+                        "correctAnswer": question["correct_answer"],
+                        "isCorrect": is_correct,
+                        "partiallyCorrect": False,
+                        "earnedPoints": question.get("points", 1) if is_correct else 0,
+                        "points": question.get("points", 1),
+                        "explanation": question.get("explanation"),
+                    })
+
 
         # ── AI grading for short-answer questions ──
         if short_answer_items:

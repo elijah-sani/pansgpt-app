@@ -86,7 +86,7 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [userAnswers, setUserAnswers] = useState<UserAnswer[]>([]);
+  const [userAnswers, setUserAnswers] = useState<Record<string, string | string[]>>({});
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -94,6 +94,10 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [showIncompleteSubmitDialog, setShowIncompleteSubmitDialog] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
+
+  const [jobStatus, setJobStatus] = useState<string>('completed');
+  const [jobError, setJobError] = useState<string | null>(null);
+  const lastReceivedOrderRef = React.useRef(0);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -111,10 +115,20 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
 
         const data = await response.json();
         setQuiz(data.quiz);
-        setUserAnswers(data.quiz.questions.map((question: Question) => ({
-          questionId: question.id,
-          answer: '',
-        })));
+
+        const initialAnswers: Record<string, string | string[]> = {};
+        data.quiz.questions.forEach((question: Question) => {
+          initialAnswers[question.id] = question.question_type === 'MCQ' ? [] : '';
+        });
+        setUserAnswers(initialAnswers);
+
+        const maxOrder = data.quiz.questions.reduce(
+          (max: number, q: Question) => Math.max(max, q.question_order),
+          0
+        );
+        lastReceivedOrderRef.current = maxOrder;
+        setJobStatus(data.quiz.generation_job_status || 'completed');
+        setJobError(data.quiz.generation_job_error || null);
 
         if (data.quiz.time_limit) {
           setTimeRemaining(data.quiz.time_limit * 60);
@@ -131,10 +145,187 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
     if (quizId) void fetchQuiz();
   }, [quizId]);
 
+  // SSE and Polling to handle question streaming in real-time
+  useEffect(() => {
+    if (!quizId || !quiz) return;
+    if (jobStatus === 'completed' || jobStatus === 'failed' || jobStatus === 'cancelled') {
+      return;
+    }
+
+    let active = true;
+    let eventSource: EventSource | null = null;
+    let reconnectTimeout: NodeJS.Timeout | null = null;
+    let pollInterval: NodeJS.Timeout | null = null;
+    let reconnectAttempts = 0;
+
+    async function connectSSE(orderToUse: number) {
+      if (!active) return;
+      try {
+        // Fetch a fresh stream token
+        const tokenRes = await api.post(`/api/quiz/${quizId}/stream-token`, {});
+        if (!tokenRes.ok) {
+          throw new Error('Failed to fetch stream token');
+        }
+        const tokenData = await tokenRes.json();
+        const token = tokenData.stream_token;
+
+        if (!active) return;
+
+        // Open EventSource
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || '';
+        const url = `${apiUrl}/api/quiz/${quizId}/events?stream_token=${token}&after=${orderToUse}`;
+        eventSource = new EventSource(url);
+
+        eventSource.addEventListener('question_added', (event) => {
+          if (!active) return;
+          try {
+            const data = JSON.parse(event.data);
+            const newQuestion: Question = data.question;
+            const order = data.generated_question_count;
+
+            setQuiz((prev) => {
+              if (!prev) return null;
+              const exists = prev.questions.some((q) => q.id === newQuestion.id);
+              if (exists) return prev;
+
+              const updatedQuestions = [...prev.questions, newQuestion].sort(
+                (a, b) => a.question_order - b.question_order
+              );
+              return { ...prev, questions: updatedQuestions };
+            });
+
+            setUserAnswers((prev) => {
+              if (prev[newQuestion.id] !== undefined) return prev;
+              return {
+                ...prev,
+                [newQuestion.id]: newQuestion.question_type === 'MCQ' ? [] : '',
+              };
+            });
+
+            lastReceivedOrderRef.current = order;
+            reconnectAttempts = 0; // Reset attempts on success
+          } catch (e) {
+            console.error('Error parsing question_added event:', e);
+          }
+        });
+
+        eventSource.addEventListener('completed', (event) => {
+          if (!active) return;
+          setJobStatus('completed');
+          if (eventSource) {
+            eventSource.close();
+          }
+        });
+
+        eventSource.addEventListener('failed', (event) => {
+          if (!active) return;
+          try {
+            const data = JSON.parse(event.data);
+            setJobStatus('failed');
+            setJobError(data.error || 'Generation stopped.');
+          } catch {
+            setJobStatus('failed');
+            setJobError('Generation stopped.');
+          }
+          if (eventSource) {
+            eventSource.close();
+          }
+        });
+
+        eventSource.onerror = () => {
+          if (!active) return;
+          console.log('SSE connection error, closing source');
+          if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+          }
+
+          if (reconnectAttempts < 1) {
+            reconnectAttempts++;
+            console.log('Attempting SSE reconnect in 2 seconds...');
+            reconnectTimeout = setTimeout(() => {
+              void connectSSE(lastReceivedOrderRef.current);
+            }, 2000);
+          } else {
+            console.log('SSE reconnect exceeded limit. Falling back to polling.');
+            startPolling();
+          }
+        };
+
+      } catch (err) {
+        console.error('Failed to establish SSE stream:', err);
+        startPolling();
+      }
+    }
+
+    function startPolling() {
+      if (!active) return;
+      if (pollInterval) clearInterval(pollInterval);
+
+      pollInterval = setInterval(async () => {
+        try {
+          const res = await api.get(`/api/quiz/${quizId}`);
+          if (!res.ok) return;
+          const data = await res.json();
+          if (!active) return;
+
+          setQuiz((prev) => {
+            if (!prev) return data.quiz;
+            return {
+              ...prev,
+              questions: data.quiz.questions,
+              num_questions: data.quiz.num_questions,
+            };
+          });
+
+          setUserAnswers((prev) => {
+            const updated = { ...prev };
+            let changed = false;
+            data.quiz.questions.forEach((q: Question) => {
+              if (updated[q.id] === undefined) {
+                updated[q.id] = q.question_type === 'MCQ' ? [] : '';
+                changed = true;
+              }
+            });
+            return changed ? updated : prev;
+          });
+
+          const status = data.quiz.generation_job_status || 'completed';
+          setJobStatus(status);
+          if (data.quiz.generation_job_error) {
+            setJobError(data.quiz.generation_job_error);
+          }
+
+          if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+            if (pollInterval) clearInterval(pollInterval);
+          }
+        } catch (e) {
+          console.error('Polling error:', e);
+        }
+      }, 5000);
+    }
+
+    void connectSSE(lastReceivedOrderRef.current);
+
+    return () => {
+      active = false;
+      if (eventSource) {
+        eventSource.close();
+      }
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+      }
+      if (pollInterval) {
+        clearInterval(pollInterval);
+      }
+    };
+  }, [quizId, quiz === null, jobStatus]);
+
   const handleAnswerChange = (questionId: string, answer: string | string[]) => {
-    setUserAnswers((prev) =>
-      prev.map((item) => item.questionId === questionId ? { ...item, answer } : item)
-    );
+    setUserAnswers((prev) => ({
+      ...prev,
+      [questionId]: answer,
+    }));
   };
 
   const formatTime = (seconds: number) => {
@@ -150,13 +341,15 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
 
     try {
       const timeTaken = Math.floor((new Date().getTime() - startTime.getTime()) / 1000);
+      const formattedAnswers = Object.entries(userAnswers).map(([questionId, ans]) => ({
+        questionId,
+        selectedAnswer: Array.isArray(ans) ? JSON.stringify(ans) : ans,
+      }));
+
       const response = await api.post('/api/quiz/submit', {
         quizId: quiz.id,
         userId: userId || '',
-        answers: userAnswers.map((answer) => ({
-          questionId: answer.questionId,
-          selectedAnswer: Array.isArray(answer.answer) ? JSON.stringify(answer.answer) : answer.answer,
-        })),
+        answers: formattedAnswers,
         timeTaken,
       });
 
@@ -214,12 +407,19 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
   }
 
   const currentQuestion = quiz.questions[currentQuestionIndex];
-  const currentAnswer = userAnswers.find((answer) => answer.questionId === currentQuestion.id)?.answer || '';
-  const currentQuestionStem = getQuestionStem(currentQuestion.question_text, currentQuestion.options);
+  const currentAnswer = currentQuestion ? (userAnswers[currentQuestion.id] ?? (currentQuestion.question_type === 'MCQ' ? [] : '')) : '';
+  const currentQuestionStem = currentQuestion ? getQuestionStem(currentQuestion.question_text, currentQuestion.options) : '';
   const currentAnswered = isAnswered(currentAnswer);
-  const answeredCount = userAnswers.filter((answer) => isAnswered(answer.answer)).length;
-  const progressPercentage = ((currentQuestionIndex + 1) / quiz.questions.length) * 100;
+  const answeredCount = Object.values(userAnswers).filter(isAnswered).length;
+
+  const isGeneratingActive = jobStatus !== 'completed' && jobStatus !== 'failed' && jobStatus !== 'cancelled';
+  const totalExpectedQuestions = isGeneratingActive ? quiz.num_questions : quiz.questions.length;
   const isFinalQuestion = currentQuestionIndex === quiz.questions.length - 1;
+  const hasMoreQuestionsToGenerate = quiz.questions.length < quiz.num_questions;
+  const isWaitingForNextQuestions = isFinalQuestion && hasMoreQuestionsToGenerate && isGeneratingActive;
+
+  const progressPercentage = ((currentQuestionIndex + 1) / totalExpectedQuestions) * 100;
+
   const goPrevious = () => setCurrentQuestionIndex((current) => Math.max(0, current - 1));
   const goNext = () => setCurrentQuestionIndex((current) => Math.min(quiz.questions.length - 1, current + 1));
   const optionClass = (selected: boolean) =>
@@ -236,13 +436,15 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
     }`;
   const mobileCanGoNext = !isFinalQuestion;
   const handleSubmitAttempt = () => {
-    if (answeredCount < quiz.questions.length) {
+    if (answeredCount < totalExpectedQuestions) {
       setShowIncompleteSubmitDialog(true);
       return;
     }
 
     void handleSubmit();
   };
+
+  const totalSlots = isGeneratingActive ? quiz.num_questions : quiz.questions.length;
 
   return (
     <div className="min-h-[100dvh] overflow-y-auto bg-background text-foreground">
@@ -296,7 +498,7 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
           <section className="min-w-0">
             <div className="mb-8 hidden max-w-3xl md:block">
               <div className="mb-2 flex items-center justify-between text-xs font-medium text-muted-foreground">
-                <span>Question {currentQuestionIndex + 1}/{quiz.questions.length}</span>
+                <span>Question {currentQuestionIndex + 1}/{totalExpectedQuestions}</span>
                 <span>{Math.round(progressPercentage)}%</span>
               </div>
               <div className="h-2 overflow-hidden rounded-full bg-muted">
@@ -304,125 +506,178 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
               </div>
             </div>
 
-            <div className="max-w-3xl">
-              <p className="text-xs font-medium text-muted-foreground md:hidden">Question {currentQuestionIndex + 1}</p>
-              <p className="mt-3 text-base leading-7 text-foreground md:mt-4 md:text-lg md:leading-8">{currentQuestionStem}</p>
+            {currentQuestion ? (
+              <div className="max-w-3xl">
+                <p className="text-xs font-medium text-muted-foreground md:hidden">Question {currentQuestionIndex + 1}</p>
+                <p className="mt-3 text-base leading-7 text-foreground md:mt-4 md:text-lg md:leading-8">{currentQuestionStem}</p>
 
-              <div className="mt-5 space-y-3 md:mt-7">
-                {currentQuestion.question_type === 'MCQ' && currentQuestion.options?.map((option, index) => {
-                  const selected = Array.isArray(currentAnswer) ? currentAnswer.includes(option) : false;
-                  return (
-                    <label key={index} className={optionClass(selected)}>
+                <div className="mt-5 space-y-3 md:mt-7">
+                  {currentQuestion.question_type === 'MCQ' && currentQuestion.options?.map((option, index) => {
+                    const selected = Array.isArray(currentAnswer) ? currentAnswer.includes(option) : false;
+                    return (
+                      <label key={index} className={optionClass(selected)}>
+                        <input
+                          type="checkbox"
+                          name={`question-${currentQuestion.id}`}
+                          value={option}
+                          checked={selected}
+                          onChange={(event) => {
+                            let nextAnswers = Array.isArray(currentAnswer) ? [...currentAnswer] : [];
+                            if (event.target.checked) {
+                              nextAnswers.push(option);
+                            } else {
+                              nextAnswers = nextAnswers.filter((answer) => answer !== option);
+                            }
+                            handleAnswerChange(currentQuestion.id, nextAnswers);
+                          }}
+                          className="sr-only"
+                        />
+                        <span className={optionDotClass(selected)} />
+                        <span className="mr-2 shrink-0 font-bold">{String.fromCharCode(65 + index)}.</span>
+                        <span>{stripOptionLabel(option)}</span>
+                      </label>
+                    );
+                  })}
+
+                  {currentQuestion.question_type === 'TRUE_FALSE' && ['True', 'False'].map((option, index) => (
+                    <label key={option} className={optionClass(currentAnswer === option)}>
                       <input
-                        type="checkbox"
+                        type="radio"
                         name={`question-${currentQuestion.id}`}
                         value={option}
-                        checked={selected}
-                        onChange={(event) => {
-                          let nextAnswers = Array.isArray(currentAnswer) ? [...currentAnswer] : [];
-                          if (event.target.checked) {
-                            nextAnswers.push(option);
-                          } else {
-                            nextAnswers = nextAnswers.filter((answer) => answer !== option);
-                          }
-                          handleAnswerChange(currentQuestion.id, nextAnswers);
-                        }}
+                        checked={currentAnswer === option}
+                        onChange={(event) => handleAnswerChange(currentQuestion.id, event.target.value)}
                         className="sr-only"
                       />
-                      <span className={optionDotClass(selected)} />
+                      <span className={optionDotClass(currentAnswer === option)} />
+                      <span className="mr-2 shrink-0 font-bold">{String.fromCharCode(65 + index)}.</span>
+                      <span>{option}</span>
+                    </label>
+                  ))}
+
+                  {(currentQuestion.question_type === 'OBJECTIVE' || currentQuestion.question_type === 'multiple_choice') && currentQuestion.options?.map((option, index) => (
+                    <label key={index} className={optionClass(currentAnswer === option)}>
+                      <input
+                        type="radio"
+                        name={`question-${currentQuestion.id}`}
+                        value={option}
+                        checked={currentAnswer === option}
+                        onChange={(event) => handleAnswerChange(currentQuestion.id, event.target.value)}
+                        className="sr-only"
+                      />
+                      <span className={optionDotClass(currentAnswer === option)} />
                       <span className="mr-2 shrink-0 font-bold">{String.fromCharCode(65 + index)}.</span>
                       <span>{stripOptionLabel(option)}</span>
                     </label>
-                  );
-                })}
+                  ))}
 
-                {currentQuestion.question_type === 'TRUE_FALSE' && ['True', 'False'].map((option, index) => (
-                  <label key={option} className={optionClass(currentAnswer === option)}>
-                    <input
-                      type="radio"
-                      name={`question-${currentQuestion.id}`}
-                      value={option}
-                      checked={currentAnswer === option}
+                  {currentQuestion.question_type === 'SHORT_ANSWER' && (
+                    <textarea
+                      value={currentAnswer as string}
                       onChange={(event) => handleAnswerChange(currentQuestion.id, event.target.value)}
-                      className="sr-only"
+                      placeholder="Write your answer..."
+                      className="min-h-24 w-full resize-none rounded-[5px] border border-border bg-card px-3 py-2 text-[0.9rem] text-foreground outline-none transition-all placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 md:min-h-40 md:bg-[#edf4ff] md:px-4 md:py-3 md:text-sm md:dark:bg-muted/60"
                     />
-                    <span className={optionDotClass(currentAnswer === option)} />
-                    <span className="mr-2 shrink-0 font-bold">{String.fromCharCode(65 + index)}.</span>
-                    <span>{option}</span>
-                  </label>
-                ))}
-
-                {(currentQuestion.question_type === 'OBJECTIVE' || currentQuestion.question_type === 'multiple_choice') && currentQuestion.options?.map((option, index) => (
-                  <label key={index} className={optionClass(currentAnswer === option)}>
-                    <input
-                      type="radio"
-                      name={`question-${currentQuestion.id}`}
-                      value={option}
-                      checked={currentAnswer === option}
-                      onChange={(event) => handleAnswerChange(currentQuestion.id, event.target.value)}
-                      className="sr-only"
-                    />
-                    <span className={optionDotClass(currentAnswer === option)} />
-                    <span className="mr-2 shrink-0 font-bold">{String.fromCharCode(65 + index)}.</span>
-                    <span>{stripOptionLabel(option)}</span>
-                  </label>
-                ))}
-
-                {currentQuestion.question_type === 'SHORT_ANSWER' && (
-                  <textarea
-                    value={currentAnswer}
-                    onChange={(event) => handleAnswerChange(currentQuestion.id, event.target.value)}
-                    placeholder="Write your answer..."
-                    className="min-h-24 w-full resize-none rounded-[5px] border border-border bg-card px-3 py-2 text-[0.9rem] text-foreground outline-none transition-all placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 md:min-h-40 md:bg-[#edf4ff] md:px-4 md:py-3 md:text-sm md:dark:bg-muted/60"
-                  />
-                )}
-              </div>
-
-              {error && (
-                <div className="mt-5 rounded-lg border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-600 dark:border-red-600/30 dark:bg-red-900/10">
-                  {error}
+                  )}
                 </div>
-              )}
 
-              <div className="mt-8 hidden items-center justify-end gap-3 md:flex">
-                <button
-                  onClick={goPrevious}
-                  disabled={currentQuestionIndex === 0}
-                  className="inline-flex min-h-11 items-center justify-center rounded-[5px] border border-primary px-6 text-sm font-semibold text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:border-border disabled:text-muted-foreground disabled:hover:bg-transparent"
-                >
-                  Previous
-                </button>
-                {!isFinalQuestion ? (
-                  <button
-                    onClick={goNext}
-                    className="inline-flex min-h-11 items-center justify-center rounded-[5px] bg-primary px-8 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
-                  >
-                    {currentAnswered ? 'Next' : 'Skip'}
-                  </button>
-                ) : (
-                  <button
-                    onClick={handleSubmitAttempt}
-                    disabled={isSubmitting}
-                    className="inline-flex min-h-11 items-center justify-center rounded-[5px] bg-primary px-8 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {isSubmitting ? 'Submitting...' : 'Submit Quiz'}
-                  </button>
+                {error && (
+                  <div className="mt-5 rounded-lg border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-600 dark:border-red-600/30 dark:bg-red-900/10">
+                    {error}
+                  </div>
                 )}
+
+                <div className="mt-8 hidden items-center justify-end gap-3 md:flex">
+                  <button
+                    onClick={goPrevious}
+                    disabled={currentQuestionIndex === 0}
+                    className="inline-flex min-h-11 items-center justify-center rounded-[5px] border border-primary px-6 text-sm font-semibold text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:border-border disabled:text-muted-foreground disabled:hover:bg-transparent"
+                  >
+                    Previous
+                  </button>
+                  {isWaitingForNextQuestions ? (
+                    <button
+                      disabled
+                      className="inline-flex min-h-11 items-center justify-center rounded-[5px] border border-muted-foreground/30 bg-muted px-8 text-sm font-semibold text-muted-foreground disabled:cursor-not-allowed animate-pulse"
+                    >
+                      Generating next questions...
+                    </button>
+                  ) : !isFinalQuestion ? (
+                    <button
+                      onClick={goNext}
+                      className="inline-flex min-h-11 items-center justify-center rounded-[5px] bg-primary px-8 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
+                    >
+                      {currentAnswered ? 'Next' : 'Skip'}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleSubmitAttempt}
+                      disabled={isSubmitting}
+                      className="inline-flex min-h-11 items-center justify-center rounded-[5px] bg-primary px-8 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {isSubmitting ? 'Submitting...' : 'Submit Quiz'}
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="flex h-60 items-center justify-center rounded-xl border border-dashed border-border">
+                <p className="text-muted-foreground">Preparing quiz questions...</p>
+              </div>
+            )}
           </section>
 
           <aside className="hidden space-y-5 lg:sticky lg:top-8 lg:block">
             <div className="rounded-[5px] bg-[#edf4ff] p-5 text-center dark:bg-muted/60">
-              <p className="text-3xl font-bold text-foreground">{answeredCount}/{quiz.questions.length}</p>
+              <p className="text-3xl font-bold text-foreground">{answeredCount}/{totalExpectedQuestions}</p>
               <p className="mt-1 text-xs text-muted-foreground">answered questions</p>
             </div>
 
-            {quiz.questions.length > 10 ? (
+            {quiz.num_questions > 10 ? (
               <div className="hidden rounded-[5px] bg-[#edf4ff] p-4 dark:bg-muted/60 lg:block">
                 <div className="grid grid-cols-6 gap-2">
-                  {quiz.questions.map((question, index) => {
-                    const answer = userAnswers.find((item) => item.questionId === question.id)?.answer || '';
+                  {Array.from({ length: totalSlots }).map((_, index) => {
+                    if (index < quiz.questions.length) {
+                      const question = quiz.questions[index];
+                      const answer = userAnswers[question.id] ?? '';
+                      const answered = isAnswered(answer);
+                      const current = index === currentQuestionIndex;
+                      return (
+                        <button
+                          key={question.id}
+                          type="button"
+                          onClick={() => setCurrentQuestionIndex(index)}
+                          className={`flex aspect-square min-h-0 items-center justify-center rounded-[5px] border text-[11px] font-bold transition-colors ${
+                            current
+                              ? 'border-primary bg-primary text-primary-foreground shadow-sm'
+                              : answered
+                                ? 'border-primary/20 bg-primary/80 text-primary-foreground hover:bg-primary'
+                                : 'border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground'
+                          }`}
+                          aria-label={`Question ${index + 1}${answered ? ', answered' : ''}`}
+                        >
+                          {index + 1}
+                        </button>
+                      );
+                    } else {
+                      return (
+                        <div
+                          key={`placeholder-${index}`}
+                          className="flex aspect-square min-h-0 items-center justify-center rounded-[5px] border border-dashed border-border/50 bg-muted/20 text-[11px] text-muted-foreground/35 font-bold animate-pulse"
+                        >
+                          {index + 1}
+                        </div>
+                      );
+                    }
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="hidden space-y-2 lg:block">
+                {Array.from({ length: totalSlots }).map((_, index) => {
+                  if (index < quiz.questions.length) {
+                    const question = quiz.questions[index];
+                    const answer = userAnswers[question.id] ?? '';
                     const answered = isAnswered(answer);
                     const current = index === currentQuestionIndex;
                     return (
@@ -430,46 +685,31 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
                         key={question.id}
                         type="button"
                         onClick={() => setCurrentQuestionIndex(index)}
-                        className={`flex aspect-square min-h-0 items-center justify-center rounded-[5px] border text-[11px] font-bold transition-colors ${
+                        className={`flex min-h-11 w-full items-center gap-3 rounded-[5px] border px-3 text-left text-xs font-medium transition-colors ${
                           current
-                            ? 'border-primary bg-primary text-primary-foreground shadow-sm'
-                            : answered
-                              ? 'border-primary/20 bg-primary/80 text-primary-foreground hover:bg-primary'
-                              : 'border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground'
+                            ? 'border-primary bg-[#edf4ff] text-foreground shadow-sm dark:bg-muted/60'
+                            : 'border-transparent bg-[#edf4ff]/70 text-muted-foreground hover:border-primary/30 dark:bg-muted/40'
                         }`}
-                        aria-label={`Question ${index + 1}${answered ? ', answered' : ''}`}
                       >
-                        {index + 1}
+                        <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] ${
+                          answered ? 'bg-emerald-500 text-white' : 'bg-background text-transparent'
+                        }`}>
+                          {answered ? '✓' : ''}
+                        </span>
+                        Question {index + 1}
                       </button>
                     );
-                  })}
-                </div>
-              </div>
-            ) : (
-              <div className="hidden space-y-2 lg:block">
-                {quiz.questions.map((question, index) => {
-                  const answer = userAnswers.find((item) => item.questionId === question.id)?.answer || '';
-                  const answered = isAnswered(answer);
-                  const current = index === currentQuestionIndex;
-                  return (
-                    <button
-                      key={question.id}
-                      type="button"
-                      onClick={() => setCurrentQuestionIndex(index)}
-                      className={`flex min-h-11 w-full items-center gap-3 rounded-[5px] border px-3 text-left text-xs font-medium transition-colors ${
-                        current
-                          ? 'border-primary bg-[#edf4ff] text-foreground shadow-sm dark:bg-muted/60'
-                          : 'border-transparent bg-[#edf4ff]/70 text-muted-foreground hover:border-primary/30 dark:bg-muted/40'
-                      }`}
-                    >
-                      <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] ${
-                        answered ? 'bg-emerald-500 text-white' : 'bg-background text-transparent'
-                      }`}>
-                        {answered ? '' : ''}
-                      </span>
-                      Question {index + 1}
-                    </button>
-                  );
+                  } else {
+                    return (
+                      <div
+                        key={`placeholder-${index}`}
+                        className="flex min-h-11 w-full items-center gap-3 rounded-[5px] border border-dashed border-border/40 bg-[#edf4ff]/20 px-3 text-left text-xs font-medium text-muted-foreground/35 animate-pulse"
+                      >
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted/10 text-[10px]" />
+                        Generating {index + 1}...
+                      </div>
+                    );
+                  }
                 })}
               </div>
             )}
@@ -488,9 +728,17 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
               Previous
             </button>
             <span className="flex-1 text-center text-xs font-medium text-muted-foreground">
-              {currentQuestionIndex + 1}/{quiz.questions.length}
+              {currentQuestionIndex + 1}/{totalExpectedQuestions}
             </span>
-            {!isFinalQuestion ? (
+            {isWaitingForNextQuestions ? (
+              <button
+                type="button"
+                disabled
+                className="inline-flex h-9 w-32 items-center justify-center rounded-[5px] border border-muted-foreground/30 bg-muted px-2 text-[10px] font-semibold text-muted-foreground disabled:cursor-not-allowed animate-pulse"
+              >
+                Generating...
+              </button>
+            ) : !isFinalQuestion ? (
               <button
                 type="button"
                 onClick={goNext}
@@ -552,7 +800,7 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-5">
             <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-2xl">
               <h3 className="text-lg font-semibold leading-7 text-foreground">
-                You haven&apos;t answered all questions yet ({answeredCount}/{quiz.questions.length}). Are you sure you want to finish now?
+                You haven&apos;t answered all questions yet ({answeredCount}/{totalExpectedQuestions}). Are you sure you want to finish now?
               </h3>
               <div className="mt-6 space-y-3">
                 <button
