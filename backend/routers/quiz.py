@@ -4,7 +4,7 @@ Quiz router – Generate, submit, and retrieve quizzes.
 from fastapi import APIRouter, HTTPException, Request, Depends, Header, BackgroundTasks, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 from dependencies import get_current_user, User, UNIVERSITY_SUSPENDED_MESSAGE
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, Field, model_validator
 from typing import Optional, List, Union, Any
 import json
 import logging
@@ -259,6 +259,37 @@ async def resolve_student_university_context(current_user: User) -> dict:
 
 
 # ---------- Models ----------
+class QuizQuestionModel(BaseModel):
+    questionText: str = Field(..., min_length=10)
+    questionType: str = Field(..., min_length=3)
+    options: Optional[List[str]] = None
+    correctAnswer: str = Field(..., min_length=1)
+    explanation: str = Field(..., min_length=10)
+
+    @model_validator(mode="after")
+    def validate_options_by_type(self) -> "QuizQuestionModel":
+        q_type = self.questionType.upper()
+        opts = self.options
+
+        if q_type == "SHORT_ANSWER":
+            if opts is not None and len(opts) > 0:
+                raise ValueError("SHORT_ANSWER questions must not have options.")
+        elif q_type == "TRUE_FALSE":
+            if opts is None or len(opts) != 2:
+                raise ValueError("TRUE_FALSE questions must have exactly 2 options (e.g. ['True', 'False']).")
+        elif q_type in ("MCQ", "MULTIPLE_CHOICE", "OBJECTIVE"):
+            if q_type == "MCQ":
+                if opts is None or len(opts) != 5:
+                    raise ValueError("MCQ questions must have exactly 5 options.")
+            else:
+                if opts is None or not (4 <= len(opts) <= 5):
+                    raise ValueError("multiple_choice/OBJECTIVE questions must have between 4 and 5 options.")
+        
+        return self
+
+class QuizBatchModel(BaseModel):
+    questions: List[QuizQuestionModel] = Field(..., min_length=1)
+
 class QuizGenerateRequest(BaseModel):
     courseCode: str
     courseTitle: str
@@ -321,6 +352,105 @@ def _strip_option_label(text: str) -> str:
 
 def _normalize_option(text: str) -> str:
     return " ".join(_strip_option_label(text).lower().split())
+
+
+def _is_valid_correct_answer(correct_val: str, options: Optional[List[str]], q_type: str) -> bool:
+    if not correct_val or not isinstance(correct_val, str):
+        return False
+    correct_val = correct_val.strip()
+    if not correct_val:
+        return False
+        
+    q_type_upper = q_type.upper()
+    if q_type_upper == "SHORT_ANSWER":
+        return True
+        
+    if q_type_upper == "TRUE_FALSE":
+        return correct_val.lower() in ("true", "false")
+        
+    if not options:
+        return False
+        
+    if q_type_upper == "MCQ":
+        parts = [p.strip().upper() for p in correct_val.split(",") if p.strip()]
+        if not parts:
+            return False
+        letter_to_index = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4}
+        normalized_option_map = {_normalize_option(opt): opt for opt in options}
+        for part in parts:
+            if part in letter_to_index and letter_to_index[part] < len(options):
+                continue
+            if part.isdigit() and 1 <= int(part) <= len(options):
+                continue
+            if _normalize_option(part) in normalized_option_map:
+                continue
+            return False
+        return True
+        
+    letter_to_index = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4}
+    upper_val = correct_val.upper()
+    if upper_val in letter_to_index and letter_to_index[upper_val] < len(options):
+        return True
+    if correct_val.isdigit() and 1 <= int(correct_val) <= len(options):
+        return True
+    
+    normalized_option_map = {_normalize_option(opt) for opt in options}
+    if _normalize_option(correct_val) in normalized_option_map:
+        return True
+        
+    stripped_correct = _strip_option_label(correct_val).lower().strip()
+    for opt in options:
+        if _strip_option_label(opt).lower().strip() == stripped_correct:
+            return True
+            
+    return False
+
+
+def _parse_quiz_batch(raw: str) -> list[dict]:
+    cleaned = (raw or "").strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+    cleaned = cleaned.strip()
+    if cleaned.lower().startswith("json"):
+        cleaned = cleaned[4:].strip()
+
+    # Find the bounds of the JSON structure (either '{'/'}' or '['/']')
+    first_brace = cleaned.find('{')
+    first_bracket = cleaned.find('[')
+    
+    start_idx = -1
+    end_idx = -1
+    if first_brace != -1 and (first_bracket == -1 or first_brace < first_bracket):
+        start_idx = first_brace
+        end_idx = cleaned.rfind('}')
+    elif first_bracket != -1:
+        start_idx = first_bracket
+        end_idx = cleaned.rfind(']')
+        
+    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+        cleaned = cleaned[start_idx:end_idx+1]
+
+    try:
+        try:
+            parsed = json.loads(cleaned)
+        except Exception as e:
+            logger.warning(f"Standard JSON parsing failed, attempting repair: {e}")
+            import json_repair
+            parsed = json_repair.loads(cleaned)
+
+        if isinstance(parsed, list):
+            parsed = {"questions": parsed}
+
+        # Validate using Pydantic
+        batch_model = QuizBatchModel.model_validate(parsed)
+        return [q.model_dump() for q in batch_model.questions]
+    except Exception as e:
+        preview = (raw or "")[:1000]
+        logger.error(f"Failed to parse/validate quiz batch: {e}. Raw preview (1000 chars):\n{preview}")
+        raise e
+
 
 
 def _extract_mcq_true_options(question: dict) -> list[str]:
@@ -903,7 +1033,7 @@ async def _update_quiz_generation_job(
 # [QUIZ BATCH FIX]
 
 
-async def _generate_quiz_json_response(system_prompt: str, user_prompt: str) -> str:
+async def _generate_quiz_json_response(system_prompt: str, user_prompt: str, response_format: Optional[dict] = None) -> str:
     messages = merge_system_into_user([
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
@@ -916,6 +1046,7 @@ async def _generate_quiz_json_response(system_prompt: str, user_prompt: str) -> 
         stream=False,
         force_google=False,
         requested_model=llm_engine.TEXT_SECONDARY,  # [QUIZ BATCH FIX]
+        response_format=response_format,
     )
     if response is None:
         raise RuntimeError("LLM generation failed on all available clients")
@@ -1069,24 +1200,7 @@ async def _generate_quiz_now(
     ) if recent_lines else ""
     context_block_small = _truncate_block(retrieved_context_block, max_chars=6000)
 
-    def _parse_json_array(raw: str) -> list:
-        cleaned = (raw or "").strip()
-        match = re.search(r'\[\s*\{.*\}\s*\]', cleaned, re.DOTALL)
-        if match:
-            cleaned = match.group(0)
-        else:
-            if cleaned.startswith("```"):
-                cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
-            if cleaned.endswith("```"):
-                cleaned = cleaned[:-3]
-            cleaned = cleaned.strip()
-            if cleaned.lower().startswith("json"):
-                cleaned = cleaned[4:].strip()
 
-        parsed = json.loads(cleaned)
-        if not isinstance(parsed, list):
-            raise ValueError("LLM did not return a JSON array")
-        return parsed
 
     def _build_generation_prompts(batch_count: int, already_used: list[str], compact: bool = False) -> tuple[str, str]:
         nonce = str(uuid.uuid4())[:8]
@@ -1101,26 +1215,32 @@ async def _generate_quiz_now(
         system_prompt = f"""/no_think
 You are PANSGPT's quiz generation engine for pharmacy students.
 
-You must return only machine-parseable JSON. Do not include markdown, code fences, prose, comments, headings, or thinking tags.
+You must return only machine-parseable JSON conforming to the requested schema. Do not include markdown, code fences, prose, comments, headings, or thinking tags.
 
 Output contract:
-- Return a JSON array only.
-- The array must contain exactly {batch_count} question objects.
+- Return a JSON object containing a "questions" key which holds a list of exactly {batch_count} question objects.
 - Each object must include:
-  - "questionText": the question string
+  - "questionText": the question string (minimum 10 characters)
+  - "questionType": one of ["mcq", "multiple_choice", "TRUE_FALSE", "SHORT_ANSWER"]
+  - "options": options list or null
+  - "correctAnswer": the correct answer string
+  - "explanation": a detailed explanation of the correct answer (minimum 10 characters)
+
+Specific rules by type:
 {format_reqs}
-  - "explanation": a brief explanation of the correct answer
+
+Example output format:
+{example_json}
 
 Diversity rules:
 - Avoid repeating any previously asked questions or close paraphrases.
 - Spread questions across different concepts/sections of the material.
-- Avoid clustering on a single subsection.
 - Vary question phrasing and scenario framing.
 
 Grounding rules:
 - Build questions from the retrieved curriculum context when provided.
 - Cover multiple different excerpts/sources in the context, not just one narrow subsection.
-- Do not invent facts outside the retrieved context unless needed for wording clarity."""  # [QUIZ NO-THINK FIX]
+- Do not invent facts outside the retrieved context unless needed for wording clarity."""
 
         user_prompt = f"""Generate {batch_count} {type_desc} quiz questions.
 
@@ -1136,7 +1256,7 @@ Generation nonce: {nonce}
 {recent_block_small}
 {used_block}
 
-Return only the JSON array."""
+Return only the JSON object."""
 
         return system_prompt, user_prompt
 
@@ -1173,6 +1293,16 @@ Return only the JSON array."""
             quiz_id=quiz_id,
         )
 
+        # JSON Schema format dictionary for structured outputs
+        batch_schema = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "quiz_batch",
+                "schema": QuizBatchModel.model_json_schema(),
+                "strict": True
+            }
+        }
+
         while len(questions) < target_count:
             remaining = target_count - len(questions)
             current_batch = min(batch_size, remaining)
@@ -1183,8 +1313,8 @@ Return only the JSON array."""
                 compact_mode = attempt >= 2 and target_count >= 15
                 system_prompt, user_prompt = _build_generation_prompts(current_batch, already_used, compact=compact_mode)
                 try:
-                    raw = await _generate_quiz_json_response(system_prompt, user_prompt)
-                    parsed = _parse_json_array(raw)
+                    raw = await _generate_quiz_json_response(system_prompt, user_prompt, response_format=batch_schema)
+                    parsed = _parse_quiz_batch(raw)
                 except Exception as e:
                     logger.warning(f"Quiz batch generation or parse failed (batch={current_batch}, attempt={attempt}): {e}")
                     continue
@@ -1194,14 +1324,53 @@ Return only the JSON array."""
                 internal_repeat = _has_internal_repetition(parsed, threshold=0.85)
                 overlap_ratio = _overlap_with_recent(parsed, recent_block_small, threshold=0.8)
 
-                # Remove items that duplicate already generated questions.
+                # Remove items that duplicate already generated questions or fail quality validation.
                 deduped = []
                 for item in parsed:
                     text = str(item.get("questionText", "")).strip()
-                    if not text:
+                    if not text or len(text) < 10:
                         continue
                     if any(_question_similarity(text, prev) >= 0.82 for prev in already_used):
                         continue
+
+                    # Manual Quality Checks
+                    opt_type = item.get("questionType", q_type)
+                    opts = item.get("options")
+                    correct = item.get("correctAnswer")
+                    
+                    # Normalise option types for manual check
+                    opt_type_upper = opt_type.upper()
+                    if opt_type_upper == "SHORT_ANSWER":
+                        if opts is not None and len(opts) > 0:
+                            continue
+                    elif opt_type_upper == "TRUE_FALSE":
+                        if opts is None or len(opts) != 2:
+                            continue
+                    elif opt_type_upper in ("MCQ", "MULTIPLE_CHOICE", "OBJECTIVE"):
+                        if opt_type_upper == "MCQ":
+                            if opts is None or len(opts) != 5:
+                                continue
+                        else:
+                            if opts is None or not (4 <= len(opts) <= 5):
+                                continue
+
+                    # Ensure options do not contain duplicates
+                    if opts:
+                        seen_opts = set()
+                        has_dup = False
+                        for opt in opts:
+                            norm_opt = _normalize_option(opt)
+                            if norm_opt in seen_opts:
+                                has_dup = True
+                                break
+                            seen_opts.add(norm_opt)
+                        if has_dup:
+                            continue
+
+                    # Ensure correctAnswer is not empty and matches a valid option or label index
+                    if not _is_valid_correct_answer(correct, opts, opt_type_upper):
+                        continue
+
                     deduped.append(item)
 
                 if (internal_repeat or overlap_ratio > overlap_limit) and attempt < 3:
@@ -1234,7 +1403,16 @@ Return only the JSON array."""
                 correct_answer = q.get("correctAnswer", "")
                 points = 1
 
-                if q_type == "MCQ":
+                # Normalize standard question type labels for DB compatibility
+                if question_type.upper() in ("MULTIPLE_CHOICE", "OBJECTIVE"):
+                    question_type = "multiple_choice"
+                elif question_type.upper() == "TRUE_FALSE":
+                    question_type = "TRUE_FALSE"
+                elif question_type.upper() == "SHORT_ANSWER":
+                    question_type = "SHORT_ANSWER"
+
+                # Normalise option types for manual check
+                if q_type == "MCQ" or question_type.upper() == "MCQ":
                     question_type = "MCQ"
                     if not isinstance(options, list):
                         options = []
@@ -1289,6 +1467,37 @@ Return only the JSON array."""
 
                     correct_answer = json.dumps(deduped_true_options)
                     points = 5
+
+                else:
+                    # Single select MCQ correction / label mapping
+                    if question_type == "multiple_choice" and options:
+                        norm_correct = _normalize_option(correct_answer)
+                        letter_to_index = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4}
+                        index_to_letter = {0: "A", 1: "B", 2: "C", 3: "D", 4: "E"}
+                        
+                        found_letter = None
+                        upper_correct = correct_answer.strip().upper()
+                        if upper_correct in letter_to_index and letter_to_index[upper_correct] < len(options):
+                            found_letter = upper_correct
+                        else:
+                            for i, opt in enumerate(options):
+                                if _normalize_option(opt) == norm_correct:
+                                    found_letter = index_to_letter[i]
+                                    break
+                            if not found_letter:
+                                stripped_correct = _strip_option_label(correct_answer).lower().strip()
+                                for i, opt in enumerate(options):
+                                    if _strip_option_label(opt).lower().strip() == stripped_correct:
+                                        found_letter = index_to_letter[i]
+                                        break
+                        if found_letter:
+                            correct_answer = found_letter
+
+                    elif question_type == "TRUE_FALSE":
+                        if correct_answer.strip().lower() == "true":
+                            correct_answer = "True"
+                        else:
+                            correct_answer = "False"
 
                 batch_to_insert.append({
                     "quiz_id": quiz_id,

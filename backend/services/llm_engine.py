@@ -101,6 +101,7 @@ async def generate_completion_with_failover(
     stream: bool = False,
     force_google: bool = False,
     requested_model: Optional[str] = None,
+    response_format: Optional[dict] = None,
 ) -> Optional[Any]:
     if force_google:
         if google_client is None:
@@ -108,13 +109,29 @@ async def generate_completion_with_failover(
         forced_model = VISION_FALLBACK if has_images else TEXT_PRIMARY
         logger.info(f"[INFO] Forcing generation with Google model: {forced_model}")
         logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "FORCE_GOOGLE", forced_model)
-        return await google_client.chat.completions.create(
-            model=forced_model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=stream,
-        )
+        
+        kwargs = {
+            "model": forced_model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": stream,
+        }
+        if response_format:
+            kwargs["response_format"] = response_format
+        try:
+            return await google_client.chat.completions.create(**kwargs)
+        except Exception as exc:
+            if response_format:
+                logger.warning(f"Google forced model failed with response_format, retrying with standard json_object format: {exc}")
+                try:
+                    kwargs["response_format"] = {"type": "json_object"}
+                    return await google_client.chat.completions.create(**kwargs)
+                except Exception as inner_exc:
+                    logger.warning(f"Google forced model failed with standard json_object format, retrying without format: {inner_exc}")
+                    kwargs.pop("response_format", None)
+                    return await google_client.chat.completions.create(**kwargs)
+            raise exc
 
     # --- Vision path (unchanged logic, just updated model names) ---
     if has_images:
@@ -173,13 +190,28 @@ async def generate_completion_with_failover(
             try:
                 fallback_max_tokens = min(max_tokens, OPENROUTER_FALLBACK_MAX_TOKENS)
                 logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "TEXT_PRIMARY", model_name)
-                return await groq_text_client.chat.completions.create(  # [GROQ TERTIARY FIX]
-                    model=model_name,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=fallback_max_tokens,
-                    stream=stream,
-                )
+                kwargs = {
+                    "model": model_name,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": fallback_max_tokens,
+                    "stream": stream,
+                }
+                if response_format:
+                    kwargs["response_format"] = response_format
+                try:
+                    return await groq_text_client.chat.completions.create(**kwargs)
+                except Exception as exc:
+                    if response_format:
+                        logger.warning(f"Groq client failed with response_format, retrying with standard json_object format: {exc}")
+                        try:
+                            kwargs["response_format"] = {"type": "json_object"}
+                            return await groq_text_client.chat.completions.create(**kwargs)
+                        except Exception as inner_exc:
+                            logger.warning(f"Groq client failed with standard json_object format, retrying without format: {inner_exc}")
+                            kwargs.pop("response_format", None)
+                            return await groq_text_client.chat.completions.create(**kwargs)
+                    raise exc
             except Exception as exc:
                 logger.error(f"All models failed. Last resort ({TEXT_TERTIARY}) error: {exc}")
                 raise exc
@@ -187,17 +219,33 @@ async def generate_completion_with_failover(
             if google_client is not None:
                 try:
                     logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "TEXT_PRIMARY", model_name)
-                    return await google_client.chat.completions.create(
-                        model=model_name,
-                        messages=messages,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        stream=stream,
-                    )
+                    kwargs = {
+                        "model": model_name,
+                        "messages": messages,
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                        "stream": stream,
+                    }
+                    if response_format:
+                        kwargs["response_format"] = response_format
+                    try:
+                        return await google_client.chat.completions.create(**kwargs)
+                    except Exception as exc:
+                        if response_format:
+                            logger.warning(f"Google client failed with response_format for model {model_name}, retrying with standard json_object format: {exc}")
+                            try:
+                                kwargs["response_format"] = {"type": "json_object"}
+                                return await google_client.chat.completions.create(**kwargs)
+                            except Exception as inner_exc:
+                                logger.warning(f"Google client failed with standard json_object format for model {model_name}, retrying without format: {inner_exc}")
+                                kwargs.pop("response_format", None)
+                                return await google_client.chat.completions.create(**kwargs)
+                        raise exc
                 except Exception as exc:
                     logger.warning(f"Model {model_alias} failed ({model_name}), trying next: {exc}")
 
     return None
+
 
 
 async def generate_dual_cloud_stream(
