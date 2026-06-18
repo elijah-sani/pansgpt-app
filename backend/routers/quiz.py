@@ -15,6 +15,7 @@ import uuid
 import os
 import asyncio
 from datetime import datetime, timezone
+from cachetools import TTLCache
 from restrictions import build_restriction_block_payload, get_applicable_user_restriction
 from utils.thinking_token_utils import strip_thinking_tokens
 
@@ -55,11 +56,14 @@ QUIZ_GENERATION_TEMPERATURE = 0.25
 QUIZ_GENERATION_MAX_TOKENS = 2048
 QUIZ_GRADING_TEMPERATURE = 0.1
 QUIZ_GRADING_MAX_TOKENS = 2048
+QUIZ_CONTEXT_CACHE_TTL_SECONDS = 900
+QUIZ_CONTEXT_CACHE_MAXSIZE = 128
 
 _supabase = None
 _supabase_service = None
 _verify_api_key_fn = None
 _embeddings_ready = False
+_quiz_context_cache: TTLCache = TTLCache(maxsize=QUIZ_CONTEXT_CACHE_MAXSIZE, ttl=QUIZ_CONTEXT_CACHE_TTL_SECONDS)
 
 try:
     import google.generativeai as genai
@@ -106,6 +110,34 @@ def _normalize_optional_text(value: Optional[str]) -> Optional[str]:
         return None
     normalized = str(value).strip()
     return normalized or None
+
+
+def _quiz_timing_log(event: str, duration_ms: float, **metadata: Any) -> None:
+    safe_meta = {
+        key: value
+        for key, value in metadata.items()
+        if value is not None and value != ""
+    }
+    meta_str = " ".join(f"{key}={safe_meta[key]}" for key in sorted(safe_meta))
+    logger.info(
+        "[quiz_generation_timing] event=%s duration_ms=%.2f%s",
+        event,
+        duration_ms,
+        f" {meta_str}" if meta_str else "",
+    )
+
+
+def _quiz_context_cache_key(body: "QuizGenerateRequest", student_university_id: str) -> tuple:
+    return (
+        student_university_id,
+        (body.courseCode or "").strip().lower(),
+        (body.level or "").strip().lower(),
+        (body.academic_session or "").strip().lower(),
+        (normalize_semester(body.semester) or "").strip().lower() if body.semester else "",
+        (body.topic or "").strip().lower(),
+        (body.questionType or "").strip().lower(),
+        (body.difficulty or "").strip().lower(),
+    )
 
 
 def merge_system_into_user(messages: List[dict]) -> List[dict]:
@@ -406,8 +438,44 @@ def _is_valid_correct_answer(correct_val: str, options: Optional[List[str]], q_t
     return False
 
 
-def _parse_quiz_batch(raw: str) -> list[dict]:
-    cleaned = (raw or "").strip()
+def _inline_schema_defs(schema: dict) -> dict:
+    import copy
+    schema_copy = copy.deepcopy(schema)
+    defs = schema_copy.pop("$defs", {})
+    if not defs:
+        return schema_copy
+
+    def resolve_refs(node):
+        if isinstance(node, dict):
+            if "$ref" in node:
+                ref_path = node["$ref"]
+                if ref_path.startswith("#/$defs/"):
+                    def_name = ref_path.split("/")[-1]
+                    if def_name in defs:
+                        resolved = copy.deepcopy(defs[def_name])
+                        node.pop("$ref")
+                        for k, v in resolved.items():
+                            node[k] = v
+                        resolve_refs(node)
+                        return
+            for val in node.values():
+                resolve_refs(val)
+        elif isinstance(node, list):
+            for item in node:
+                resolve_refs(item)
+
+    resolve_refs(schema_copy)
+    return schema_copy
+
+
+def _parse_quiz_batch(raw: str, *, timing_meta: Optional[dict[str, Any]] = None) -> list[dict]:
+    parse_started = time.perf_counter()
+    # Before parsing, add an explicit empty-response check
+    if not raw or not raw.strip():
+        _quiz_timing_log("parse_quiz_batch_empty", (time.perf_counter() - parse_started) * 1000, **(timing_meta or {}))
+        raise ValueError("LLM returned empty response")
+
+    cleaned = raw.strip()
     if cleaned.startswith("```"):
         cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
     if cleaned.endswith("```"):
@@ -432,24 +500,39 @@ def _parse_quiz_batch(raw: str) -> list[dict]:
     if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
         cleaned = cleaned[start_idx:end_idx+1]
 
+    # Additional empty-response check after cleaning
+    if not cleaned or not cleaned.strip():
+        _quiz_timing_log("parse_quiz_batch_empty_after_clean", (time.perf_counter() - parse_started) * 1000, **(timing_meta or {}))
+        raise ValueError("LLM returned empty response after cleaning JSON structure")
+
     try:
         try:
             parsed = json.loads(cleaned)
         except Exception as e:
             logger.warning(f"Standard JSON parsing failed, attempting repair: {e}")
             import json_repair
+            repair_started = time.perf_counter()
             parsed = json_repair.loads(cleaned)
+            _quiz_timing_log("json_repair", (time.perf_counter() - repair_started) * 1000, **(timing_meta or {}))
 
         if isinstance(parsed, list):
             parsed = {"questions": parsed}
 
         # Validate using Pydantic
         batch_model = QuizBatchModel.model_validate(parsed)
+        _quiz_timing_log("parse_quiz_batch_success", (time.perf_counter() - parse_started) * 1000, **(timing_meta or {}))
         return [q.model_dump() for q in batch_model.questions]
     except Exception as e:
         preview = (raw or "")[:1000]
         logger.error(f"Failed to parse/validate quiz batch: {e}. Raw preview (1000 chars):\n{preview}")
+        _quiz_timing_log(
+            "parse_quiz_batch_failure",
+            (time.perf_counter() - parse_started) * 1000,
+            error_type=type(e).__name__,
+            **(timing_meta or {}),
+        )
         raise e
+
 
 
 
@@ -653,14 +736,31 @@ def _has_internal_repetition(questions: list[dict], threshold: float = 0.8) -> b
     return False
 
 
-def _build_recent_question_block(sb, user_id: str, course_code: str, topic: Optional[str]) -> str:
+async def _build_recent_question_block(
+    sb,
+    user_id: str,
+    course_code: str,
+    topic: Optional[str],
+    *,
+    job_id: Optional[str] = None,
+) -> str:
     """
     Pull recent quiz questions for this user/course (and topic when present)
     so the generator can avoid repeating them.
     """
+    started = time.perf_counter()
     try:
-        quiz_query = sb.table("quizzes").select("id,topic").eq("user_id", user_id).eq("course_code", course_code).order("created_at", desc=True).limit(20)
-        quiz_rows = (quiz_query.execute().data or [])
+        quiz_rows = (
+            await asyncio.to_thread(
+                lambda: sb.table("quizzes")
+                .select("id,topic")
+                .eq("user_id", user_id)
+                .eq("course_code", course_code)
+                .order("created_at", desc=True)
+                .limit(20)
+                .execute()
+            )
+        ).data or []
         if topic:
             topic_norm = topic.strip().lower()
             quiz_rows = [q for q in quiz_rows if (q.get("topic") or "").strip().lower() == topic_norm]
@@ -669,21 +769,54 @@ def _build_recent_question_block(sb, user_id: str, course_code: str, topic: Opti
         if not quiz_ids:
             return ""
 
-        q_rows = sb.table("quiz_questions").select("question_text").in_("quiz_id", quiz_ids).limit(120).execute().data or []
+        q_rows = (
+            await asyncio.to_thread(
+                lambda: sb.table("quiz_questions")
+                .select("question_text")
+                .in_("quiz_id", quiz_ids)
+                .limit(120)
+                .execute()
+            )
+        ).data or []
         recent_questions = [str(r.get("question_text", "")).strip() for r in q_rows if str(r.get("question_text", "")).strip()]
         if not recent_questions:
+            _quiz_timing_log(
+                "build_recent_question_block",
+                (time.perf_counter() - started) * 1000,
+                job_id=job_id,
+                courseCode=course_code,
+                topic=topic or "General",
+                recent_question_count=0,
+            )
             return ""
 
         # Keep prompt bounded.
         recent_questions = recent_questions[:40]
         lines = "\n".join([f"- {q}" for q in recent_questions])
-        return (
+        result = (
             "RECENTLY USED QUESTIONS (DO NOT REUSE OR PARAPHRASE THESE):\n"
             f"{lines}\n"
             "You must generate a fresh set that covers different concepts/sections.\n"
         )
+        _quiz_timing_log(
+            "build_recent_question_block",
+            (time.perf_counter() - started) * 1000,
+            job_id=job_id,
+            courseCode=course_code,
+            topic=topic or "General",
+            recent_question_count=len(recent_questions),
+        )
+        return result
     except Exception as exc:
         logger.warning(f"Could not load recent quiz questions for anti-repeat: {exc}")
+        _quiz_timing_log(
+            "build_recent_question_block_failure",
+            (time.perf_counter() - started) * 1000,
+            job_id=job_id,
+            courseCode=course_code,
+            topic=topic or "General",
+            error_type=type(exc).__name__,
+        )
         return ""
 
 
@@ -799,23 +932,84 @@ def _is_chunk_novel(content: str, selected_contents: list[str], threshold: float
     return True
 
 
-async def _build_quiz_context_from_embeddings(sb, body: QuizGenerateRequest, *, student_university_id: str) -> str:
+async def _build_quiz_context_from_embeddings(
+    sb,
+    body: QuizGenerateRequest,
+    *,
+    student_university_id: str,
+    job_id: Optional[str] = None,
+) -> str:
     """
     Retrieval layer for quiz generation:
     - filters documents by course/topic/level
     - retrieves a broad candidate set from vector index
     - diversifies selected chunks across documents and content regions
     """
+    started = time.perf_counter()
+    cache_key = _quiz_context_cache_key(body, student_university_id)
+    cached_context = _quiz_context_cache.get(cache_key)
+    if cached_context:
+        logger.info(
+            "[quiz_context_cache] status=hit job_id=%s courseCode=%s topic=%s numQuestions=%s",
+            job_id,
+            body.courseCode,
+            body.topic or "General",
+            body.numQuestions,
+        )
+        _quiz_timing_log(
+            "build_quiz_context_from_embeddings_cache_hit",
+            (time.perf_counter() - started) * 1000,
+            job_id=job_id,
+            courseCode=body.courseCode,
+            topic=body.topic or "General",
+            numQuestions=body.numQuestions,
+        )
+        return cached_context
+
+    logger.info(
+        "[quiz_context_cache] status=miss job_id=%s courseCode=%s topic=%s numQuestions=%s",
+        job_id,
+        body.courseCode,
+        body.topic or "General",
+        body.numQuestions,
+    )
+
     if not _prepare_embedding_client():
+        _quiz_timing_log(
+            "build_quiz_context_from_embeddings_unavailable",
+            (time.perf_counter() - started) * 1000,
+            job_id=job_id,
+            courseCode=body.courseCode,
+            topic=body.topic or "General",
+            numQuestions=body.numQuestions,
+        )
         return ""
 
     try:
-        docs_res = sb.table("pans_library").select(
-            "id,file_name,course_code,topic,target_levels,embedding_status,material_status,university_id,academic_session,semester"
-        ).eq("course_code", body.courseCode).eq("university_id", student_university_id).eq("embedding_status", "completed").eq("material_status", "active").execute()
+        docs_res = await asyncio.to_thread(
+            lambda: sb.table("pans_library")
+            .select(
+                "id,file_name,course_code,topic,target_levels,embedding_status,material_status,university_id,academic_session,semester"
+            )
+            .eq("course_code", body.courseCode)
+            .eq("university_id", student_university_id)
+            .eq("embedding_status", "completed")
+            .eq("material_status", "active")
+            .execute()
+        )
         docs = docs_res.data or []
     except Exception as exc:
         logger.warning(f"Quiz retrieval document lookup failed: {exc}")
+        _quiz_timing_log(
+            "build_quiz_context_from_embeddings_failure",
+            (time.perf_counter() - started) * 1000,
+            job_id=job_id,
+            courseCode=body.courseCode,
+            topic=body.topic or "General",
+            numQuestions=body.numQuestions,
+            stage="document_lookup",
+            error_type=type(exc).__name__,
+        )
         return ""
     if not docs:
         logger.info(
@@ -899,21 +1093,43 @@ async def _build_quiz_context_from_embeddings(sb, body: QuizGenerateRequest, *, 
         query_vector = embed_result["embedding"]
     except Exception as exc:
         logger.warning(f"Quiz retrieval embedding failed: {exc}")
+        _quiz_timing_log(
+            "build_quiz_context_from_embeddings_failure",
+            (time.perf_counter() - started) * 1000,
+            job_id=job_id,
+            courseCode=body.courseCode,
+            topic=body.topic or "General",
+            numQuestions=body.numQuestions,
+            stage="embedding",
+            error_type=type(exc).__name__,
+        )
         return ""
 
     try:
-        rpc_res = sb.rpc(
-            "match_documents_global",
-            {
-                "query_embedding": query_vector,
-                "match_threshold": 0.18,
-                "match_count": 120,
-                "allowed_doc_ids": allowed_doc_ids,
-            },
-        ).execute()
+        rpc_res = await asyncio.to_thread(
+            lambda: sb.rpc(
+                "match_documents_global",
+                {
+                    "query_embedding": query_vector,
+                    "match_threshold": 0.18,
+                    "match_count": 120,
+                    "allowed_doc_ids": allowed_doc_ids,
+                },
+            ).execute()
+        )
         rows = rpc_res.data or []
     except Exception as exc:
         logger.warning(f"Quiz retrieval RPC failed: {exc}")
+        _quiz_timing_log(
+            "build_quiz_context_from_embeddings_failure",
+            (time.perf_counter() - started) * 1000,
+            job_id=job_id,
+            courseCode=body.courseCode,
+            topic=body.topic or "General",
+            numQuestions=body.numQuestions,
+            stage="vector_rpc",
+            error_type=type(exc).__name__,
+        )
         return ""
 
     if not rows:
@@ -981,10 +1197,21 @@ async def _build_quiz_context_from_embeddings(sb, body: QuizGenerateRequest, *, 
             snippet = snippet[:700].rstrip() + "..."
         context_lines.append(f"[{idx}] Source: {title} | Topic: {topic}\n{snippet}")
 
-    return (
+    result = (
         "CURRICULUM CONTEXT (RETRIEVED FROM EMBEDDINGS):\n"
         + "\n\n".join(context_lines)
     )
+    _quiz_context_cache[cache_key] = result
+    _quiz_timing_log(
+        "build_quiz_context_from_embeddings",
+        (time.perf_counter() - started) * 1000,
+        job_id=job_id,
+        courseCode=body.courseCode,
+        topic=body.topic or "General",
+        numQuestions=body.numQuestions,
+        context_chunks=len(selected_rows),
+    )
+    return result
 
 
 def _serialize_http_detail(detail: Any) -> str:
@@ -1010,6 +1237,7 @@ async def _update_quiz_generation_job(
     if not job_id:
         return
 
+    started = time.perf_counter()
     payload = {
         "status": status,
         "progress": max(0, min(100, int(progress))),
@@ -1028,6 +1256,14 @@ async def _update_quiz_generation_job(
                 query = query.neq("status", "cancelled")
             query.execute()
         await asyncio.to_thread(_update)
+        _quiz_timing_log(
+            "update_quiz_generation_job",
+            (time.perf_counter() - started) * 1000,
+            job_id=job_id,
+            quiz_id=quiz_id,
+            status=status,
+            progress=payload["progress"],
+        )
     except Exception as exc:
         logger.warning("Failed to update quiz generation job %s: %s", job_id, exc)
 # [QUIZ BATCH FIX]
@@ -1051,7 +1287,21 @@ async def _generate_quiz_json_response(system_prompt: str, user_prompt: str, res
     if response is None:
         raise RuntimeError("LLM generation failed on all available clients")
 
-    content = response.choices[0].message.content
+    choice = response.choices[0] if response.choices else None
+    content = choice.message.content if choice else None
+
+    # Safe response metadata logging when content is empty or whitespace
+    if not content or not str(content).strip():
+        choices_len = len(response.choices) if response.choices else 0
+        finish_reason = choice.finish_reason if choice else "N/A"
+        is_none = content is None
+        is_empty = content == ""
+        logger.warning(
+            f"[WARNING] LLM returned empty response content. "
+            f"Metadata: choices_len={choices_len}, finish_reason={finish_reason}, "
+            f"content_is_None={is_none}, content_is_empty={is_empty}"
+        )
+
     if isinstance(content, list):
         content = "\n".join(
             str(part.get("text", "")) if isinstance(part, dict) else str(part)
@@ -1060,6 +1310,7 @@ async def _generate_quiz_json_response(system_prompt: str, user_prompt: str, res
 
     visible_text, _thinking_text = strip_thinking_tokens(str(content or ""))
     return str(visible_text).strip()
+
 
 
 async def _generate_quiz_grading_response(system_prompt: str, user_prompt: str) -> str:
@@ -1098,7 +1349,15 @@ async def _generate_quiz_now(
     job_id: Optional[str] = None,
 ):
     """Generate quiz questions using LLM and save to database."""
+    request_meta = {
+        "job_id": job_id,
+        "courseCode": body.courseCode,
+        "topic": body.topic or "General",
+        "numQuestions": body.numQuestions,
+    }
+    restriction_started = time.perf_counter()
     restriction = await _get_quiz_restriction_if_any(current_user)
+    _quiz_timing_log("restriction_check", (time.perf_counter() - restriction_started) * 1000, **request_meta)
     if restriction:
         return JSONResponse(status_code=423, content=build_restriction_block_payload(restriction))
 
@@ -1111,7 +1370,9 @@ async def _generate_quiz_now(
         progress=12,
         current_step="Finding course materials",
     )
+    student_context_started = time.perf_counter()
     student_context = await resolve_student_university_context(current_user)
+    _quiz_timing_log("resolve_student_university_context", (time.perf_counter() - student_context_started) * 1000, **request_meta)
     student_university_id = student_context.get("university_id")
     if not student_university_id:
         raise HTTPException(
@@ -1212,11 +1473,12 @@ async def _generate_quiz_now(
 
 
     try:
-        recent_question_block = _build_recent_question_block(
+        recent_question_block = await _build_recent_question_block(
             sb=sb,
             user_id=current_user.id,
             course_code=body.courseCode,
             topic=body.topic,
+            job_id=job_id,
         )
     except Exception as exc:
         logger.warning(f"Could not build recent-question block: {exc}")
@@ -1227,6 +1489,7 @@ async def _generate_quiz_now(
             sb,
             body,
             student_university_id=student_university_id,
+            job_id=job_id,
         )
     except Exception as exc:
         logger.warning(f"Could not build embedding context block: {exc}")
@@ -1295,7 +1558,8 @@ Diversity rules:
 Grounding rules:
 - Build questions from the retrieved curriculum context when provided.
 - Cover multiple different excerpts/sources in the context, not just one narrow subsection.
-- Do not invent facts outside the retrieved context unless needed for wording clarity."""
+- Do not invent facts outside the retrieved context unless needed for wording clarity.
+- Do not copy sentences verbatim from the retrieved context. Rephrase questions, options, and explanations in your own words to avoid copying/recitation safety filters."""
 
         user_prompt = f"""Generate {batch_count} {type_desc} quiz questions.
 
@@ -1317,10 +1581,11 @@ Return only the JSON object."""
 
     try:
         target_count = max(1, int(body.numQuestions or 10))
-        batch_size = 5
+        batch_size = 2
         questions: list[dict] = []
 
         # [QUIZ BATCH FIX] — Insert quiz header BEFORE the generation loop
+        quiz_insert_started = time.perf_counter()
         quiz_res = await asyncio.to_thread(
             lambda: sb.table("quizzes").insert({
                 "user_id": current_user.id,
@@ -1335,6 +1600,7 @@ Return only the JSON object."""
             }).execute()
         )
         quiz_id = quiz_res.data[0]["id"]
+        _quiz_timing_log("quiz_header_insert", (time.perf_counter() - quiz_insert_started) * 1000, quiz_id=quiz_id, **request_meta)
 
         # Expose quiz_id in the job record now that the quiz row exists.
         # The frontend polls this and navigates as soon as the first batch
@@ -1348,17 +1614,26 @@ Return only the JSON object."""
             quiz_id=quiz_id,
         )
 
+        # Resolve $refs and remove $defs from the final schema passed to Gemini
+        inlined_schema = _inline_schema_defs(QuizBatchModel.model_json_schema())
+        if os.getenv("ENVIRONMENT", "development").lower() != "production":
+            has_defs = "$defs" in inlined_schema
+            has_refs = "$ref" in json.dumps(inlined_schema)
+            logger.info(f"[DEBUG] Final inlined schema info: has_defs={has_defs}, has_refs={has_refs}")
+
         # JSON Schema format dictionary for structured outputs
         batch_schema = {
             "type": "json_schema",
             "json_schema": {
                 "name": "quiz_batch",
-                "schema": QuizBatchModel.model_json_schema(),
+                "schema": inlined_schema,
                 "strict": True
             }
         }
 
+        batch_number = 0
         while len(questions) < target_count:
+            batch_number += 1
             remaining = target_count - len(questions)
             current_batch = min(batch_size, remaining)
             generated_this_batch = None
@@ -1366,16 +1641,76 @@ Return only the JSON object."""
             already_used = [str(q.get("questionText", "")).strip() for q in questions if str(q.get("questionText", "")).strip()]
             for attempt in range(1, 4):
                 compact_mode = attempt >= 2 and target_count >= 15
+                prompt_started = time.perf_counter()
                 system_prompt, user_prompt = _build_generation_prompts(current_batch, already_used, compact=compact_mode)
+                _quiz_timing_log(
+                    "build_generation_prompts",
+                    (time.perf_counter() - prompt_started) * 1000,
+                    quiz_id=quiz_id,
+                    batch_number=batch_number,
+                    batch_size=current_batch,
+                    attempt_number=attempt,
+                    generated_count_so_far=len(questions),
+                    **request_meta,
+                )
+                
+                # Determine current response format for progressive fallback sequence
+                if attempt == 1:
+                    current_response_format = batch_schema
+                    response_format_mode = "json_schema"
+                elif attempt == 2:
+                    current_response_format = {"type": "json_object"}
+                    response_format_mode = "json_object"
+                else:  # attempt == 3
+                    current_response_format = None
+                    response_format_mode = "plain_text"
+
+                batch_attempt_started = time.perf_counter()
                 try:
-                    raw = await _generate_quiz_json_response(system_prompt, user_prompt, response_format=batch_schema)
-                    parsed = _parse_quiz_batch(raw)
+                    llm_started = time.perf_counter()
+                    raw = await _generate_quiz_json_response(system_prompt, user_prompt, response_format=current_response_format)
+                    _quiz_timing_log(
+                        "generate_quiz_json_response",
+                        (time.perf_counter() - llm_started) * 1000,
+                        quiz_id=quiz_id,
+                        batch_number=batch_number,
+                        batch_size=current_batch,
+                        attempt_number=attempt,
+                        response_format_mode=response_format_mode,
+                        generated_count_so_far=len(questions),
+                        **request_meta,
+                    )
+                    parsed = _parse_quiz_batch(
+                        raw,
+                        timing_meta={
+                            **request_meta,
+                            "quiz_id": quiz_id,
+                            "batch_number": batch_number,
+                            "batch_size": current_batch,
+                            "attempt_number": attempt,
+                            "response_format_mode": response_format_mode,
+                            "generated_count_so_far": len(questions),
+                        },
+                    )
                 except Exception as e:
                     logger.warning(f"Quiz batch generation or parse failed (batch={current_batch}, attempt={attempt}): {e}")
+                    _quiz_timing_log(
+                        "llm_batch_attempt_failure",
+                        (time.perf_counter() - batch_attempt_started) * 1000,
+                        quiz_id=quiz_id,
+                        batch_number=batch_number,
+                        batch_size=current_batch,
+                        attempt_number=attempt,
+                        response_format_mode=response_format_mode,
+                        generated_count_so_far=len(questions),
+                        error_type=type(e).__name__,
+                        **request_meta,
+                    )
                     continue
 
                 # Dynamic repetition tolerance: slightly relaxed for larger requested sets.
                 overlap_limit = 0.55 if target_count >= 20 else 0.40
+                dedupe_started = time.perf_counter()
                 internal_repeat = _has_internal_repetition(parsed, threshold=0.85)
                 overlap_ratio = _overlap_with_recent(parsed, recent_block_small, threshold=0.8)
 
@@ -1427,6 +1762,19 @@ Return only the JSON object."""
                         continue
 
                     deduped.append(item)
+                _quiz_timing_log(
+                    "deduplication_filtering",
+                    (time.perf_counter() - dedupe_started) * 1000,
+                    quiz_id=quiz_id,
+                    batch_number=batch_number,
+                    batch_size=current_batch,
+                    attempt_number=attempt,
+                    response_format_mode=response_format_mode,
+                    generated_count_so_far=len(questions),
+                    parsed_count=len(parsed),
+                    accepted_count=len(deduped),
+                    **request_meta,
+                )
 
                 if (internal_repeat or overlap_ratio > overlap_limit) and attempt < 3:
                     logger.warning(
@@ -1438,6 +1786,18 @@ Return only the JSON object."""
                     continue
 
                 generated_this_batch = deduped[:current_batch]
+                _quiz_timing_log(
+                    "llm_batch_attempt_success",
+                    (time.perf_counter() - batch_attempt_started) * 1000,
+                    quiz_id=quiz_id,
+                    batch_number=batch_number,
+                    batch_size=current_batch,
+                    attempt_number=attempt,
+                    response_format_mode=response_format_mode,
+                    generated_count_so_far=len(questions),
+                    accepted_count=len(generated_this_batch),
+                    **request_meta,
+                )
                 break
 
             if not generated_this_batch:
@@ -1567,8 +1927,18 @@ Return only the JSON object."""
 
             if batch_to_insert:
                 try:
+                    insert_started = time.perf_counter()
                     await asyncio.to_thread(
                         lambda b=batch_to_insert: sb.table("quiz_questions").insert(b).execute()
+                    )
+                    _quiz_timing_log(
+                        "quiz_questions_insert",
+                        (time.perf_counter() - insert_started) * 1000,
+                        quiz_id=quiz_id,
+                        batch_number=batch_number,
+                        batch_size=len(batch_to_insert),
+                        generated_count_so_far=len(questions),
+                        **request_meta,
                     )
                 except Exception as db_err:
                     logger.error(f"[ERROR] Quiz DB Insertion Failed: {db_err}")
@@ -1606,7 +1976,10 @@ Return only the JSON object."""
         )
 
         # Return the created quiz
-        return await get_quiz(quiz_id, current_user)
+        final_fetch_started = time.perf_counter()
+        result = await get_quiz(quiz_id, current_user)
+        _quiz_timing_log("final_get_quiz", (time.perf_counter() - final_fetch_started) * 1000, quiz_id=quiz_id, **request_meta)
+        return result
 
     except HTTPException:
         raise
@@ -1757,24 +2130,28 @@ async def quiz_generation_events(
                 break
                 
             try:
-                questions_res = sb.table("quiz_questions") \
-                    .select("*") \
-                    .eq("quiz_id", quiz_id) \
-                    .gt("question_order", last_sent_order) \
-                    .order("question_order", desc=False) \
+                questions_res = await asyncio.to_thread(
+                    lambda: sb.table("quiz_questions")
+                    .select("*")
+                    .eq("quiz_id", quiz_id)
+                    .gt("question_order", last_sent_order)
+                    .order("question_order", desc=False)
                     .execute()
+                )
                 new_questions = questions_res.data or []
             except Exception as e:
                 logger.error(f"Error fetching questions in SSE generator: {e}")
                 new_questions = []
                 
             try:
-                job_res = sb.table("quiz_generation_jobs") \
-                    .select("status,error_message,progress,request_payload") \
-                    .eq("quiz_id", quiz_id) \
-                    .order("created_at", desc=True) \
-                    .limit(1) \
+                job_res = await asyncio.to_thread(
+                    lambda: sb.table("quiz_generation_jobs")
+                    .select("status,error_message,progress,request_payload")
+                    .eq("quiz_id", quiz_id)
+                    .order("created_at", desc=True)
+                    .limit(1)
                     .execute()
+                )
                 job = job_res.data[0] if job_res.data else None
             except Exception as e:
                 logger.error(f"Error fetching job status in SSE generator: {e}")
@@ -1804,7 +2181,9 @@ async def quiz_generation_events(
                 target_count = job.get("request_payload", {}).get("numQuestions", 10)
                 
                 try:
-                    count_res = sb.table("quiz_questions").select("id", count="exact").eq("quiz_id", quiz_id).execute()
+                    count_res = await asyncio.to_thread(
+                        lambda: sb.table("quiz_questions").select("id", count="exact").eq("quiz_id", quiz_id).execute()
+                    )
                     gen_count = count_res.count or last_sent_order
                 except Exception:
                     gen_count = last_sent_order
@@ -1968,29 +2347,36 @@ async def get_quiz(quiz_id: str, current_user: User = Depends(get_current_user))
     await resolve_student_university_context(current_user)
 
     sb = _get_supabase()
+    started = time.perf_counter()
     try:
-        quiz_res = sb.table("quizzes") \
-            .select("*") \
-            .eq("id", quiz_id) \
-            .limit(1) \
+        quiz_res = await asyncio.to_thread(
+            lambda: sb.table("quizzes")
+            .select("*")
+            .eq("id", quiz_id)
+            .limit(1)
             .execute()
+        )
 
         quiz_rows = quiz_res.data or []
         if not quiz_rows:
             raise HTTPException(status_code=404, detail="Quiz not found")
 
-        questions_res = sb.table("quiz_questions") \
-            .select("*") \
-            .eq("quiz_id", quiz_id) \
-            .order("question_order", desc=False) \
+        questions_res = await asyncio.to_thread(
+            lambda: sb.table("quiz_questions")
+            .select("*")
+            .eq("quiz_id", quiz_id)
+            .order("question_order", desc=False)
             .execute()
+        )
 
-        job_res = sb.table("quiz_generation_jobs") \
-            .select("status,error_message") \
-            .eq("quiz_id", quiz_id) \
-            .order("created_at", desc=True) \
-            .limit(1) \
+        job_res = await asyncio.to_thread(
+            lambda: sb.table("quiz_generation_jobs")
+            .select("status,error_message")
+            .eq("quiz_id", quiz_id)
+            .order("created_at", desc=True)
+            .limit(1)
             .execute()
+        )
 
         job_status = "completed"
         job_error = None
@@ -1998,7 +2384,7 @@ async def get_quiz(quiz_id: str, current_user: User = Depends(get_current_user))
             job_status = job_res.data[0].get("status")
             job_error = job_res.data[0].get("error_message")
 
-        return {
+        result = {
             "quiz": {
                 **quiz_rows[0],
                 "questions": questions_res.data or [],
@@ -2008,6 +2394,14 @@ async def get_quiz(quiz_id: str, current_user: User = Depends(get_current_user))
                 "generation_job_error": job_error,
             }
         }
+        _quiz_timing_log(
+            "get_quiz",
+            (time.perf_counter() - started) * 1000,
+            quiz_id=quiz_id,
+            generated_question_count=len(questions_res.data or []),
+            generation_job_status=job_status,
+        )
+        return result
 
     except HTTPException:
         raise

@@ -40,6 +40,8 @@ export default function QuizGeneratingScreen({ jobId }: { jobId: string }) {
   const router = useRouter();
   const [job, setJob] = useState<QuizGenerationJob | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [readyQuestionCount, setReadyQuestionCount] = useState(0);
+  const [targetQuestionCount, setTargetQuestionCount] = useState(0);
   const [factDeck, setFactDeck] = useState<DidYouKnowFact[]>(() => shuffleFacts(DID_YOU_KNOW_FACTS));
   const [factIndex, setFactIndex] = useState(0);
   const [isFactPopupDismissed, setIsFactPopupDismissed] = useState(false);
@@ -62,6 +64,10 @@ export default function QuizGeneratingScreen({ jobId }: { jobId: string }) {
         if (!res.ok) return;
         const data = await res.json();
         const questions: unknown[] = data?.quiz?.questions ?? [];
+        const nextReadyCount = questions.length;
+        const nextTargetCount = Number(data?.quiz?.target_question_count ?? data?.quiz?.num_questions ?? 0);
+        setReadyQuestionCount(nextReadyCount);
+        setTargetQuestionCount(nextTargetCount);
         if (questions.length >= 1 && !navigated) {
           navigated = true;
           window.localStorage.removeItem('pansgpt-active-quiz-job-id');
@@ -72,7 +78,7 @@ export default function QuizGeneratingScreen({ jobId }: { jobId: string }) {
         // silently retry
       }
       if (!cancelled && !navigated && !jobFailedOrCancelled) {
-        questionTimeoutId = window.setTimeout(pollQuestions, 2000);
+        questionTimeoutId = window.setTimeout(pollQuestions, 800);
       }
     };
 
@@ -181,7 +187,9 @@ export default function QuizGeneratingScreen({ jobId }: { jobId: string }) {
   const failed = job?.status === 'failed' || job?.status === 'cancelled';
   const statusText = failed
     ? job?.error_message || 'Unable to generate this quiz.'
-    : job?.current_step || 'Generating practice exam...';
+    : readyQuestionCount > 0
+      ? `${readyQuestionCount}${targetQuestionCount > 0 ? ` of ${targetQuestionCount}` : ''} question${readyQuestionCount === 1 ? '' : 's'} ready. Opening quiz...`
+      : job?.current_step || 'Generating practice exam...';
   const currentFact = factDeck[factIndex] || DID_YOU_KNOW_FACTS[0];
   const shouldShowFactPopup = Boolean(currentFact && !isFactPopupDismissed);
 

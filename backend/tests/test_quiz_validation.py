@@ -195,3 +195,36 @@ def test_is_valid_correct_answer_true_false():
 def test_is_valid_correct_answer_short_answer():
     assert _is_valid_correct_answer("Hypertension", None, "SHORT_ANSWER") is True
     assert _is_valid_correct_answer("", None, "SHORT_ANSWER") is False
+
+def test_inline_schema_defs():
+    from routers.quiz import _inline_schema_defs
+    schema = {
+        "title": "TestSchema",
+        "type": "object",
+        "properties": {
+            "questions": {
+                "type": "array",
+                "items": {
+                    "$ref": "#/$defs/QuizQuestion"
+                }
+            }
+        },
+        "$defs": {
+            "QuizQuestion": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"}
+                }
+            }
+        }
+    }
+    inlined = _inline_schema_defs(schema)
+    assert "$defs" not in inlined
+    assert "$ref" not in str(inlined)
+    assert inlined["properties"]["questions"]["items"]["properties"]["text"]["type"] == "string"
+
+def test_parse_quiz_batch_empty_response():
+    with pytest.raises(ValueError, match="LLM returned empty response"):
+        _parse_quiz_batch("")
+    with pytest.raises(ValueError, match="LLM returned empty response"):
+        _parse_quiz_batch("   ")

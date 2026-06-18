@@ -26,6 +26,10 @@ interface Quiz {
   num_questions: number;
   time_limit?: number;
   questions: Question[];
+  target_question_count?: number;
+  generated_question_count?: number;
+  generation_job_status?: string;
+  generation_job_error?: string | null;
 }
 
 interface UserAnswer {
@@ -191,7 +195,12 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
               const updatedQuestions = [...prev.questions, newQuestion].sort(
                 (a, b) => a.question_order - b.question_order
               );
-              return { ...prev, questions: updatedQuestions };
+              return {
+                ...prev,
+                questions: updatedQuestions,
+                generated_question_count: data.generated_question_count ?? updatedQuestions.length,
+                target_question_count: data.target_question_count ?? prev.target_question_count ?? prev.num_questions,
+              };
             });
 
             setUserAnswers((prev) => {
@@ -275,6 +284,10 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
               ...prev,
               questions: data.quiz.questions,
               num_questions: data.quiz.num_questions,
+              generated_question_count: data.quiz.generated_question_count,
+              target_question_count: data.quiz.target_question_count,
+              generation_job_status: data.quiz.generation_job_status,
+              generation_job_error: data.quiz.generation_job_error,
             };
           });
 
@@ -413,7 +426,10 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
   const answeredCount = Object.values(userAnswers).filter(isAnswered).length;
 
   const isGeneratingActive = jobStatus !== 'completed' && jobStatus !== 'failed' && jobStatus !== 'cancelled';
-  const totalExpectedQuestions = isGeneratingActive ? quiz.num_questions : quiz.questions.length;
+  const totalExpectedQuestions = isGeneratingActive
+    ? (quiz.target_question_count ?? quiz.num_questions)
+    : quiz.questions.length;
+  const readyQuestionCount = quiz.generated_question_count ?? quiz.questions.length;
   const isFinalQuestion = currentQuestionIndex === quiz.questions.length - 1;
   const hasMoreQuestionsToGenerate = quiz.questions.length < quiz.num_questions;
   const isWaitingForNextQuestions = isFinalQuestion && hasMoreQuestionsToGenerate && isGeneratingActive;
@@ -497,6 +513,13 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
         <main className="grid flex-1 gap-8 px-6 py-6 md:px-0 lg:grid-cols-[minmax(0,1fr)_260px] lg:items-start">
           <section className="min-w-0">
             <div className="mb-8 hidden max-w-3xl md:block">
+              {isGeneratingActive ? (
+                <div className="mb-4 rounded-[5px] border border-primary/20 bg-primary/10 px-4 py-3 text-sm text-foreground">
+                  <span className="font-semibold">{readyQuestionCount} question{readyQuestionCount === 1 ? '' : 's'} ready</span>
+                  {totalExpectedQuestions > 0 ? ` of ${totalExpectedQuestions}. ` : '. '}
+                  {hasMoreQuestionsToGenerate ? 'Generating more questions...' : 'Finalizing quiz...'}
+                </div>
+              ) : null}
               <div className="mb-2 flex items-center justify-between text-xs font-medium text-muted-foreground">
                 <span>Question {currentQuestionIndex + 1}/{totalExpectedQuestions}</span>
                 <span>{Math.round(progressPercentage)}%</span>
@@ -622,7 +645,11 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
               </div>
             ) : (
               <div className="flex h-60 items-center justify-center rounded-xl border border-dashed border-border">
-                <p className="text-muted-foreground">Preparing quiz questions...</p>
+                <p className="text-muted-foreground">
+                  {isGeneratingActive
+                    ? `Generating quiz... ${readyQuestionCount} question${readyQuestionCount === 1 ? '' : 's'} ready so far`
+                    : 'Preparing quiz questions...'}
+                </p>
               </div>
             )}
           </section>
