@@ -108,6 +108,15 @@ def _is_empty_or_thinking_only(content: Optional[str]) -> bool:
 def _should_reject_response_content(res: Optional[Any], *, stream: bool) -> bool:
     if stream or res is None:
         return False
+    try:
+        choices = getattr(res, "choices", None)
+        if not choices:
+            return False
+        message = getattr(choices[0], "message", None)
+        content = getattr(message, "content", None) if message is not None else None
+        return _is_empty_or_thinking_only(content)
+    except Exception:
+        return False
 
 
 def _response_format_mode(response_format: Optional[dict]) -> str:
@@ -158,16 +167,6 @@ async def _create_completion_with_audit(client: Any, kwargs: dict, *, audit_meta
             error_type=type(exc).__name__,
         )
         raise
-
-    try:
-        choices = getattr(res, "choices", None)
-        if not choices:
-            return False
-        message = getattr(choices[0], "message", None)
-        content = getattr(message, "content", None) if message is not None else None
-        return _is_empty_or_thinking_only(content)
-    except Exception:
-        return False
 
 
 async def generate_completion_with_failover(

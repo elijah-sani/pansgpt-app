@@ -10,6 +10,7 @@ from routers.quiz import (
     QuizQuestionModel,
     QuizBatchModel,
     _parse_quiz_batch,
+    _parse_tagged_quiz_batch,
     _is_valid_correct_answer
 )
 
@@ -228,3 +229,199 @@ def test_parse_quiz_batch_empty_response():
         _parse_quiz_batch("")
     with pytest.raises(ValueError, match="LLM returned empty response"):
         _parse_quiz_batch("   ")
+
+
+def test_parse_tagged_quiz_batch_valid_four_option_block():
+    raw = """
+<question>
+TEXT: Which of the following best describes viscosity?
+TYPE: multiple_choice
+A: Resistance of a fluid to flow
+B: Ability of a solid to melt
+C: Pressure inside a container
+D: Rate of chemical reaction
+ANSWER: A
+EXPLANATION: Viscosity is the internal resistance of a fluid to flow.
+</question>
+"""
+    questions = _parse_tagged_quiz_batch(raw)
+    assert len(questions) == 1
+    assert questions[0]["correctAnswer"] == "A"
+    assert len(questions[0]["options"]) == 4
+
+
+def test_parse_tagged_quiz_batch_valid_five_option_block():
+    raw = """
+<question>
+TEXT: Which factor can directly increase apparent viscosity in a suspension?
+TYPE: multiple_choice
+A: Higher particle concentration
+B: Lower molecular interaction
+C: Complete absence of dispersed phase
+D: Lower resistance to flow
+E: No change in shear conditions
+ANSWER: A
+EXPLANATION: Higher particle concentration can increase internal resistance and raise apparent viscosity.
+</question>
+"""
+    questions = _parse_tagged_quiz_batch(raw)
+    assert len(questions) == 1
+    assert len(questions[0]["options"]) == 5
+
+
+def test_parse_tagged_quiz_batch_multiple_valid_blocks():
+    raw = """
+<question>
+TEXT: Which term describes resistance of a liquid to flow?
+TYPE: multiple_choice
+A: Viscosity
+B: Sublimation
+C: Ionization
+D: Crystallization
+ANSWER: A
+EXPLANATION: Viscosity describes the internal resistance of a liquid to flow.
+</question>
+<question>
+TEXT: Which instrument is commonly used to measure viscosity?
+TYPE: multiple_choice
+A: Viscometer
+B: Colorimeter
+C: Thermocycler
+D: Spirometer
+ANSWER: A
+EXPLANATION: A viscometer is used to measure the viscosity of liquids.
+</question>
+"""
+    questions = _parse_tagged_quiz_batch(raw)
+    assert len(questions) == 2
+
+
+def test_parse_tagged_quiz_batch_partial_valid_blocks():
+    raw = """
+<question>
+TEXT: Which term describes resistance of a liquid to flow?
+TYPE: multiple_choice
+A: Viscosity
+B: Sublimation
+C: Ionization
+D: Crystallization
+ANSWER: A
+EXPLANATION: Viscosity describes the internal resistance of a liquid to flow.
+</question>
+<question>
+TEXT: Bad?
+TYPE: multiple_choice
+A: Only one option
+ANSWER: A
+EXPLANATION: Too weak
+</question>
+"""
+    questions = _parse_tagged_quiz_batch(raw)
+    assert len(questions) == 1
+    assert questions[0]["questionText"].startswith("Which term")
+
+
+def test_parse_tagged_quiz_batch_missing_answer():
+    raw = """
+<question>
+TEXT: Which term describes resistance of a liquid to flow?
+TYPE: multiple_choice
+A: Viscosity
+B: Sublimation
+C: Ionization
+D: Crystallization
+EXPLANATION: Viscosity describes the internal resistance of a liquid to flow.
+</question>
+"""
+    with pytest.raises(ValueError, match="tagged_no_valid_blocks"):
+        _parse_tagged_quiz_batch(raw)
+
+
+def test_parse_tagged_quiz_batch_answer_letter_not_present():
+    raw = """
+<question>
+TEXT: Which term describes resistance of a liquid to flow?
+TYPE: multiple_choice
+A: Viscosity
+B: Sublimation
+C: Ionization
+D: Crystallization
+ANSWER: E
+EXPLANATION: Viscosity describes the internal resistance of a liquid to flow.
+</question>
+"""
+    with pytest.raises(ValueError, match="tagged_no_valid_blocks"):
+        _parse_tagged_quiz_batch(raw)
+
+
+def test_parse_tagged_quiz_batch_duplicate_options():
+    raw = """
+<question>
+TEXT: Which term describes resistance of a liquid to flow?
+TYPE: multiple_choice
+A: Viscosity
+B: Viscosity
+C: Ionization
+D: Crystallization
+ANSWER: A
+EXPLANATION: Viscosity describes the internal resistance of a liquid to flow.
+</question>
+"""
+    with pytest.raises(ValueError, match="tagged_no_valid_blocks"):
+        _parse_tagged_quiz_batch(raw)
+
+
+def test_parse_tagged_quiz_batch_missing_explanation():
+    raw = """
+<question>
+TEXT: Which term describes resistance of a liquid to flow?
+TYPE: multiple_choice
+A: Viscosity
+B: Sublimation
+C: Ionization
+D: Crystallization
+ANSWER: A
+</question>
+"""
+    with pytest.raises(ValueError, match="tagged_no_valid_blocks"):
+        _parse_tagged_quiz_batch(raw)
+
+
+def test_parse_tagged_quiz_batch_extra_text_does_not_break_blocks():
+    raw = """
+Here are the questions:
+<question>
+TEXT: Which term describes resistance of a liquid to flow?
+TYPE: multiple_choice
+A: Viscosity
+B: Sublimation
+C: Ionization
+D: Crystallization
+ANSWER: A
+EXPLANATION: Viscosity describes the internal resistance of a liquid to flow.
+</question>
+End.
+"""
+    questions = _parse_tagged_quiz_batch(raw)
+    assert len(questions) == 1
+
+
+def test_parse_tagged_quiz_batch_empty_response():
+    with pytest.raises(ValueError, match="LLM returned empty response"):
+        _parse_tagged_quiz_batch("")
+
+
+def test_parse_tagged_quiz_batch_malformed_closing_tag():
+    raw = """
+<question>
+TEXT: Which term describes resistance of a liquid to flow?
+TYPE: multiple_choice
+A: Viscosity
+B: Sublimation
+C: Ionization
+D: Crystallization
+ANSWER: A
+EXPLANATION: Viscosity describes the internal resistance of a liquid to flow.
+"""
+    with pytest.raises(ValueError, match="no complete <question> blocks"):
+        _parse_tagged_quiz_batch(raw)

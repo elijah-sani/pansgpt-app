@@ -544,6 +544,188 @@ def _parse_quiz_batch(raw: str, *, timing_meta: Optional[dict[str, Any]] = None)
         raise e
 
 
+def _normalize_tagged_question_type(value: str) -> str:
+    q_type = (value or "").strip()
+    upper = q_type.upper()
+    if upper in {"OBJECTIVE", "MULTIPLE_CHOICE"}:
+        return "multiple_choice"
+    if upper == "MCQ":
+        return "MCQ"
+    if upper == "TRUE_FALSE":
+        return "TRUE_FALSE"
+    if upper == "SHORT_ANSWER":
+        return "SHORT_ANSWER"
+    return q_type or "multiple_choice"
+
+
+def _reject_tagged_block(
+    reason: str,
+    *,
+    timing_meta: Optional[dict[str, Any]],
+    block_index: int,
+) -> tuple[None, str]:
+    _quiz_timing_log(
+        "tagged_question_block_rejected",
+        0.0,
+        block_index=block_index,
+        rejection_reason=reason,
+        **(timing_meta or {}),
+    )
+    return None, reason
+
+
+def _parse_tagged_question_block(
+    block: str,
+    *,
+    timing_meta: Optional[dict[str, Any]] = None,
+    block_index: int = 0,
+) -> tuple[Optional[dict], Optional[str]]:
+    fields: dict[str, str] = {}
+    for raw_line in (block or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        match = re.match(r"^(TEXT|TYPE|A|B|C|D|E|ANSWER|EXPLANATION)\s*:\s*(.*)$", line, flags=re.IGNORECASE)
+        if not match:
+            continue
+        key = match.group(1).upper()
+        if key in fields:
+            return _reject_tagged_block("duplicate_field", timing_meta=timing_meta, block_index=block_index)
+        fields[key] = match.group(2).strip()
+
+    text = fields.get("TEXT", "").strip()
+    if len(text) < 10:
+        return _reject_tagged_block("missing_or_short_text", timing_meta=timing_meta, block_index=block_index)
+
+    q_type = _normalize_tagged_question_type(fields.get("TYPE", "multiple_choice"))
+    q_type_upper = q_type.upper()
+    if q_type_upper not in {"MCQ", "MULTIPLE_CHOICE", "OBJECTIVE"}:
+        return _reject_tagged_block("unsupported_tagged_question_type", timing_meta=timing_meta, block_index=block_index)
+
+    option_keys = ["A", "B", "C", "D", "E"]
+    options: list[str] = []
+    for key in option_keys:
+        value = fields.get(key, "").strip()
+        if value:
+            options.append(f"{key}. {value}")
+
+    if len(options) < 4:
+        return _reject_tagged_block("missing_options", timing_meta=timing_meta, block_index=block_index)
+    if q_type_upper == "MCQ" and len(options) != 5:
+        return _reject_tagged_block("mcq_requires_five_options", timing_meta=timing_meta, block_index=block_index)
+
+    normalized_options = [_normalize_option(option) for option in options]
+    if any(not option for option in normalized_options):
+        return _reject_tagged_block("empty_option", timing_meta=timing_meta, block_index=block_index)
+    if len(set(normalized_options)) != len(normalized_options):
+        return _reject_tagged_block("duplicate_options", timing_meta=timing_meta, block_index=block_index)
+
+    answer = fields.get("ANSWER", "").strip().upper()
+    if not answer:
+        return _reject_tagged_block("missing_answer", timing_meta=timing_meta, block_index=block_index)
+    if not re.fullmatch(r"[A-E](?:\s*,\s*[A-E])*", answer):
+        return _reject_tagged_block("invalid_answer_format", timing_meta=timing_meta, block_index=block_index)
+
+    answer_letters = [part.strip().upper() for part in answer.split(",") if part.strip()]
+    available_letters = set(option_keys[:len(options)])
+    if any(letter not in available_letters for letter in answer_letters):
+        return _reject_tagged_block("answer_option_missing", timing_meta=timing_meta, block_index=block_index)
+    if q_type_upper != "MCQ" and len(answer_letters) != 1:
+        return _reject_tagged_block("single_choice_requires_one_answer", timing_meta=timing_meta, block_index=block_index)
+
+    explanation = fields.get("EXPLANATION", "").strip()
+    if len(explanation) < 10:
+        return _reject_tagged_block("missing_or_weak_explanation", timing_meta=timing_meta, block_index=block_index)
+
+    question = {
+        "questionText": text,
+        "questionType": q_type,
+        "options": options,
+        "correctAnswer": ", ".join(answer_letters) if q_type_upper == "MCQ" else answer_letters[0],
+        "explanation": explanation,
+    }
+
+    try:
+        validated = QuizQuestionModel.model_validate(question)
+        return validated.model_dump(), None
+    except Exception as exc:
+        return _reject_tagged_block(
+            f"schema_validation_failure:{type(exc).__name__}",
+            timing_meta=timing_meta,
+            block_index=block_index,
+        )
+
+
+def _parse_tagged_quiz_batch(raw_text: str, *, timing_meta: Optional[dict[str, Any]] = None) -> list[dict]:
+    parse_started = time.perf_counter()
+    _quiz_timing_log("tagged_parse_started", 0.0, **(timing_meta or {}))
+
+    if not raw_text or not raw_text.strip():
+        _quiz_timing_log(
+            "tagged_parse_failure",
+            (time.perf_counter() - parse_started) * 1000,
+            block_count=0,
+            valid_count=0,
+            rejected_count=0,
+            rejection_reason="empty_response",
+            **(timing_meta or {}),
+        )
+        raise ValueError("LLM returned empty response")
+
+    blocks = re.findall(r"<question\b[^>]*>(.*?)</question>", raw_text, flags=re.IGNORECASE | re.DOTALL)
+    if not blocks:
+        _quiz_timing_log(
+            "tagged_parse_failure",
+            (time.perf_counter() - parse_started) * 1000,
+            block_count=0,
+            valid_count=0,
+            rejected_count=0,
+            rejection_reason="missing_question_blocks",
+            **(timing_meta or {}),
+        )
+        raise ValueError("tagged_parse_failure: no complete <question> blocks found")
+
+    valid_questions: list[dict] = []
+    rejection_reasons: list[str] = []
+    for index, block in enumerate(blocks, start=1):
+        question, reason = _parse_tagged_question_block(
+            block,
+            timing_meta={
+                **(timing_meta or {}),
+                "block_count": len(blocks),
+            },
+            block_index=index,
+        )
+        if question:
+            valid_questions.append(question)
+        elif reason:
+            rejection_reasons.append(reason)
+
+    event = "tagged_parse_success"
+    if not valid_questions:
+        event = "tagged_parse_failure"
+    elif rejection_reasons:
+        event = "tagged_parse_partial_success"
+
+    primary_reason = rejection_reasons[0] if rejection_reasons else None
+    _quiz_timing_log(
+        event,
+        (time.perf_counter() - parse_started) * 1000,
+        block_count=len(blocks),
+        valid_count=len(valid_questions),
+        rejected_count=len(rejection_reasons),
+        rejection_reason=primary_reason,
+        **(timing_meta or {}),
+    )
+
+    if not valid_questions:
+        raise ValueError(
+            f"tagged_no_valid_blocks: model returned {len(blocks)} blocks, 0 valid after tagged validation"
+        )
+
+    return valid_questions
+
+
 
 
 def _extract_mcq_true_options(question: dict) -> list[str]:
@@ -1352,6 +1534,12 @@ def _classify_quiz_generation_exception(exc: Exception) -> str:
         return "schema_validation_failure"
 
     message = str(exc or "").strip().lower()
+    if "tagged_no_valid_blocks" in message:
+        return "tagged_no_valid_blocks"
+    if "tagged_parse_failure" in message:
+        return "tagged_parse_failure"
+    if "tagged_partial_parse" in message:
+        return "tagged_partial_parse"
     if "empty response" in message:
         return "empty_response"
     if "json" in message and ("parse" in message or "decode" in message or "repair" in message):
@@ -1449,6 +1637,11 @@ async def _generate_quiz_now(
 - "correctAnswer": a string of comma-separated option labels from ["A","B","C","D","E"], e.g. "A, C, E"
 - Include in the question stem: "Select one or more."
 - EXACTLY 3 options must be true and EXACTLY 2 options must be false.'''
+            tagged_format_reqs = '''- TYPE: MCQ
+- Provide exactly five options: A:, B:, C:, D:, and E:
+- ANSWER: exactly three comma-separated option letters, for example A,C,E
+- Include in the question stem: "Select one or more."
+- EXACTLY 3 options must be true and EXACTLY 2 options must be false.'''
             example_json = '''{
   "questions": [
     {
@@ -1460,10 +1653,25 @@ async def _generate_quiz_now(
     }
   ]
 }'''
+            tagged_example = '''<question>
+TEXT: Which of the following are primary side effects of drug X? Select one or more.
+TYPE: MCQ
+A: Side effect 1
+B: Side effect 2
+C: Side effect 3
+D: Side effect 4
+E: Side effect 5
+ANSWER: A,C,E
+EXPLANATION: Brief explanation of why A, C, and E are correct.
+</question>'''
         else:
             format_reqs = '''- "questionType": "multiple_choice"
 - "options": an array of exactly 4 option strings, e.g. ["A. Option A", "B. Option B", "C. Option C", "D. Option D"]
 - "correctAnswer": the letter of the correct option (e.g. "A") or the full labeled option (e.g. "A. Option A")'''
+            tagged_format_reqs = '''- TYPE: multiple_choice
+- Provide exactly four options: A:, B:, C:, and D:
+- Use E: only when a fifth option is genuinely useful.
+- ANSWER: exactly one available option letter, for example A, B, C, or D.'''
             example_json = '''{
   "questions": [
     {
@@ -1475,11 +1683,25 @@ async def _generate_quiz_now(
     }
   ]
 }'''
+            tagged_example = '''<question>
+TEXT: Which of the following best describes viscosity?
+TYPE: multiple_choice
+A: Resistance of a fluid to flow
+B: Ability of a solid to melt
+C: Pressure inside a container
+D: Rate of chemical reaction
+ANSWER: A
+EXPLANATION: Viscosity is the internal resistance of a fluid to flow.
+</question>'''
     elif q_type == "TRUE_FALSE":
         type_desc = "true/false"
         format_reqs = '''- "questionType": "TRUE_FALSE"
 - "options": ["True", "False"]
 - "correctAnswer": "True" or "False"'''
+        tagged_format_reqs = '''- TYPE: multiple_choice
+- Convert true/false checks into four-option single-answer questions.
+- Provide exactly four options: A:, B:, C:, and D:
+- ANSWER: exactly one available option letter.'''
         example_json = '''{
   "questions": [
     {
@@ -1491,11 +1713,25 @@ async def _generate_quiz_now(
     }
   ]
 }'''
+        tagged_example = '''<question>
+TEXT: Which statement about drug X is accurate?
+TYPE: multiple_choice
+A: Drug X is classified as a beta-blocker
+B: Drug X is classified as an antacid
+C: Drug X is classified as an antihistamine
+D: Drug X is classified as a laxative
+ANSWER: A
+EXPLANATION: Brief explanation of why A is the accurate statement.
+</question>'''
     elif q_type == "SHORT_ANSWER":
         type_desc = "short answer"
         format_reqs = '''- "questionType": "SHORT_ANSWER"
 - "correctAnswer": the exact short phrase or word that answers the question
 (Do not include an options field)'''
+        tagged_format_reqs = '''- TYPE: multiple_choice
+- Convert short-answer checks into four-option single-answer questions.
+- Provide exactly four options: A:, B:, C:, and D:
+- ANSWER: exactly one available option letter.'''
         example_json = '''{
   "questions": [
     {
@@ -1507,11 +1743,25 @@ async def _generate_quiz_now(
     }
   ]
 }'''
+        tagged_example = '''<question>
+TEXT: Which term best answers the question about drug Y?
+TYPE: multiple_choice
+A: Correct short phrase
+B: Plausible distractor
+C: Plausible distractor
+D: Plausible distractor
+ANSWER: A
+EXPLANATION: Brief explanation of why A is correct.
+</question>'''
     else:
         type_desc = "multiple-choice"
         format_reqs = '''- "questionType": "multiple_choice"
 - "options": an array of 4 option strings ["A. ...", "B. ...", "C. ...", "D. ..."]
 - "correctAnswer": the letter of the correct option (e.g. "A") or the full labeled option (e.g. "A. Option A")'''
+        tagged_format_reqs = '''- TYPE: multiple_choice
+- Provide exactly four options: A:, B:, C:, and D:
+- Use E: only when a fifth option is genuinely useful.
+- ANSWER: exactly one available option letter, for example A, B, C, or D.'''
         example_json = '''{
   "questions": [
     {
@@ -1523,6 +1773,16 @@ async def _generate_quiz_now(
     }
   ]
 }'''
+        tagged_example = '''<question>
+TEXT: Which of the following best matches the requested concept?
+TYPE: multiple_choice
+A: Correct option
+B: Plausible distractor
+C: Plausible distractor
+D: Plausible distractor
+ANSWER: A
+EXPLANATION: Brief explanation of why A is correct.
+</question>'''
 
 
     try:
@@ -1573,7 +1833,12 @@ async def _generate_quiz_now(
 
 
 
-    def _build_generation_prompts(batch_count: int, already_used: list[str], compact: bool = False) -> tuple[str, str]:
+    def _build_generation_prompts(
+        batch_count: int,
+        already_used: list[str],
+        compact: bool = False,
+        output_format: str = "tagged_text",
+    ) -> tuple[str, str]:
         nonce = str(uuid.uuid4())[:8]
         used_block = ""
         if already_used:
@@ -1583,6 +1848,65 @@ async def _generate_quiz_now(
                 f"{used_lines}\n"
             )
 
+        if output_format == "tagged_text":
+            system_prompt = f"""/no_think
+You are PANSGPT's quiz generation engine for pharmacy students.
+
+Return only tagged text question blocks. Do not return JSON, markdown tables, code fences, prose, comments, headings, or thinking tags.
+
+Output contract:
+- Generate exactly {batch_count} question blocks unless fewer questions were requested.
+- Each question must start with <question> and end with </question>.
+- Each field must be on its own line.
+- Required fields inside every block:
+  TEXT:
+  TYPE:
+  A:
+  B:
+  C:
+  D:
+  ANSWER:
+  EXPLANATION:
+- Optional field:
+  E:
+
+Specific rules by type:
+{tagged_format_reqs}
+
+Tagged output example:
+{tagged_example}
+
+Diversity rules:
+- Avoid repeating any previously asked questions or close paraphrases.
+- Spread questions across different concepts/sections of the material.
+- Vary question phrasing and scenario framing.
+
+Grounding rules:
+- Build questions from the retrieved curriculum context when provided.
+- Cover multiple different excerpts/sources in the context, not just one narrow subsection.
+- Do not invent facts outside the retrieved context unless needed for wording clarity.
+- Do not copy sentences verbatim from the retrieved context. Rephrase questions, options, and explanations in your own words to avoid copying/recitation safety filters."""
+
+            user_prompt = f"""Generate {batch_count} {type_desc} quiz questions in tagged text format.
+
+Course title: {body.courseTitle}
+Course code: {body.courseCode}
+Topic: {body.topic or 'General'}
+Difficulty: {body.difficulty}
+Academic level: {body.level}
+Generation nonce: {nonce}
+
+{context_block_small if not compact else "CURRICULUM CONTEXT: Use the same course/topic constraints, but keep the prompt compact for this retry."}
+
+{recent_block_small}
+{used_block}
+
+Return only <question>...</question> blocks."""
+
+            return system_prompt, user_prompt
+
+        # Legacy JSON remains as a final fallback until tagged text generation
+        # has enough production history to remove the older structured path.
         system_prompt = f"""/no_think
 You are PANSGPT's quiz generation engine for pharmacy students.
 
@@ -1697,8 +2021,22 @@ Return only the JSON object."""
             already_used = [str(q.get("questionText", "")).strip() for q in questions if str(q.get("questionText", "")).strip()]
             for attempt in range(1, 4):
                 compact_mode = attempt >= 2 and target_count >= 15
+                if attempt in (1, 2):
+                    generation_format = "tagged_text"
+                    current_response_format = None
+                    response_format_mode = "tagged_text" if attempt == 1 else "tagged_text_retry"
+                else:
+                    generation_format = "json_legacy"
+                    current_response_format = batch_schema
+                    response_format_mode = "json_schema_legacy"
+
                 prompt_started = time.perf_counter()
-                system_prompt, user_prompt = _build_generation_prompts(current_batch, already_used, compact=compact_mode)
+                system_prompt, user_prompt = _build_generation_prompts(
+                    current_batch,
+                    already_used,
+                    compact=compact_mode,
+                    output_format=generation_format,
+                )
                 _quiz_timing_log(
                     "build_generation_prompts",
                     (time.perf_counter() - prompt_started) * 1000,
@@ -1709,17 +2047,6 @@ Return only the JSON object."""
                     generated_count_so_far=len(questions),
                     **request_meta,
                 )
-                
-                # Determine current response format for progressive fallback sequence
-                if attempt == 1:
-                    current_response_format = batch_schema
-                    response_format_mode = "json_schema"
-                elif attempt == 2:
-                    current_response_format = {"type": "json_object"}
-                    response_format_mode = "json_object"
-                else:  # attempt == 3
-                    current_response_format = None
-                    response_format_mode = "plain_text"
 
                 batch_attempt_started = time.perf_counter()
                 _quiz_timing_log(
@@ -1749,6 +2076,7 @@ Return only the JSON object."""
                                 "batch_size": current_batch,
                                 "attempt_number": attempt,
                                 "generated_count_so_far": len(questions),
+                                "response_format_mode": response_format_mode,
                                 "timeout_seconds": QUIZ_LLM_ATTEMPT_TIMEOUT_SECONDS,
                             },
                         ),
@@ -1768,7 +2096,7 @@ Return only the JSON object."""
                         **request_meta,
                     )
                     _quiz_timing_log(
-                        "generate_quiz_json_response",
+                        "generate_quiz_response",
                         (time.perf_counter() - llm_started) * 1000,
                         quiz_id=quiz_id,
                         batch_number=batch_number,
@@ -1778,18 +2106,20 @@ Return only the JSON object."""
                         generated_count_so_far=len(questions),
                         **request_meta,
                     )
-                    parsed = _parse_quiz_batch(
-                        raw,
-                        timing_meta={
-                            **request_meta,
-                            "quiz_id": quiz_id,
-                            "batch_number": batch_number,
-                            "batch_size": current_batch,
-                            "attempt_number": attempt,
-                            "response_format_mode": response_format_mode,
-                            "generated_count_so_far": len(questions),
-                        },
-                    )
+                    parse_meta = {
+                        **request_meta,
+                        "quiz_id": quiz_id,
+                        "batch_number": batch_number,
+                        "batch_size": current_batch,
+                        "requested_batch_size": current_batch,
+                        "attempt_number": attempt,
+                        "response_format_mode": response_format_mode,
+                        "generated_count_so_far": len(questions),
+                    }
+                    if generation_format == "tagged_text":
+                        parsed = _parse_tagged_quiz_batch(raw, timing_meta=parse_meta)
+                    else:
+                        parsed = _parse_quiz_batch(raw, timing_meta=parse_meta)
                 except asyncio.TimeoutError:
                     last_failure_code = "llm_timeout"
                     _quiz_timing_log(
