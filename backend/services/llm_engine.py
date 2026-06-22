@@ -142,13 +142,20 @@ def _log_quiz_provider_timing(event: str, duration_ms: float, model: str, respon
     )
 
 
-async def _create_completion_with_audit(client: Any, kwargs: dict, *, audit_meta: Optional[dict] = None) -> Any:
+async def _create_completion_with_audit(
+    client: Any,
+    kwargs: dict,
+    *,
+    audit_meta: Optional[dict] = None,
+    timeout_seconds: Optional[float] = None,
+) -> Any:
     model = str(kwargs.get("model") or "")
     response_format = kwargs.get("response_format")
     started = time.perf_counter()
     _log_quiz_provider_timing("llm_provider_call_started", 0.0, model, response_format, audit_meta)
     try:
-        res = await client.chat.completions.create(**kwargs)
+        request = client.chat.completions.create(**kwargs)
+        res = await asyncio.wait_for(request, timeout=timeout_seconds) if timeout_seconds else await request
         _log_quiz_provider_timing(
             "llm_provider_call_completed",
             (time.perf_counter() - started) * 1000,
@@ -157,6 +164,16 @@ async def _create_completion_with_audit(client: Any, kwargs: dict, *, audit_meta
             audit_meta,
         )
         return res
+    except asyncio.TimeoutError:
+        _log_quiz_provider_timing(
+            "llm_provider_call_timeout",
+            (time.perf_counter() - started) * 1000,
+            model,
+            response_format,
+            audit_meta,
+            timeout_seconds=timeout_seconds,
+        )
+        raise
     except Exception as exc:
         _log_quiz_provider_timing(
             "llm_provider_call_failed",
@@ -179,6 +196,7 @@ async def generate_completion_with_failover(
     requested_model: Optional[str] = None,
     response_format: Optional[dict] = None,
     audit_meta: Optional[dict] = None,
+    per_provider_timeout_seconds: Optional[float] = None,
 ) -> Optional[Any]:
     if force_google:
         if google_client is None:
@@ -197,7 +215,12 @@ async def generate_completion_with_failover(
         if response_format:
             kwargs["response_format"] = response_format
         try:
-            res = await _create_completion_with_audit(google_client, kwargs, audit_meta=audit_meta)
+            res = await _create_completion_with_audit(
+                google_client,
+                kwargs,
+                audit_meta=audit_meta,
+                timeout_seconds=per_provider_timeout_seconds,
+            )
             if _should_reject_response_content(res, stream=stream):
                 raise ValueError("Google client returned empty or thinking-only response content")
             return res
@@ -206,14 +229,24 @@ async def generate_completion_with_failover(
                 logger.warning(f"Google forced model failed with response_format, retrying with standard json_object format: {exc}")
                 try:
                     kwargs["response_format"] = {"type": "json_object"}
-                    res = await _create_completion_with_audit(google_client, kwargs, audit_meta=audit_meta)
+                    res = await _create_completion_with_audit(
+                        google_client,
+                        kwargs,
+                        audit_meta=audit_meta,
+                        timeout_seconds=per_provider_timeout_seconds,
+                    )
                     if _should_reject_response_content(res, stream=stream):
                         raise ValueError("Google client returned empty or thinking-only response content under json_object")
                     return res
                 except Exception as inner_exc:
                     logger.warning(f"Google forced model failed with standard json_object format, retrying without format: {inner_exc}")
                     kwargs.pop("response_format", None)
-                    res = await _create_completion_with_audit(google_client, kwargs, audit_meta=audit_meta)
+                    res = await _create_completion_with_audit(
+                        google_client,
+                        kwargs,
+                        audit_meta=audit_meta,
+                        timeout_seconds=per_provider_timeout_seconds,
+                    )
                     if _should_reject_response_content(res, stream=stream):
                         raise ValueError("Google client returned empty or thinking-only response content without format")
                     return res
@@ -286,7 +319,12 @@ async def generate_completion_with_failover(
                 if response_format:
                     kwargs["response_format"] = response_format
                 try:
-                    res = await _create_completion_with_audit(groq_text_client, kwargs, audit_meta=audit_meta)
+                    res = await _create_completion_with_audit(
+                        groq_text_client,
+                        kwargs,
+                        audit_meta=audit_meta,
+                        timeout_seconds=per_provider_timeout_seconds,
+                    )
                     if _should_reject_response_content(res, stream=stream):
                         raise ValueError("Groq client returned empty or thinking-only response content")
                     return res
@@ -295,14 +333,24 @@ async def generate_completion_with_failover(
                         logger.warning(f"Groq client failed with response_format, retrying with standard json_object format: {exc}")
                         try:
                             kwargs["response_format"] = {"type": "json_object"}
-                            res = await _create_completion_with_audit(groq_text_client, kwargs, audit_meta=audit_meta)
+                            res = await _create_completion_with_audit(
+                                groq_text_client,
+                                kwargs,
+                                audit_meta=audit_meta,
+                                timeout_seconds=per_provider_timeout_seconds,
+                            )
                             if _should_reject_response_content(res, stream=stream):
                                 raise ValueError("Groq client returned empty or thinking-only response content under json_object")
                             return res
                         except Exception as inner_exc:
                             logger.warning(f"Groq client failed with standard json_object format, retrying without format: {inner_exc}")
                             kwargs.pop("response_format", None)
-                            res = await _create_completion_with_audit(groq_text_client, kwargs, audit_meta=audit_meta)
+                            res = await _create_completion_with_audit(
+                                groq_text_client,
+                                kwargs,
+                                audit_meta=audit_meta,
+                                timeout_seconds=per_provider_timeout_seconds,
+                            )
                             if _should_reject_response_content(res, stream=stream):
                                 raise ValueError("Groq client returned empty or thinking-only response content without format")
                             return res
@@ -324,7 +372,12 @@ async def generate_completion_with_failover(
                     if response_format:
                         kwargs["response_format"] = response_format
                     try:
-                        res = await _create_completion_with_audit(google_client, kwargs, audit_meta=audit_meta)
+                        res = await _create_completion_with_audit(
+                            google_client,
+                            kwargs,
+                            audit_meta=audit_meta,
+                            timeout_seconds=per_provider_timeout_seconds,
+                        )
                         if _should_reject_response_content(res, stream=stream):
                             raise ValueError("Google client returned empty or thinking-only response content")
                         return res
@@ -333,14 +386,24 @@ async def generate_completion_with_failover(
                             logger.warning(f"Google client failed with response_format for model {model_name}, retrying with standard json_object format: {exc}")
                             try:
                                 kwargs["response_format"] = {"type": "json_object"}
-                                res = await _create_completion_with_audit(google_client, kwargs, audit_meta=audit_meta)
+                                res = await _create_completion_with_audit(
+                                    google_client,
+                                    kwargs,
+                                    audit_meta=audit_meta,
+                                    timeout_seconds=per_provider_timeout_seconds,
+                                )
                                 if _should_reject_response_content(res, stream=stream):
                                     raise ValueError("Google client returned empty or thinking-only response content under json_object")
                                 return res
                             except Exception as inner_exc:
                                 logger.warning(f"Google client failed with standard json_object format for model {model_name}, retrying without format: {inner_exc}")
                                 kwargs.pop("response_format", None)
-                                res = await _create_completion_with_audit(google_client, kwargs, audit_meta=audit_meta)
+                                res = await _create_completion_with_audit(
+                                    google_client,
+                                    kwargs,
+                                    audit_meta=audit_meta,
+                                    timeout_seconds=per_provider_timeout_seconds,
+                                )
                                 if _should_reject_response_content(res, stream=stream):
                                     raise ValueError("Google client returned empty or thinking-only response content without format")
                                 return res

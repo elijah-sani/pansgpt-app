@@ -20,6 +20,7 @@ type FailedRequest =
   | null;
 
 const MAX_IMAGES = 4;
+const WEB_SEARCH_FEATURE_ENABLED = false;
 // Number of messages shown immediately when a session is opened.
 // The rest are fetched in the background and prepended silently.
 const INITIAL_MESSAGE_LIMIT = 8;
@@ -57,12 +58,15 @@ export function useMainPageController() {
   const [chatError, setChatError] = useState<string | null>(null);
   const [isLoadingChat, setIsLoadingChat] = useState(false);
   const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(() => {
+    if (!WEB_SEARCH_FEATURE_ENABLED) {
+      return false;
+    }
     if (typeof window === 'undefined') {
       return false;
     }
     return window.localStorage.getItem(WEB_SEARCH_DEFAULT_KEY) === 'true';
   });
-  const [webSearchAvailable, setWebSearchAvailable] = useState(true);
+  const [webSearchAvailable, setWebSearchAvailable] = useState(WEB_SEARCH_FEATURE_ENABLED);
   const [pendingAttachments, setPendingAttachments] = useState<string[]>([]);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
@@ -120,6 +124,10 @@ export function useMainPageController() {
   } = useVoiceInput();
 
   const fetchWebSearchUsage = useCallback(async () => {
+    if (!WEB_SEARCH_FEATURE_ENABLED) {
+      setWebSearchUsage(null);
+      return;
+    }
     try {
       const response = await api.get('/web-search/usage');
       if (response.ok) {
@@ -163,7 +171,7 @@ export function useMainPageController() {
         // Fast path: fully cached memory layer
         setUser(mainBootstrapCache.user);
         setIsAdmin(mainBootstrapCache.isAdmin);
-        setWebSearchAvailable(mainBootstrapCache.webSearchAvailable);
+        setWebSearchAvailable(WEB_SEARCH_FEATURE_ENABLED && mainBootstrapCache.webSearchAvailable);
         setAuthLoading(false);
         setIsSyncingBackend(false);
       } else {
@@ -194,7 +202,7 @@ export function useMainPageController() {
           mainBootstrapCache = {
             user: nextUser,
             isAdmin: Boolean(bootstrap?.is_admin),
-            webSearchAvailable: bootstrap?.system_settings?.web_search_enabled ?? true,
+            webSearchAvailable: WEB_SEARCH_FEATURE_ENABLED && (bootstrap?.system_settings?.web_search_enabled ?? true),
             hasSeenWelcome: Boolean(profile?.has_seen_welcome),
           };
 
@@ -249,7 +257,7 @@ export function useMainPageController() {
   useEffect(() => {
     const handleWebSearchDefaultUpdated = (event: Event) => {
       const enabled = (event as CustomEvent<boolean>).detail;
-      if (typeof enabled === 'boolean') {
+      if (WEB_SEARCH_FEATURE_ENABLED && typeof enabled === 'boolean') {
         setIsWebSearchEnabled(enabled);
       }
     };
@@ -259,7 +267,7 @@ export function useMainPageController() {
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem(WEB_SEARCH_DEFAULT_KEY, String(isWebSearchEnabled));
+    window.localStorage.setItem(WEB_SEARCH_DEFAULT_KEY, String(WEB_SEARCH_FEATURE_ENABLED && isWebSearchEnabled));
   }, [isWebSearchEnabled]);
 
   useEffect(() => {
@@ -798,7 +806,7 @@ export function useMainPageController() {
           image_base64: attachments.length > 0 ? attachments[0] : null,
           session_id: currentSessionId,
           is_retry: isRetry,
-          web_search: isWebSearchEnabled,
+          web_search: WEB_SEARCH_FEATURE_ENABLED && isWebSearchEnabled,
           thinking_mode: thinkingMode,
         };
 

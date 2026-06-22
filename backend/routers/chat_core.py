@@ -75,6 +75,8 @@ from .sanitize import sanitize_text, CHAT_MAX, TITLE_MAX
 import random
 from restrictions import build_restriction_block_payload, get_applicable_user_restriction
 
+WEB_SEARCH_FEATURE_ENABLED = os.getenv("WEB_SEARCH_FEATURE_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+
 
 def _trim_messages_to_fit(
     messages: list[dict],
@@ -1030,7 +1032,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
             temperature = float(cached_config["temperature"])
         logger.debug(f"Using Cached Settings: Temp={temperature}")
 
-    web_search_globally_enabled = bool((cached_config or {}).get("web_search_enabled", True))
+    web_search_globally_enabled = WEB_SEARCH_FEATURE_ENABLED and bool((cached_config or {}).get("web_search_enabled", True))
     citations: list[dict] = []
 
     async def event_stream():
@@ -1099,7 +1101,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
         if should_timetable:
             gather_tasks["timetable"] = get_cached_student_timetable(student_level, current_user)
 
-        effective_web_search = request.web_search or (should_web_search and web_search_globally_enabled)
+        effective_web_search = web_search_globally_enabled and (request.web_search or should_web_search)
         if effective_web_search and request.text.strip():
             gather_tasks["web_search"] = search_web(
                 query=request.text,
@@ -2006,8 +2008,8 @@ async def edit_message(
             if should_timetable:
                 gather_tasks["timetable"] = get_cached_student_timetable(student_level, current_user)
 
-            web_search_globally_enabled = bool((cached_config or {}).get("web_search_enabled", True))
-            effective_web_search = should_web_search and web_search_globally_enabled
+            web_search_globally_enabled = WEB_SEARCH_FEATURE_ENABLED and bool((cached_config or {}).get("web_search_enabled", True))
+            effective_web_search = web_search_globally_enabled and should_web_search
             if effective_web_search and payload.new_text.strip():
                 gather_tasks["web_search"] = search_web(
                     query=payload.new_text,
@@ -2492,8 +2494,8 @@ async def regenerate_response(
             if should_timetable:
                 gather_tasks["timetable"] = get_cached_student_timetable(student_level, current_user)
 
-            web_search_globally_enabled = bool((cached_config or {}).get("web_search_enabled", True))
-            effective_web_search = should_web_search and web_search_globally_enabled
+            web_search_globally_enabled = WEB_SEARCH_FEATURE_ENABLED and bool((cached_config or {}).get("web_search_enabled", True))
+            effective_web_search = web_search_globally_enabled and should_web_search
             if effective_web_search and user_text.strip():
                 gather_tasks["web_search"] = search_web(
                     query=user_text,

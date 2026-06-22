@@ -58,6 +58,7 @@ QUIZ_GRADING_TEMPERATURE = 0.1
 QUIZ_GRADING_MAX_TOKENS = 2048
 QUIZ_BATCH_SIZE = max(1, int(os.getenv("QUIZ_BATCH_SIZE", "5")))
 QUIZ_LLM_ATTEMPT_TIMEOUT_SECONDS = max(1, int(os.getenv("QUIZ_LLM_ATTEMPT_TIMEOUT_SECONDS", "60")))
+QUIZ_LLM_PROVIDER_TIMEOUT_SECONDS = max(1, int(os.getenv("QUIZ_LLM_PROVIDER_TIMEOUT_SECONDS", "20")))
 QUIZ_CONTEXT_CACHE_TTL_SECONDS = 900
 QUIZ_CONTEXT_CACHE_MAXSIZE = 128
 
@@ -550,7 +551,7 @@ def _normalize_tagged_question_type(value: str) -> str:
     if upper in {"OBJECTIVE", "MULTIPLE_CHOICE"}:
         return "multiple_choice"
     if upper == "MCQ":
-        return "MCQ"
+        return "multiple_choice"
     if upper == "TRUE_FALSE":
         return "TRUE_FALSE"
     if upper == "SHORT_ANSWER":
@@ -558,17 +559,80 @@ def _normalize_tagged_question_type(value: str) -> str:
     return q_type or "multiple_choice"
 
 
+def _tagged_log_preview(value: str, *, limit: int = 220) -> str:
+    preview = re.sub(r"\s+", " ", str(value or "")).strip()
+    return preview[:limit]
+
+
+def _normalize_tagged_field_key(raw_key: str) -> Optional[str]:
+    key = re.sub(r"[^A-Z0-9]+", "_", (raw_key or "").strip().upper()).strip("_")
+    aliases = {
+        "TEXT": "TEXT",
+        "QUESTION": "TEXT",
+        "QUESTION_TEXT": "TEXT",
+        "STEM": "TEXT",
+        "TYPE": "TYPE",
+        "QUESTION_TYPE": "TYPE",
+        "A": "A",
+        "OPTION_A": "A",
+        "CHOICE_A": "A",
+        "B": "B",
+        "OPTION_B": "B",
+        "CHOICE_B": "B",
+        "C": "C",
+        "OPTION_C": "C",
+        "CHOICE_C": "C",
+        "D": "D",
+        "OPTION_D": "D",
+        "CHOICE_D": "D",
+        "E": "E",
+        "OPTION_E": "E",
+        "CHOICE_E": "E",
+        "ANSWER": "ANSWER",
+        "CORRECT": "ANSWER",
+        "CORRECT_ANSWER": "ANSWER",
+        "EXPLANATION": "EXPLANATION",
+        "RATIONALE": "EXPLANATION",
+        "REASON": "EXPLANATION",
+    }
+    return aliases.get(key)
+
+
+def _parse_tagged_field_line(line: str) -> Optional[tuple[str, str]]:
+    if not line:
+        return None
+
+    option_match = re.match(r"^(?:OPTION|CHOICE)?\s*([A-E])\s*[\:\)\.\-]\s*(.+)$", line, flags=re.IGNORECASE)
+    if option_match:
+        return option_match.group(1).upper(), option_match.group(2).strip()
+
+    field_match = re.match(
+        r"^([A-Z][A-Z0-9_ ]{0,32})\s*[\:\-]\s*(.*)$",
+        line,
+        flags=re.IGNORECASE,
+    )
+    if not field_match:
+        return None
+
+    key = _normalize_tagged_field_key(field_match.group(1))
+    if not key:
+        return None
+    return key, field_match.group(2).strip()
+
+
 def _reject_tagged_block(
     reason: str,
     *,
     timing_meta: Optional[dict[str, Any]],
     block_index: int,
+    raw_preview: Optional[str] = None,
 ) -> tuple[None, str]:
     _quiz_timing_log(
         "tagged_question_block_rejected",
         0.0,
         block_index=block_index,
         rejection_reason=reason,
+        raw_preview=raw_preview,
         **(timing_meta or {}),
     )
     return None, reason
@@ -581,26 +645,36 @@ def _parse_tagged_question_block(
     block_index: int = 0,
 ) -> tuple[Optional[dict], Optional[str]]:
     fields: dict[str, str] = {}
+    last_key: Optional[str] = None
+    raw_preview = _tagged_log_preview(block)
     for raw_line in (block or "").splitlines():
         line = raw_line.strip()
         if not line:
             continue
-        match = re.match(r"^(TEXT|TYPE|A|B|C|D|E|ANSWER|EXPLANATION)\s*:\s*(.*)$", line, flags=re.IGNORECASE)
-        if not match:
+        parsed_line = _parse_tagged_field_line(line)
+        if not parsed_line:
+            if last_key in {"TEXT", "EXPLANATION"}:
+                fields[last_key] = f"{fields[last_key]} {line}".strip()
             continue
-        key = match.group(1).upper()
+        key, value = parsed_line
         if key in fields:
-            return _reject_tagged_block("duplicate_field", timing_meta=timing_meta, block_index=block_index)
-        fields[key] = match.group(2).strip()
+            return _reject_tagged_block(
+                "duplicate_field",
+                timing_meta=timing_meta,
+                block_index=block_index,
+                raw_preview=raw_preview,
+            )
+        fields[key] = value.strip()
+        last_key = key
 
     text = fields.get("TEXT", "").strip()
     if len(text) < 10:
-        return _reject_tagged_block("missing_or_short_text", timing_meta=timing_meta, block_index=block_index)
+        return _reject_tagged_block("missing_or_short_text", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
 
     q_type = _normalize_tagged_question_type(fields.get("TYPE", "multiple_choice"))
     q_type_upper = q_type.upper()
     if q_type_upper not in {"MCQ", "MULTIPLE_CHOICE", "OBJECTIVE"}:
-        return _reject_tagged_block("unsupported_tagged_question_type", timing_meta=timing_meta, block_index=block_index)
+        return _reject_tagged_block("unsupported_tagged_question_type", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
 
     option_keys = ["A", "B", "C", "D", "E"]
     options: list[str] = []
@@ -610,32 +684,32 @@ def _parse_tagged_question_block(
             options.append(f"{key}. {value}")
 
     if len(options) < 4:
-        return _reject_tagged_block("missing_options", timing_meta=timing_meta, block_index=block_index)
+        return _reject_tagged_block("missing_options", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
     if q_type_upper == "MCQ" and len(options) != 5:
-        return _reject_tagged_block("mcq_requires_five_options", timing_meta=timing_meta, block_index=block_index)
+        return _reject_tagged_block("mcq_requires_five_options", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
 
     normalized_options = [_normalize_option(option) for option in options]
     if any(not option for option in normalized_options):
-        return _reject_tagged_block("empty_option", timing_meta=timing_meta, block_index=block_index)
+        return _reject_tagged_block("empty_option", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
     if len(set(normalized_options)) != len(normalized_options):
-        return _reject_tagged_block("duplicate_options", timing_meta=timing_meta, block_index=block_index)
+        return _reject_tagged_block("duplicate_options", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
 
     answer = fields.get("ANSWER", "").strip().upper()
     if not answer:
-        return _reject_tagged_block("missing_answer", timing_meta=timing_meta, block_index=block_index)
+        return _reject_tagged_block("missing_answer", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
     if not re.fullmatch(r"[A-E](?:\s*,\s*[A-E])*", answer):
-        return _reject_tagged_block("invalid_answer_format", timing_meta=timing_meta, block_index=block_index)
+        return _reject_tagged_block("invalid_answer_format", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
 
     answer_letters = [part.strip().upper() for part in answer.split(",") if part.strip()]
     available_letters = set(option_keys[:len(options)])
     if any(letter not in available_letters for letter in answer_letters):
-        return _reject_tagged_block("answer_option_missing", timing_meta=timing_meta, block_index=block_index)
+        return _reject_tagged_block("answer_option_missing", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
     if q_type_upper != "MCQ" and len(answer_letters) != 1:
-        return _reject_tagged_block("single_choice_requires_one_answer", timing_meta=timing_meta, block_index=block_index)
+        return _reject_tagged_block("single_choice_requires_one_answer", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
 
     explanation = fields.get("EXPLANATION", "").strip()
     if len(explanation) < 10:
-        return _reject_tagged_block("missing_or_weak_explanation", timing_meta=timing_meta, block_index=block_index)
+        return _reject_tagged_block("missing_or_weak_explanation", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
 
     question = {
         "questionText": text,
@@ -653,6 +727,7 @@ def _parse_tagged_question_block(
             f"schema_validation_failure:{type(exc).__name__}",
             timing_meta=timing_meta,
             block_index=block_index,
+            raw_preview=raw_preview,
         )
 
 
@@ -1482,6 +1557,7 @@ async def _generate_quiz_json_response(
     response_format: Optional[dict] = None,
     *,
     audit_meta: Optional[dict[str, Any]] = None,
+    per_provider_timeout_seconds: Optional[int] = None,
 ) -> str:
     messages = merge_system_into_user([
         {"role": "system", "content": system_prompt},
@@ -1497,6 +1573,7 @@ async def _generate_quiz_json_response(
         requested_model=llm_engine.TEXT_SECONDARY,  # [QUIZ BATCH FIX]
         response_format=response_format,
         audit_meta=audit_meta,
+        per_provider_timeout_seconds=per_provider_timeout_seconds,
     )
     if response is None:
         raise RuntimeError("LLM generation failed on all available clients")
@@ -1858,6 +1935,8 @@ Output contract:
 - Generate exactly {batch_count} question blocks unless fewer questions were requested.
 - Each question must start with <question> and end with </question>.
 - Each field must be on its own line.
+- Use these exact field labels: TEXT, TYPE, A, B, C, D, ANSWER, EXPLANATION.
+- Do not use labels like "Question", "Option A", "Correct Answer", or "Rationale".
 - Required fields inside every block:
   TEXT:
   TYPE:
@@ -1872,6 +1951,10 @@ Output contract:
 
 Specific rules by type:
 {tagged_format_reqs}
+- TYPE must be multiple_choice for ordinary single-answer questions.
+- A, B, C, and D must always be present and non-empty.
+- ANSWER must be one option letter only, matching one available option.
+- EXPLANATION must be one complete explanatory sentence, not a fragment.
 
 Tagged output example:
 {tagged_example}
@@ -2060,6 +2143,7 @@ Return only the JSON object."""
                     generated_count_so_far=len(questions),
                     model=llm_engine.TEXT_SECONDARY,
                     timeout_seconds=QUIZ_LLM_ATTEMPT_TIMEOUT_SECONDS,
+                    provider_timeout_seconds=QUIZ_LLM_PROVIDER_TIMEOUT_SECONDS,
                     **request_meta,
                 )
                 try:
@@ -2078,7 +2162,9 @@ Return only the JSON object."""
                                 "generated_count_so_far": len(questions),
                                 "response_format_mode": response_format_mode,
                                 "timeout_seconds": QUIZ_LLM_ATTEMPT_TIMEOUT_SECONDS,
+                                "provider_timeout_seconds": QUIZ_LLM_PROVIDER_TIMEOUT_SECONDS,
                             },
+                            per_provider_timeout_seconds=QUIZ_LLM_PROVIDER_TIMEOUT_SECONDS,
                         ),
                         timeout=QUIZ_LLM_ATTEMPT_TIMEOUT_SECONDS,
                     )
@@ -2093,6 +2179,7 @@ Return only the JSON object."""
                         generated_count_so_far=len(questions),
                         model=llm_engine.TEXT_SECONDARY,
                         timeout_seconds=QUIZ_LLM_ATTEMPT_TIMEOUT_SECONDS,
+                        provider_timeout_seconds=QUIZ_LLM_PROVIDER_TIMEOUT_SECONDS,
                         **request_meta,
                     )
                     _quiz_timing_log(
@@ -2133,6 +2220,7 @@ Return only the JSON object."""
                         generated_count_so_far=len(questions),
                         model=llm_engine.TEXT_SECONDARY,
                         timeout_seconds=QUIZ_LLM_ATTEMPT_TIMEOUT_SECONDS,
+                        provider_timeout_seconds=QUIZ_LLM_PROVIDER_TIMEOUT_SECONDS,
                         failure_code="llm_timeout",
                         **request_meta,
                     )
@@ -2177,6 +2265,7 @@ Return only the JSON object."""
                         generated_count_so_far=len(questions),
                         model=llm_engine.TEXT_SECONDARY,
                         timeout_seconds=QUIZ_LLM_ATTEMPT_TIMEOUT_SECONDS,
+                        provider_timeout_seconds=QUIZ_LLM_PROVIDER_TIMEOUT_SECONDS,
                         failure_code=failure_code,
                         error_type=type(e).__name__,
                         **request_meta,

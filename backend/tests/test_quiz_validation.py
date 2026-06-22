@@ -269,6 +269,45 @@ EXPLANATION: Higher particle concentration can increase internal resistance and 
     assert len(questions[0]["options"]) == 5
 
 
+def test_parse_tagged_quiz_batch_accepts_safe_label_variants():
+    raw = """
+<question>
+Question Text: Which statement best describes viscosity in liquid dosage forms?
+Question Type: MCQ
+Option A: Resistance of a liquid to flow
+Option B: Tendency of a powder to sublime
+Option C: Ability of a salt to ionize
+Option D: Pressure inside a sealed vessel
+Correct Answer: A
+Rationale: Viscosity describes internal resistance to flow, which affects pouring and formulation handling.
+</question>
+"""
+    questions = _parse_tagged_quiz_batch(raw)
+    assert len(questions) == 1
+    assert questions[0]["questionType"] == "multiple_choice"
+    assert questions[0]["correctAnswer"] == "A"
+    assert len(questions[0]["options"]) == 4
+
+
+def test_parse_tagged_quiz_batch_accepts_multiline_explanation_continuation():
+    raw = """
+<question>
+TEXT: Why is viscosity important in pharmaceutical suspensions?
+TYPE: multiple_choice
+A: It affects pourability and physical stability
+B: It determines radioactive decay rate
+C: It prevents all microbial contamination
+D: It replaces the need for preservatives
+ANSWER: A
+EXPLANATION: Viscosity affects how easily a suspension pours.
+It can also influence sedimentation and redispersion behavior.
+</question>
+"""
+    questions = _parse_tagged_quiz_batch(raw)
+    assert len(questions) == 1
+    assert "sedimentation" in questions[0]["explanation"]
+
+
 def test_parse_tagged_quiz_batch_multiple_valid_blocks():
     raw = """
 <question>
