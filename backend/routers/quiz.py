@@ -1910,8 +1910,7 @@ EXPLANATION: Brief explanation of why A is correct.
                 f"{used_lines}\n"
             )
 
-        if output_format == "tagged_text":
-            system_prompt = f"""/no_think
+        system_prompt = f"""/no_think
 You are PANSGPT's quiz generation engine for pharmacy students.
 
 Return only tagged text question blocks. Do not return JSON, markdown tables, code fences, prose, comments, headings, or thinking tags.
@@ -1947,7 +1946,7 @@ Grounding rules:
 - Do not invent facts outside the retrieved context unless needed for wording clarity.
 - Do not copy sentences verbatim from the retrieved context. Rephrase questions, options, and explanations in your own words to avoid copying/recitation safety filters."""
 
-            user_prompt = f"""Generate {batch_count} {type_desc} quiz questions in tagged text format.
+        user_prompt = f"""Generate {batch_count} {type_desc} quiz questions in tagged text format.
 
 Course title: {body.courseTitle}
 Course code: {body.courseCode}
@@ -1963,7 +1962,7 @@ Generation nonce: {nonce}
 
 Return only <question>...</question> blocks."""
 
-            return system_prompt, user_prompt
+        return system_prompt, user_prompt
 
 
     try:
