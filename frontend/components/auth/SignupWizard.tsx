@@ -198,6 +198,10 @@ export function SignupWizard({
               and{' '}
               <a href="/privacy" target="_blank" className="text-primary font-semibold hover:underline">
                 Privacy Policy
+              </a>{' '}
+              and{' '}
+              <a href="/usage" target="_blank" className="text-primary font-semibold hover:underline">
+                Usage Policy
               </a>
             </span>
           </label>

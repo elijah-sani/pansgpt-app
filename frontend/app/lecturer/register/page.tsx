@@ -618,6 +618,10 @@ export default function LecturerRegistrationPage() {
                       (including the Lecturer provisions) and{' '}
                       <Link href="/privacy" target="_blank" className="text-primary font-semibold hover:underline">
                         Privacy Policy
+                      </Link>{' '}
+                      and{' '}
+                      <Link href="/usage" target="_blank" className="text-primary font-semibold hover:underline">
+                        Usage Policy
                       </Link>
                       .
                     </span>

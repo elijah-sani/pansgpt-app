@@ -46,6 +46,7 @@ export default function Footer() {
             <div className="space-y-2">
               <Link href="/terms" className="block text-muted-foreground hover:text-primary text-sm transition-colors">Terms of Service</Link>
               <Link href="/privacy" className="block text-muted-foreground hover:text-primary text-sm transition-colors">Privacy Policy</Link>
+              <Link href="/usage" className="block text-muted-foreground hover:text-primary text-sm transition-colors">Usage Policy</Link>
             </div>
           </div>
 

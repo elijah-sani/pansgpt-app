@@ -421,6 +421,16 @@ export default function SettingsModal({
                 <ExternalLink className="h-4 w-4" />
               </button>
             </Row>
+
+            <Row title="Usage Policy" description="See the allowed, prohibited, and enforcement rules for platform use.">
+              <button
+                onClick={() => router.push('/usage')}
+                className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+              >
+                Open
+                <ExternalLink className="h-4 w-4" />
+              </button>
+            </Row>
           </div>
         );
       default:
@@ -814,6 +824,25 @@ export default function SettingsModal({
                 <div>
                   <p className="text-sm font-medium text-foreground">Privacy Policy</p>
                   <p className="text-xs text-muted-foreground mt-0.5">How your data is protected</p>
+                </div>
+              </div>
+              <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+            </button>
+
+            <button
+              onClick={() => {
+                onClose();
+                router.push('/usage');
+              }}
+              className="flex items-center justify-between w-full px-4 py-3.5 hover:bg-muted/20 transition-colors text-left"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                  <FileText className="h-4.5 w-4.5" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-foreground">Usage Policy</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Rules for responsible platform use</p>
                 </div>
               </div>
               <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
