@@ -2588,7 +2588,6 @@ async def quiz_history(limit: int = 50, current_user: User = Depends(get_current
                 .eq("user_id", current_user.id)
                 .in_("quiz_id", quiz_ids)
                 .order("completed_at", desc=True)
-                .order("created_at", desc=True)
                 .execute()
             )
             for result in (result_res.data or []):
