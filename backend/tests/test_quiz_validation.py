@@ -11,7 +11,8 @@ from routers.quiz import (
     QuizBatchModel,
     _parse_quiz_batch,
     _parse_tagged_quiz_batch,
-    _is_valid_correct_answer
+    _is_valid_correct_answer,
+    _filter_generated_quiz_questions,
 )
 
 def test_quiz_question_model_valid_mcq():
@@ -254,26 +255,60 @@ def test_parse_tagged_quiz_batch_valid_five_option_block():
     raw = """
 <question>
 TEXT: Which factor can directly increase apparent viscosity in a suspension?
-TYPE: multiple_choice
+TYPE: MCQ
 A: Higher particle concentration
 B: Lower molecular interaction
 C: Complete absence of dispersed phase
 D: Lower resistance to flow
 E: No change in shear conditions
-ANSWER: A
-EXPLANATION: Higher particle concentration can increase internal resistance and raise apparent viscosity.
+ANSWER: A,C,E
+EXPLANATION: Higher particle concentration, lower resistance to flow, and altered shear behavior can be correct depending on the formulation context given.
 </question>
 """
     questions = _parse_tagged_quiz_batch(raw)
     assert len(questions) == 1
+    assert questions[0]["questionType"] == "MCQ"
     assert len(questions[0]["options"]) == 5
+    assert questions[0]["correctAnswer"] == "A, C, E"
+
+
+def test_parse_tagged_quiz_batch_valid_true_false_block():
+    raw = """
+<question>
+TEXT: Oxytocin is commonly used to stimulate uterine contractions during labour.
+TYPE: TRUE_FALSE
+ANSWER: True
+EXPLANATION: Oxytocin is used clinically to induce or augment labour because it stimulates uterine contractions.
+</question>
+"""
+    questions = _parse_tagged_quiz_batch(raw)
+    assert len(questions) == 1
+    assert questions[0]["questionType"] == "TRUE_FALSE"
+    assert questions[0]["options"] == ["True", "False"]
+    assert questions[0]["correctAnswer"] == "True"
+
+
+def test_parse_tagged_quiz_batch_valid_short_answer_block():
+    raw = """
+<question>
+TEXT: What hormone is primarily associated with milk let-down?
+TYPE: SHORT_ANSWER
+ANSWER: Oxytocin
+EXPLANATION: Oxytocin is the hormone responsible for milk ejection or let-down.
+</question>
+"""
+    questions = _parse_tagged_quiz_batch(raw)
+    assert len(questions) == 1
+    assert questions[0]["questionType"] == "SHORT_ANSWER"
+    assert questions[0]["options"] is None
+    assert questions[0]["correctAnswer"] == "Oxytocin"
 
 
 def test_parse_tagged_quiz_batch_accepts_safe_label_variants():
     raw = """
 <question>
 Question Text: Which statement best describes viscosity in liquid dosage forms?
-Question Type: MCQ
+Question Type: multiple_choice
 Option A: Resistance of a liquid to flow
 Option B: Tendency of a powder to sublime
 Option C: Ability of a salt to ionize
@@ -426,6 +461,36 @@ ANSWER: A
         _parse_tagged_quiz_batch(raw)
 
 
+def test_parse_tagged_quiz_batch_true_false_rejects_options():
+    raw = """
+<question>
+TEXT: Oxytocin is used to stimulate uterine contractions.
+TYPE: TRUE_FALSE
+A: True
+B: False
+ANSWER: True
+EXPLANATION: Oxytocin stimulates uterine contractions.
+</question>
+"""
+    with pytest.raises(ValueError, match="tagged_no_valid_blocks"):
+        _parse_tagged_quiz_batch(raw)
+
+
+def test_parse_tagged_quiz_batch_short_answer_rejects_options():
+    raw = """
+<question>
+TEXT: What hormone is primarily associated with milk let-down?
+TYPE: SHORT_ANSWER
+A: Oxytocin
+B: Prolactin
+ANSWER: Oxytocin
+EXPLANATION: Oxytocin is responsible for milk ejection.
+</question>
+"""
+    with pytest.raises(ValueError, match="tagged_no_valid_blocks"):
+        _parse_tagged_quiz_batch(raw)
+
+
 def test_parse_tagged_quiz_batch_extra_text_does_not_break_blocks():
     raw = """
 Here are the questions:
@@ -464,3 +529,69 @@ EXPLANATION: Viscosity describes the internal resistance of a liquid to flow.
 """
     with pytest.raises(ValueError, match="no complete <question> blocks"):
         _parse_tagged_quiz_batch(raw)
+
+
+def _quiz_filter_candidate(text, *, answer="A", options=None):
+    return {
+        "questionText": text,
+        "questionType": "multiple_choice",
+        "options": options or [
+            "A. Viscosity",
+            "B. Sublimation",
+            "C. Ionization",
+            "D. Crystallization",
+        ],
+        "correctAnswer": answer,
+        "explanation": "This explanation is detailed enough to validate the generated question.",
+    }
+
+
+def test_filter_generated_quiz_questions_keeps_partial_valid_batch():
+    parsed = [
+        _quiz_filter_candidate("Which term describes resistance of a liquid to flow?"),
+        _quiz_filter_candidate("Which instrument is commonly used to measure fluid viscosity in the laboratory?"),
+    ]
+    accepted, stats = _filter_generated_quiz_questions(
+        parsed,
+        already_used=[],
+        recent_questions=["Which term describes resistance of a liquid to flow?"],
+        requested_question_type="multiple_choice",
+    )
+
+    assert len(accepted) == 1
+    assert accepted[0]["questionText"].startswith("Which instrument")
+    assert stats["rejected_recent_duplicate_count"] == 1
+
+
+def test_filter_generated_quiz_questions_rejects_current_quiz_duplicates():
+    parsed = [
+        _quiz_filter_candidate("Which term describes resistance of a liquid to flow?"),
+    ]
+    accepted, stats = _filter_generated_quiz_questions(
+        parsed,
+        already_used=["Which term describes resistance of a liquid to flow?"],
+        recent_questions=[],
+        requested_question_type="multiple_choice",
+    )
+
+    assert accepted == []
+    assert stats["rejected_in_quiz_duplicate_count"] == 1
+
+
+def test_filter_generated_quiz_questions_preserves_quality_validation():
+    parsed = [
+        _quiz_filter_candidate(
+            "Which term describes resistance of a liquid to flow?",
+            answer="E",
+            options=["A. Viscosity", "B. Sublimation", "C. Ionization", "D. Crystallization"],
+        ),
+    ]
+    accepted, stats = _filter_generated_quiz_questions(
+        parsed,
+        already_used=[],
+        recent_questions=[],
+        requested_question_type="multiple_choice",
+    )
+
+    assert accepted == []
+    assert stats["rejected_quality_count"] == 1

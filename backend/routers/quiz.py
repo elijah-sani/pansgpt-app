@@ -59,6 +59,10 @@ QUIZ_GRADING_MAX_TOKENS = 2048
 QUIZ_BATCH_SIZE = max(1, int(os.getenv("QUIZ_BATCH_SIZE", "5")))
 QUIZ_LLM_ATTEMPT_TIMEOUT_SECONDS = max(1, int(os.getenv("QUIZ_LLM_ATTEMPT_TIMEOUT_SECONDS", "60")))
 QUIZ_LLM_PROVIDER_TIMEOUT_SECONDS = max(1, int(os.getenv("QUIZ_LLM_PROVIDER_TIMEOUT_SECONDS", "20")))
+QUIZ_RECENT_QUESTION_LIMIT = max(0, int(os.getenv("QUIZ_RECENT_QUESTION_LIMIT", "15")))
+QUIZ_RECENT_PROMPT_LIMIT = max(0, int(os.getenv("QUIZ_RECENT_PROMPT_LIMIT", "12")))
+QUIZ_RECENT_SIMILARITY_THRESHOLD = float(os.getenv("QUIZ_RECENT_SIMILARITY_THRESHOLD", "0.90"))
+QUIZ_IN_QUIZ_SIMILARITY_THRESHOLD = float(os.getenv("QUIZ_IN_QUIZ_SIMILARITY_THRESHOLD", "0.82"))
 QUIZ_CONTEXT_CACHE_TTL_SECONDS = 900
 QUIZ_CONTEXT_CACHE_MAXSIZE = 128
 
@@ -551,10 +555,10 @@ def _normalize_tagged_question_type(value: str) -> str:
     if upper in {"OBJECTIVE", "MULTIPLE_CHOICE"}:
         return "multiple_choice"
     if upper == "MCQ":
-        return "multiple_choice"
-    if upper == "TRUE_FALSE":
+        return "MCQ"
+    if upper in {"TRUE_FALSE", "TRUE FALSE", "TRUEFALSE", "TF"}:
         return "TRUE_FALSE"
-    if upper == "SHORT_ANSWER":
+    if upper in {"SHORT_ANSWER", "SHORT ANSWER", "SHORTANSWER", "SA"}:
         return "SHORT_ANSWER"
     return q_type or "multiple_choice"
 
@@ -673,51 +677,102 @@ def _parse_tagged_question_block(
 
     q_type = _normalize_tagged_question_type(fields.get("TYPE", "multiple_choice"))
     q_type_upper = q_type.upper()
-    if q_type_upper not in {"MCQ", "MULTIPLE_CHOICE", "OBJECTIVE"}:
+    if q_type_upper not in {"MCQ", "MULTIPLE_CHOICE", "OBJECTIVE", "TRUE_FALSE", "SHORT_ANSWER"}:
         return _reject_tagged_block("unsupported_tagged_question_type", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
 
     option_keys = ["A", "B", "C", "D", "E"]
-    options: list[str] = []
-    for key in option_keys:
-        value = fields.get(key, "").strip()
-        if value:
-            options.append(f"{key}. {value}")
-
-    if len(options) < 4:
-        return _reject_tagged_block("missing_options", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
-    if q_type_upper == "MCQ" and len(options) != 5:
-        return _reject_tagged_block("mcq_requires_five_options", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
-
-    normalized_options = [_normalize_option(option) for option in options]
-    if any(not option for option in normalized_options):
-        return _reject_tagged_block("empty_option", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
-    if len(set(normalized_options)) != len(normalized_options):
-        return _reject_tagged_block("duplicate_options", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
-
-    answer = fields.get("ANSWER", "").strip().upper()
-    if not answer:
-        return _reject_tagged_block("missing_answer", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
-    if not re.fullmatch(r"[A-E](?:\s*,\s*[A-E])*", answer):
-        return _reject_tagged_block("invalid_answer_format", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
-
-    answer_letters = [part.strip().upper() for part in answer.split(",") if part.strip()]
-    available_letters = set(option_keys[:len(options)])
-    if any(letter not in available_letters for letter in answer_letters):
-        return _reject_tagged_block("answer_option_missing", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
-    if q_type_upper != "MCQ" and len(answer_letters) != 1:
-        return _reject_tagged_block("single_choice_requires_one_answer", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
-
     explanation = fields.get("EXPLANATION", "").strip()
     if len(explanation) < 10:
         return _reject_tagged_block("missing_or_weak_explanation", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
 
-    question = {
-        "questionText": text,
-        "questionType": q_type,
-        "options": options,
-        "correctAnswer": ", ".join(answer_letters) if q_type_upper == "MCQ" else answer_letters[0],
-        "explanation": explanation,
+    present_option_values = {
+        key: fields.get(key, "").strip()
+        for key in option_keys
+        if fields.get(key, "").strip()
     }
+
+    if q_type_upper == "SHORT_ANSWER":
+        if present_option_values:
+            return _reject_tagged_block(
+                "short_answer_must_not_include_options",
+                timing_meta=timing_meta,
+                block_index=block_index,
+                raw_preview=raw_preview,
+            )
+        answer = fields.get("ANSWER", "").strip()
+        if not answer:
+            return _reject_tagged_block("missing_answer", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
+        question = {
+            "questionText": text,
+            "questionType": "SHORT_ANSWER",
+            "options": None,
+            "correctAnswer": answer,
+            "explanation": explanation,
+        }
+    elif q_type_upper == "TRUE_FALSE":
+        if present_option_values:
+            return _reject_tagged_block(
+                "true_false_must_not_include_options",
+                timing_meta=timing_meta,
+                block_index=block_index,
+                raw_preview=raw_preview,
+            )
+        answer = fields.get("ANSWER", "").strip()
+        if not answer:
+            return _reject_tagged_block("missing_answer", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
+        normalized_answer = answer.lower()
+        if normalized_answer not in {"true", "false"}:
+            return _reject_tagged_block(
+                "invalid_true_false_answer",
+                timing_meta=timing_meta,
+                block_index=block_index,
+                raw_preview=raw_preview,
+            )
+        question = {
+            "questionText": text,
+            "questionType": "TRUE_FALSE",
+            "options": ["True", "False"],
+            "correctAnswer": "True" if normalized_answer == "true" else "False",
+            "explanation": explanation,
+        }
+    else:
+        options: list[str] = []
+        for key in option_keys:
+            value = fields.get(key, "").strip()
+            if value:
+                options.append(f"{key}. {value}")
+
+        if len(options) < 4:
+            return _reject_tagged_block("missing_options", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
+        if q_type_upper == "MCQ" and len(options) != 5:
+            return _reject_tagged_block("mcq_requires_five_options", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
+
+        normalized_options = [_normalize_option(option) for option in options]
+        if any(not option for option in normalized_options):
+            return _reject_tagged_block("empty_option", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
+        if len(set(normalized_options)) != len(normalized_options):
+            return _reject_tagged_block("duplicate_options", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
+
+        answer = fields.get("ANSWER", "").strip().upper()
+        if not answer:
+            return _reject_tagged_block("missing_answer", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
+        if not re.fullmatch(r"[A-E](?:\s*,\s*[A-E])*", answer):
+            return _reject_tagged_block("invalid_answer_format", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
+
+        answer_letters = [part.strip().upper() for part in answer.split(",") if part.strip()]
+        available_letters = set(option_keys[:len(options)])
+        if any(letter not in available_letters for letter in answer_letters):
+            return _reject_tagged_block("answer_option_missing", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
+        if q_type_upper != "MCQ" and len(answer_letters) != 1:
+            return _reject_tagged_block("single_choice_requires_one_answer", timing_meta=timing_meta, block_index=block_index, raw_preview=raw_preview)
+
+        question = {
+            "questionText": text,
+            "questionType": q_type,
+            "options": options,
+            "correctAnswer": ", ".join(answer_letters) if q_type_upper == "MCQ" else answer_letters[0],
+            "explanation": explanation,
+        }
 
     try:
         validated = QuizQuestionModel.model_validate(question)
@@ -1003,6 +1058,98 @@ def _has_internal_repetition(questions: list[dict], threshold: float = 0.8) -> b
     return False
 
 
+def _empty_quiz_filter_stats() -> dict[str, int]:
+    return {
+        "rejected_short_text_count": 0,
+        "rejected_in_quiz_duplicate_count": 0,
+        "rejected_recent_duplicate_count": 0,
+        "rejected_quality_count": 0,
+    }
+
+
+def _filter_generated_quiz_questions(
+    parsed: list[dict],
+    *,
+    already_used: list[str],
+    recent_questions: list[str],
+    requested_question_type: str,
+    recent_similarity_threshold: float = QUIZ_RECENT_SIMILARITY_THRESHOLD,
+    in_quiz_similarity_threshold: float = QUIZ_IN_QUIZ_SIMILARITY_THRESHOLD,
+) -> tuple[list[dict], dict[str, int]]:
+    accepted: list[dict] = []
+    stats = _empty_quiz_filter_stats()
+    accepted_or_existing_texts = [
+        str(text).strip()
+        for text in already_used
+        if str(text).strip()
+    ]
+
+    for item in parsed:
+        text = str(item.get("questionText", "")).strip()
+        if not text or len(text) < 10:
+            stats["rejected_short_text_count"] += 1
+            continue
+
+        if any(
+            _question_similarity(text, prev) >= in_quiz_similarity_threshold
+            for prev in accepted_or_existing_texts
+        ):
+            stats["rejected_in_quiz_duplicate_count"] += 1
+            continue
+
+        if any(
+            _question_similarity(text, prev) >= recent_similarity_threshold
+            for prev in recent_questions
+        ):
+            stats["rejected_recent_duplicate_count"] += 1
+            continue
+
+        opt_type = item.get("questionType", requested_question_type)
+        opts = item.get("options")
+        correct = item.get("correctAnswer")
+
+        opt_type_upper = opt_type.upper()
+        if opt_type_upper == "SHORT_ANSWER":
+            if opts is not None and len(opts) > 0:
+                stats["rejected_quality_count"] += 1
+                continue
+        elif opt_type_upper == "TRUE_FALSE":
+            if opts is None or len(opts) != 2:
+                stats["rejected_quality_count"] += 1
+                continue
+        elif opt_type_upper in ("MCQ", "MULTIPLE_CHOICE", "OBJECTIVE"):
+            if opt_type_upper == "MCQ":
+                if opts is None or len(opts) != 5:
+                    stats["rejected_quality_count"] += 1
+                    continue
+            else:
+                if opts is None or not (4 <= len(opts) <= 5):
+                    stats["rejected_quality_count"] += 1
+                    continue
+
+        if opts:
+            seen_opts = set()
+            has_dup = False
+            for opt in opts:
+                norm_opt = _normalize_option(opt)
+                if norm_opt in seen_opts:
+                    has_dup = True
+                    break
+                seen_opts.add(norm_opt)
+            if has_dup:
+                stats["rejected_quality_count"] += 1
+                continue
+
+        if not _is_valid_correct_answer(correct, opts, opt_type_upper):
+            stats["rejected_quality_count"] += 1
+            continue
+
+        accepted.append(item)
+        accepted_or_existing_texts.append(text)
+
+    return accepted, stats
+
+
 async def _build_recent_question_block(
     sb,
     user_id: str,
@@ -1017,6 +1164,17 @@ async def _build_recent_question_block(
     """
     started = time.perf_counter()
     try:
+        if QUIZ_RECENT_QUESTION_LIMIT <= 0:
+            _quiz_timing_log(
+                "build_recent_question_block",
+                (time.perf_counter() - started) * 1000,
+                job_id=job_id,
+                courseCode=course_code,
+                topic=topic or "General",
+                recent_question_count=0,
+            )
+            return ""
+
         quiz_rows = (
             await asyncio.to_thread(
                 lambda: sb.table("quizzes")
@@ -1041,7 +1199,7 @@ async def _build_recent_question_block(
                 lambda: sb.table("quiz_questions")
                 .select("question_text")
                 .in_("quiz_id", quiz_ids)
-                .limit(120)
+                .limit(max(QUIZ_RECENT_QUESTION_LIMIT * 4, QUIZ_RECENT_QUESTION_LIMIT))
                 .execute()
             )
         ).data or []
@@ -1057,8 +1215,9 @@ async def _build_recent_question_block(
             )
             return ""
 
-        # Keep prompt bounded.
-        recent_questions = recent_questions[:40]
+        # Keep prompt and historical comparison bounded to avoid false-positive
+        # rejection when a narrow topic already has many past quiz questions.
+        recent_questions = recent_questions[:QUIZ_RECENT_QUESTION_LIMIT]
         lines = "\n".join([f"- {q}" for q in recent_questions])
         result = (
             "RECENTLY USED QUESTIONS (DO NOT REUSE OR PARAPHRASE THESE):\n"
@@ -1570,10 +1729,11 @@ async def _generate_quiz_json_response(
         has_images=False,
         stream=False,
         force_google=False,
-        requested_model=llm_engine.TEXT_SECONDARY,  # [QUIZ BATCH FIX]
+        requested_model=llm_engine.TEXT_TERTIARY,
         response_format=response_format,
         audit_meta=audit_meta,
         per_provider_timeout_seconds=per_provider_timeout_seconds,
+        preferred_models=llm_engine.QUIZ_TEXT_MODEL_ORDER,
     )
     if response is None:
         raise RuntimeError("LLM generation failed on all available clients")
@@ -1775,10 +1935,9 @@ EXPLANATION: Viscosity is the internal resistance of a fluid to flow.
         format_reqs = '''- "questionType": "TRUE_FALSE"
 - "options": ["True", "False"]
 - "correctAnswer": "True" or "False"'''
-        tagged_format_reqs = '''- TYPE: multiple_choice
-- Convert true/false checks into four-option single-answer questions.
-- Provide exactly four options: A:, B:, C:, and D:
-- ANSWER: exactly one available option letter.'''
+        tagged_format_reqs = '''- TYPE: TRUE_FALSE
+- Do not include A:, B:, C:, D:, or E: fields.
+- ANSWER: must be exactly True or False.'''
         example_json = '''{
   "questions": [
     {
@@ -1791,24 +1950,19 @@ EXPLANATION: Viscosity is the internal resistance of a fluid to flow.
   ]
 }'''
         tagged_example = '''<question>
-TEXT: Which statement about drug X is accurate?
-TYPE: multiple_choice
-A: Drug X is classified as a beta-blocker
-B: Drug X is classified as an antacid
-C: Drug X is classified as an antihistamine
-D: Drug X is classified as a laxative
-ANSWER: A
-EXPLANATION: Brief explanation of why A is the accurate statement.
+TEXT: Drug X is classified as a beta-blocker.
+TYPE: TRUE_FALSE
+ANSWER: True
+EXPLANATION: Drug X belongs to the beta-blocker class, so the statement is true.
 </question>'''
     elif q_type == "SHORT_ANSWER":
         type_desc = "short answer"
         format_reqs = '''- "questionType": "SHORT_ANSWER"
 - "correctAnswer": the exact short phrase or word that answers the question
 (Do not include an options field)'''
-        tagged_format_reqs = '''- TYPE: multiple_choice
-- Convert short-answer checks into four-option single-answer questions.
-- Provide exactly four options: A:, B:, C:, and D:
-- ANSWER: exactly one available option letter.'''
+        tagged_format_reqs = '''- TYPE: SHORT_ANSWER
+- Do not include A:, B:, C:, D:, or E: fields.
+- ANSWER: must be the exact short phrase or word that answers the question.'''
         example_json = '''{
   "questions": [
     {
@@ -1821,14 +1975,10 @@ EXPLANATION: Brief explanation of why A is the accurate statement.
   ]
 }'''
         tagged_example = '''<question>
-TEXT: Which term best answers the question about drug Y?
-TYPE: multiple_choice
-A: Correct short phrase
-B: Plausible distractor
-C: Plausible distractor
-D: Plausible distractor
-ANSWER: A
-EXPLANATION: Brief explanation of why A is correct.
+TEXT: What is the chemical name of drug Y?
+TYPE: SHORT_ANSWER
+ANSWER: Y-name
+EXPLANATION: Y-name is the accepted chemical name of drug Y.
 </question>'''
     else:
         type_desc = "multiple-choice"
@@ -1900,7 +2050,11 @@ EXPLANATION: Brief explanation of why A is correct.
     )
 
     # Keep prompt size bounded for high question counts.
-    recent_lines = _extract_recent_question_lines(recent_question_block, limit=20)
+    recent_questions_for_filter = _extract_recent_question_lines(
+        recent_question_block,
+        limit=QUIZ_RECENT_QUESTION_LIMIT,
+    )
+    recent_lines = recent_questions_for_filter[:QUIZ_RECENT_PROMPT_LIMIT]
     recent_block_small = (
         "RECENTLY USED QUESTIONS (DO NOT REUSE OR PARAPHRASE THESE):\n"
         + "\n".join([f"- {q}" for q in recent_lines])
@@ -1935,25 +2089,17 @@ Output contract:
 - Generate exactly {batch_count} question blocks unless fewer questions were requested.
 - Each question must start with <question> and end with </question>.
 - Each field must be on its own line.
-- Use these exact field labels: TEXT, TYPE, A, B, C, D, ANSWER, EXPLANATION.
+- Use these exact field labels when needed: TEXT, TYPE, A, B, C, D, E, ANSWER, EXPLANATION.
 - Do not use labels like "Question", "Option A", "Correct Answer", or "Rationale".
 - Required fields inside every block:
   TEXT:
   TYPE:
-  A:
-  B:
-  C:
-  D:
   ANSWER:
   EXPLANATION:
-- Optional field:
-  E:
 
 Specific rules by type:
 {tagged_format_reqs}
 - TYPE must be multiple_choice for ordinary single-answer questions.
-- A, B, C, and D must always be present and non-empty.
-- ANSWER must be one option letter only, matching one available option.
 - EXPLANATION must be one complete explanatory sentence, not a fragment.
 
 Tagged output example:
@@ -2100,14 +2246,20 @@ Return only the JSON object."""
             current_batch = min(batch_size, remaining)
             generated_this_batch = None
             last_failure_code = "provider_error"
+            last_failure_detail = ""
 
             already_used = [str(q.get("questionText", "")).strip() for q in questions if str(q.get("questionText", "")).strip()]
             for attempt in range(1, 4):
                 compact_mode = attempt >= 2 and target_count >= 15
-                if attempt in (1, 2):
+                if attempt in (1, 2) or last_failure_code == "dedupe_rejected_all":
                     generation_format = "tagged_text"
                     current_response_format = None
-                    response_format_mode = "tagged_text" if attempt == 1 else "tagged_text_retry"
+                    if attempt == 1:
+                        response_format_mode = "tagged_text"
+                    elif last_failure_code == "dedupe_rejected_all":
+                        response_format_mode = "tagged_text_dedupe_retry"
+                    else:
+                        response_format_mode = "tagged_text_retry"
                 else:
                     generation_format = "json_legacy"
                     current_response_format = batch_schema
@@ -2209,6 +2361,7 @@ Return only the JSON object."""
                         parsed = _parse_quiz_batch(raw, timing_meta=parse_meta)
                 except asyncio.TimeoutError:
                     last_failure_code = "llm_timeout"
+                    last_failure_detail = "llm_timeout: provider or attempt did not complete within configured timeout"
                     _quiz_timing_log(
                         "llm_attempt_timeout",
                         (time.perf_counter() - llm_started) * 1000,
@@ -2254,6 +2407,7 @@ Return only the JSON object."""
                     logger.warning(f"Quiz batch generation or parse failed (batch={current_batch}, attempt={attempt}): {e}")
                     failure_code = _classify_quiz_generation_exception(e)
                     last_failure_code = failure_code
+                    last_failure_detail = f"{failure_code}: {str(e)[:240]}"
                     _quiz_timing_log(
                         "llm_attempt_failed",
                         (time.perf_counter() - llm_started) * 1000,
@@ -2285,60 +2439,13 @@ Return only the JSON object."""
                     )
                     continue
 
-                # Dynamic repetition tolerance: slightly relaxed for larger requested sets.
-                overlap_limit = 0.55 if target_count >= 20 else 0.40
                 dedupe_started = time.perf_counter()
-                internal_repeat = _has_internal_repetition(parsed, threshold=0.85)
-                overlap_ratio = _overlap_with_recent(parsed, recent_block_small, threshold=0.8)
-
-                # Remove items that duplicate already generated questions or fail quality validation.
-                deduped = []
-                for item in parsed:
-                    text = str(item.get("questionText", "")).strip()
-                    if not text or len(text) < 10:
-                        continue
-                    if any(_question_similarity(text, prev) >= 0.82 for prev in already_used):
-                        continue
-
-                    # Manual Quality Checks
-                    opt_type = item.get("questionType", q_type)
-                    opts = item.get("options")
-                    correct = item.get("correctAnswer")
-                    
-                    # Normalise option types for manual check
-                    opt_type_upper = opt_type.upper()
-                    if opt_type_upper == "SHORT_ANSWER":
-                        if opts is not None and len(opts) > 0:
-                            continue
-                    elif opt_type_upper == "TRUE_FALSE":
-                        if opts is None or len(opts) != 2:
-                            continue
-                    elif opt_type_upper in ("MCQ", "MULTIPLE_CHOICE", "OBJECTIVE"):
-                        if opt_type_upper == "MCQ":
-                            if opts is None or len(opts) != 5:
-                                continue
-                        else:
-                            if opts is None or not (4 <= len(opts) <= 5):
-                                continue
-
-                    # Ensure options do not contain duplicates
-                    if opts:
-                        seen_opts = set()
-                        has_dup = False
-                        for opt in opts:
-                            norm_opt = _normalize_option(opt)
-                            if norm_opt in seen_opts:
-                                has_dup = True
-                                break
-                            seen_opts.add(norm_opt)
-                        if has_dup:
-                            continue
-
-                    # Ensure correctAnswer is not empty and matches a valid option or label index
-                    if not _is_valid_correct_answer(correct, opts, opt_type_upper):
-                        continue
-
-                    deduped.append(item)
+                deduped, filter_stats = _filter_generated_quiz_questions(
+                    parsed,
+                    already_used=already_used,
+                    recent_questions=recent_questions_for_filter,
+                    requested_question_type=q_type,
+                )
                 _quiz_timing_log(
                     "deduplication_filtering",
                     (time.perf_counter() - dedupe_started) * 1000,
@@ -2350,11 +2457,28 @@ Return only the JSON object."""
                     generated_count_so_far=len(questions),
                     parsed_count=len(parsed),
                     accepted_count=len(deduped),
+                    historical_compared_count=len(recent_questions_for_filter),
+                    **filter_stats,
                     **request_meta,
                 )
 
-                if (internal_repeat or overlap_ratio > overlap_limit) and attempt < 3:
-                    last_failure_code = "dedupe_rejected_all"
+                if not deduped:
+                    duplicate_rejections = (
+                        filter_stats["rejected_in_quiz_duplicate_count"]
+                        + filter_stats["rejected_recent_duplicate_count"]
+                    )
+                    if duplicate_rejections >= len(parsed):
+                        last_failure_code = "dedupe_rejected_all"
+                        last_failure_detail = (
+                            "dedupe_rejected_all: generated valid questions, "
+                            "but all were too similar to current or recent quiz questions"
+                        )
+                    else:
+                        last_failure_code = "quality_validation_rejected_all"
+                        last_failure_detail = (
+                            "quality_validation_rejected_all: generated questions failed option, "
+                            "answer, or question quality validation"
+                        )
                     _quiz_timing_log(
                         "llm_batch_attempt_rejected",
                         (time.perf_counter() - batch_attempt_started) * 1000,
@@ -2364,30 +2488,18 @@ Return only the JSON object."""
                         attempt_number=attempt,
                         response_format_mode=response_format_mode,
                         generated_count_so_far=len(questions),
-                        failure_code="dedupe_rejected_all",
-                        internal_repeat=internal_repeat,
-                        overlap_ratio=round(overlap_ratio, 4),
+                        failure_code=last_failure_code,
+                        parsed_count=len(parsed),
+                        historical_compared_count=len(recent_questions_for_filter),
+                        **filter_stats,
                         **request_meta,
                     )
                     logger.warning(
-                        f"Quiz batch repetition high (attempt={attempt}, internal={internal_repeat}, overlap={overlap_ratio:.2f})"
-                    )
-                    continue
-
-                if not deduped and attempt < 3:
-                    last_failure_code = "quality_validation_rejected_all"
-                    _quiz_timing_log(
-                        "llm_batch_attempt_rejected",
-                        (time.perf_counter() - batch_attempt_started) * 1000,
-                        quiz_id=quiz_id,
-                        batch_number=batch_number,
-                        batch_size=current_batch,
-                        attempt_number=attempt,
-                        response_format_mode=response_format_mode,
-                        generated_count_so_far=len(questions),
-                        failure_code="quality_validation_rejected_all",
-                        parsed_count=len(parsed),
-                        **request_meta,
+                        "Quiz batch rejected after per-question filtering "
+                        "(attempt=%s, code=%s, stats=%s)",
+                        attempt,
+                        last_failure_code,
+                        filter_stats,
                     )
                     continue
 
@@ -2402,6 +2514,9 @@ Return only the JSON object."""
                     response_format_mode=response_format_mode,
                     generated_count_so_far=len(questions),
                     accepted_count=len(generated_this_batch),
+                    parsed_count=len(parsed),
+                    historical_compared_count=len(recent_questions_for_filter),
+                    **filter_stats,
                     **request_meta,
                 )
                 break
@@ -2411,6 +2526,7 @@ Return only the JSON object."""
                     status_code=500,
                     detail={
                         "code": last_failure_code,
+                        "internal_detail": last_failure_detail,
                         "message": "Unable to generate enough diverse questions right now. Please try fewer questions or try again.",
                     },
                 )

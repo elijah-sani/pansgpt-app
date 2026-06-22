@@ -96,6 +96,10 @@ RAG_MATCH_THRESHOLD=0.65
 QUIZ_BATCH_SIZE=5
 QUIZ_LLM_ATTEMPT_TIMEOUT_SECONDS=60
 QUIZ_LLM_PROVIDER_TIMEOUT_SECONDS=20
+QUIZ_RECENT_QUESTION_LIMIT=15
+QUIZ_RECENT_PROMPT_LIMIT=12
+QUIZ_RECENT_SIMILARITY_THRESHOLD=0.90
+QUIZ_IN_QUIZ_SIMILARITY_THRESHOLD=0.82
 
 WEB_SEARCH_FEATURE_ENABLED=false
 TAVILY_API_KEY=
@@ -204,9 +208,15 @@ Current quiz reliability behavior:
 
 - `QUIZ_BATCH_SIZE` controls batch size and should stay env-driven.
 - Tagged text is the primary model output format.
+- Tagged text supports native `multiple_choice`, `MCQ`, `TRUE_FALSE`, and `SHORT_ANSWER` quiz question types.
 - JSON parsing and `json-repair` remain as legacy fallback.
 - Generated questions are validated before insert.
 - Partial valid tagged batches can be inserted while invalid blocks are rejected.
+- Recent-question duplicate checks run per question, not as all-or-nothing batch rejection.
+- `QUIZ_RECENT_QUESTION_LIMIT` controls how many past questions are compared for repetition.
+- `QUIZ_RECENT_PROMPT_LIMIT` controls how many past questions are shown in the prompt.
+- `QUIZ_RECENT_SIMILARITY_THRESHOLD` and `QUIZ_IN_QUIZ_SIMILARITY_THRESHOLD` tune duplicate strictness.
+- Quiz generation uses its own provider preference order and does not change the main chat routing.
 - Job rows track `generated_question_count` and `target_question_count`.
 - Provider attempt and parse timing logs are emitted with `quiz_generation_timing`.
 

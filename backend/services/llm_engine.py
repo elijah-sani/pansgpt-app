@@ -14,6 +14,7 @@ TEXT_SECONDARY = "gemma-4-26b-a4b-it"         # Google AI Studio fallback
 TEXT_TERTIARY = "meta-llama/llama-4-scout-17b-16e-instruct"  # [GROQ TERTIARY FIX]
 # Compatibility alias for callers still referencing TEXT_FALLBACK.
 TEXT_FALLBACK = TEXT_SECONDARY
+QUIZ_TEXT_MODEL_ORDER = [TEXT_TERTIARY, TEXT_SECONDARY, TEXT_PRIMARY]
 
 SMALL_PRIMARY = "meta-llama/llama-3.3-70b-instruct:free"   # OpenRouter (Llama 3.3 70B Free)
 SMALL_SECONDARY = "llama-3.1-8b-instant"                  # Groq (Llama 3.1 8b)
@@ -197,6 +198,7 @@ async def generate_completion_with_failover(
     response_format: Optional[dict] = None,
     audit_meta: Optional[dict] = None,
     per_provider_timeout_seconds: Optional[float] = None,
+    preferred_models: Optional[list[str]] = None,
 ) -> Optional[Any]:
     if force_google:
         if google_client is None:
@@ -287,18 +289,33 @@ async def generate_completion_with_failover(
         ("TEXT_SECONDARY", TEXT_SECONDARY),
         ("TEXT_TERTIARY", TEXT_TERTIARY)
     ]
-    matched_tuple = None
-    if requested_model:
-        for alias, name in full_order:
-            if name == requested_model or alias == requested_model:
-                matched_tuple = (alias, name)
-                break
-    if matched_tuple:
-        model_order = [matched_tuple] + [
-            item for item in full_order if item != matched_tuple
+    if preferred_models:
+        preferred_set = {
+            model_name
+            for model_name in preferred_models
+            if any(name == model_name for _, name in full_order)
+        }
+        model_order = [
+            item
+            for preferred_name in preferred_models
+            for item in full_order
+            if item[1] == preferred_name
+        ] + [
+            item for item in full_order if item[1] not in preferred_set
         ]
     else:
-        model_order = full_order
+        matched_tuple = None
+        if requested_model:
+            for alias, name in full_order:
+                if name == requested_model or alias == requested_model:
+                    matched_tuple = (alias, name)
+                    break
+        if matched_tuple:
+            model_order = [matched_tuple] + [
+                item for item in full_order if item != matched_tuple
+            ]
+        else:
+            model_order = full_order
     # [MODEL ROUTING FIX]
 
     for model_alias, model_name in model_order:
