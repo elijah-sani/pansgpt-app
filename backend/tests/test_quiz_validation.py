@@ -10,6 +10,7 @@ from routers.quiz import (
     QuizQuestionModel,
     _parse_tagged_quiz_batch,
     _is_valid_correct_answer,
+    _expand_single_select_answer,
     _filter_generated_quiz_questions,
 )
 
@@ -138,6 +139,12 @@ def test_is_valid_correct_answer_true_false():
 def test_is_valid_correct_answer_short_answer():
     assert _is_valid_correct_answer("Hypertension", None, "SHORT_ANSWER") is True
     assert _is_valid_correct_answer("", None, "SHORT_ANSWER") is False
+
+def test_expand_single_select_answer_returns_full_option_text():
+    options = ["A. Capillary viscometer", "B. Rotational viscometer", "C. Falling sphere viscometer", "D. Ostwald viscometer"]
+    assert _expand_single_select_answer("B", options) == "B. Rotational viscometer"
+    assert _expand_single_select_answer("2", options) == "B. Rotational viscometer"
+    assert _expand_single_select_answer("Rotational viscometer", options) == "B. Rotational viscometer"
 
 def test_parse_tagged_quiz_batch_valid_four_option_block():
     raw = """

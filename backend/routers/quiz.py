@@ -894,6 +894,46 @@ def _extract_selected_mcq_options(selected_answer: Union[str, List[str]], option
     return _map_tokens([part.strip() for part in raw.split(",") if part.strip()])
 
 
+def _expand_single_select_answer(answer: Union[str, List[str]], options: Optional[list[str]]) -> str:
+    """
+    Convert stored single-select keys like "A" into the full labeled option text.
+    Falls back to the original answer when it cannot be matched safely.
+    """
+    if isinstance(answer, list):
+        raw = str(answer[0]).strip() if answer else ""
+    else:
+        raw = str(answer or "").strip()
+
+    if not raw or not options:
+        return raw
+
+    normalized_options = [str(opt).strip() for opt in options if str(opt).strip()]
+    if not normalized_options:
+        return raw
+
+    letter_to_index = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4}
+    upper_raw = raw.upper()
+    if upper_raw in letter_to_index and letter_to_index[upper_raw] < len(normalized_options):
+        return normalized_options[letter_to_index[upper_raw]]
+
+    if raw.isdigit():
+        idx = int(raw) - 1
+        if 0 <= idx < len(normalized_options):
+            return normalized_options[idx]
+
+    normalized_raw = _normalize_option(raw)
+    for option in normalized_options:
+        if _normalize_option(option) == normalized_raw:
+            return option
+
+    stripped_raw = _strip_option_label(raw).lower().strip()
+    for option in normalized_options:
+        if _strip_option_label(option).lower().strip() == stripped_raw:
+            return option
+
+    return raw
+
+
 def _normalize_question_text(text: str) -> str:
     cleaned = (text or "").strip().lower()
     cleaned = re.sub(r"\s+", " ", cleaned)
@@ -3113,13 +3153,14 @@ async def submit_quiz(body: QuizSubmitRequest, current_user: User = Depends(get_
                     })
             else:
                 max_score += question.get("points", 1)
+                options = question.get("options") or []
                 
                 if not selected_answer or (isinstance(selected_answer, list) and not selected_answer) or (isinstance(selected_answer, str) and not selected_answer.strip()):
                     feedback_items.append({
                         "questionId": q_id,
                         "questionText": question.get("question_text", ""),
                         "selectedAnswer": "",
-                        "correctAnswer": question["correct_answer"],
+                        "correctAnswer": _expand_single_select_answer(question["correct_answer"], options),
                         "isCorrect": False,
                         "partiallyCorrect": False,
                         "earnedPoints": 0,
@@ -3143,8 +3184,8 @@ async def submit_quiz(body: QuizSubmitRequest, current_user: User = Depends(get_
                     feedback_items.append({
                         "questionId": q_id,
                         "questionText": question.get("question_text", ""),
-                        "selectedAnswer": ", ".join(selected_answer) if isinstance(selected_answer, list) else selected_answer,
-                        "correctAnswer": question["correct_answer"],
+                        "selectedAnswer": _expand_single_select_answer(selected_answer, options),
+                        "correctAnswer": _expand_single_select_answer(question["correct_answer"], options),
                         "isCorrect": is_correct,
                         "partiallyCorrect": False,
                         "earnedPoints": question.get("points", 1) if is_correct else 0,
