@@ -8,8 +8,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from routers.quiz import (
     QuizQuestionModel,
-    QuizBatchModel,
-    _parse_quiz_batch,
     _parse_tagged_quiz_batch,
     _is_valid_correct_answer,
     _filter_generated_quiz_questions,
@@ -115,63 +113,6 @@ def test_quiz_question_model_invalid_short_answer_with_options():
     with pytest.raises(ValidationError):
         QuizQuestionModel.model_validate(data)
 
-def test_parse_quiz_batch_valid():
-    raw_json = """
-    {
-      "questions": [
-        {
-          "questionText": "What is the generic name of Lasix?",
-          "questionType": "multiple_choice",
-          "options": ["A. Furosemide", "B. Metoprolol", "C. Lisinopril", "D. Amlodipine"],
-          "correctAnswer": "A",
-          "explanation": "Lasix is a brand name for furosemide, a loop diuretic."
-        }
-      ]
-    }
-    """
-    questions = _parse_quiz_batch(raw_json)
-    assert len(questions) == 1
-    assert questions[0]["questionText"] == "What is the generic name of Lasix?"
-
-def test_parse_quiz_batch_repaired_json():
-    # Malformed JSON with trailing comma, missing closing bracket, and raw markdown wrap
-    raw_malformed = """
-    ```json
-    {
-      "questions": [
-        {
-          "questionText": "What is the generic name of Lasix?",
-          "questionType": "multiple_choice",
-          "options": ["A. Furosemide", "B. Metoprolol", "C. Lisinopril", "D. Amlodipine"],
-          "correctAnswer": "A",
-          "explanation": "Lasix is a brand name for furosemide, a loop diuretic.",
-        }
-      ]
-    }
-    ```
-    """
-    # json-repair should fix this malformed JSON and produce a valid parsed list of questions
-    questions = _parse_quiz_batch(raw_malformed)
-    assert len(questions) == 1
-    assert questions[0]["questionText"] == "What is the generic name of Lasix?"
-
-def test_parse_quiz_batch_raw_array_fallback():
-    # If the LLM returned a raw list instead of the top-level questions wrapper
-    raw_array = """
-    [
-      {
-        "questionText": "What is the generic name of Lasix?",
-        "questionType": "multiple_choice",
-        "options": ["A. Furosemide", "B. Metoprolol", "C. Lisinopril", "D. Amlodipine"],
-        "correctAnswer": "A",
-        "explanation": "Lasix is a brand name for furosemide, a loop diuretic."
-      }
-    ]
-    """
-    questions = _parse_quiz_batch(raw_array)
-    assert len(questions) == 1
-    assert questions[0]["questionText"] == "What is the generic name of Lasix?"
-
 def test_is_valid_correct_answer_mcq():
     options = ["A. Opt 1", "B. Opt 2", "C. Opt 3", "D. Opt 4", "E. Opt 5"]
     assert _is_valid_correct_answer("A, C, E", options, "MCQ") is True
@@ -197,40 +138,6 @@ def test_is_valid_correct_answer_true_false():
 def test_is_valid_correct_answer_short_answer():
     assert _is_valid_correct_answer("Hypertension", None, "SHORT_ANSWER") is True
     assert _is_valid_correct_answer("", None, "SHORT_ANSWER") is False
-
-def test_inline_schema_defs():
-    from routers.quiz import _inline_schema_defs
-    schema = {
-        "title": "TestSchema",
-        "type": "object",
-        "properties": {
-            "questions": {
-                "type": "array",
-                "items": {
-                    "$ref": "#/$defs/QuizQuestion"
-                }
-            }
-        },
-        "$defs": {
-            "QuizQuestion": {
-                "type": "object",
-                "properties": {
-                    "text": {"type": "string"}
-                }
-            }
-        }
-    }
-    inlined = _inline_schema_defs(schema)
-    assert "$defs" not in inlined
-    assert "$ref" not in str(inlined)
-    assert inlined["properties"]["questions"]["items"]["properties"]["text"]["type"] == "string"
-
-def test_parse_quiz_batch_empty_response():
-    with pytest.raises(ValueError, match="LLM returned empty response"):
-        _parse_quiz_batch("")
-    with pytest.raises(ValueError, match="LLM returned empty response"):
-        _parse_quiz_batch("   ")
-
 
 def test_parse_tagged_quiz_batch_valid_four_option_block():
     raw = """
