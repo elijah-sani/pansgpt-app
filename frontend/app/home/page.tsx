@@ -97,7 +97,7 @@ export default function LandingPage() {
 
                 {/* CTA Button */}
                 <div className="flex flex-col sm:flex-row gap-4 justify-center pt-4">
-                  <Link href="/signup" onClick={() => analytics.trackStartStudyingClick()}>
+                  <Link href="/login?view=signup" onClick={() => analytics.trackStartStudyingClick()}>
                     <Button size="lg" className="group px-8 py-6 text-base font-semibold bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg shadow-primary/20 hover:shadow-xl hover:shadow-primary/30 transition-all duration-300 rounded-xl">
                       Start Studying Smarter
                       <ArrowRight className="ml-2 w-5 h-5 transition-transform duration-300 group-hover:translate-x-1" />
@@ -271,7 +271,7 @@ export default function LandingPage() {
               <span className="text-primary">Be Ready for It.</span>
             </h2>
 
-            <Link href="/signup" onClick={() => analytics.trackSignUpClick('final_cta')}>
+            <Link href="/login?view=signup" onClick={() => analytics.trackSignUpClick('final_cta')}>
               <Button size="lg" className="bg-primary hover:bg-primary/90 text-primary-foreground">
                 Study Smarter
                 <ArrowRight className="ml-2 w-5 h-5" />

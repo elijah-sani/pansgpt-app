@@ -107,6 +107,7 @@ export default function LecturerRegistrationPage() {
   const [showPhoneTooltip, setShowPhoneTooltip] = useState(false);
   const [resolvedStatus, setResolvedStatus] = useState<LecturerStatus | null>(null);
   const [resolvedUniversityName, setResolvedUniversityName] = useState<string | null>(null);
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -585,11 +586,48 @@ export default function LecturerRegistrationPage() {
                       <p className="text-sm font-medium text-foreground">{normalizeField(form.phone_number) || 'Not provided'}</p>
                     </div>
                   </div>
+
+                  {/* Terms & Conditions checkbox */}
+                  <label className="flex items-start gap-3 cursor-pointer group mt-4">
+                    <div className="relative mt-0.5 shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={agreedToTerms}
+                        onChange={(e) => setAgreedToTerms(e.target.checked)}
+                        className="sr-only"
+                      />
+                      <div
+                        className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all ${
+                          agreedToTerms
+                            ? 'bg-primary border-primary'
+                            : 'border-border bg-surface-primary group-hover:border-primary/60'
+                        }`}
+                      >
+                        {agreedToTerms && (
+                          <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 12 12">
+                            <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        )}
+                      </div>
+                    </div>
+                    <span className="text-xs text-muted-foreground leading-relaxed text-left">
+                      By submitting this request, I agree to PansGPT&apos;s{' '}
+                      <Link href="/terms" target="_blank" className="text-primary font-semibold hover:underline">
+                        Terms of Service
+                      </Link>{' '}
+                      (including the Lecturer provisions) and{' '}
+                      <Link href="/privacy" target="_blank" className="text-primary font-semibold hover:underline">
+                        Privacy Policy
+                      </Link>
+                      .
+                    </span>
+                  </label>
+
                   <div className="flex gap-3">
                     <button onClick={goToPreviousStep} className="rounded-xl border border-border px-4 py-3.5 text-sm font-bold text-muted-foreground transition-colors hover:bg-surface-secondary">
                       <ArrowLeft className="h-4 w-4" />
                     </button>
-                    <button onClick={() => void handleSubmit()} disabled={isSubmitting} className={PRIMARY_BUTTON_CLASS_NAME.replace('w-full ', 'flex-1 ')}>
+                    <button onClick={() => void handleSubmit()} disabled={isSubmitting || !agreedToTerms} className={PRIMARY_BUTTON_CLASS_NAME.replace('w-full ', 'flex-1 ')}>
                       {isSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Submit for review'}
                     </button>
                   </div>

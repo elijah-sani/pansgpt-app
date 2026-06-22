@@ -236,7 +236,7 @@ export default function AboutPage() {
               </div>
 
               <div className="pt-4">
-                <Link href="/signup">
+                <Link href="/login?view=signup">
                   <Button 
                     size="lg" 
                     className="bg-primary hover:bg-primary/90 text-primary-foreground text-lg px-8 py-6 h-auto group transition-all"

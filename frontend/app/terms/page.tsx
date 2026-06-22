@@ -75,10 +75,10 @@ export default function TermsPage() {
 
             <div className="flex flex-col sm:flex-row gap-4 justify-center pt-4">
               <Badge className="bg-muted-foreground/10 text-muted-foreground border-muted-foreground/20">
-                <span className="mr-2">Effective Date:</span> [Date of Launch]
+                <span className="mr-2">Effective Date:</span> June 22, 2026
               </Badge>
               <Badge className="bg-muted-foreground/10 text-muted-foreground border-muted-foreground/20">
-                <span className="mr-2">Last Revised:</span> [Date]
+                <span className="mr-2">Last Revised:</span> June 22, 2026
               </Badge>
             </div>
           </motion.div>
@@ -127,7 +127,8 @@ export default function TermsPage() {
                     { id: "binding-agreement", label: "Part A: Binding Agreement", icon: FileText },
                     { id: "licenses", label: "Part B: Licenses & IP", icon: Lock },
                     { id: "disclaimers", label: "Part C: Disclaimers & Liability", icon: AlertTriangle },
-                    { id: "general", label: "Part D: General Provisions", icon: Scale }
+                    { id: "general", label: "Part D: General Provisions", icon: Scale },
+                    { id: "lecturer-provisions", label: "Part E: Lecturer-Specific Provisions", icon: Brain }
                   ].map((item, index) => (
                     <motion.button
                       key={index}
@@ -365,7 +366,7 @@ export default function TermsPage() {
                   8. Third-Party Services and Links
                 </AccordionTrigger>
                 <AccordionContent className="text-muted-foreground pt-4">
-                  <p className="text-sm">The Service may rely on or integrate with third-party services, such as cloud hosting providers (e.g., DataStax) and AI Model providers (e.g., Google). Your use of these third-party services may be subject to their own terms and conditions. PansGPT is not responsible or liable for the performance, availability, or security of any third-party service, nor for any content or practices of such third parties.</p>
+                  <p className="text-sm">The Service may rely on or integrate with third-party services, such as cloud database and hosting providers (e.g., Supabase) and AI Model providers (e.g., Google). Your use of these third-party services may be subject to their own terms and conditions. PansGPT is not responsible or liable for the performance, availability, or security of any third-party service, nor for any content or practices of such third parties.</p>
                 </AccordionContent>
               </AccordionItem>
 
@@ -599,7 +600,55 @@ export default function TermsPage() {
                   </div>
                   <div>
                     <p className="text-foreground mb-2">15.6. Contact Information</p>
-                    <p className="text-sm">If you have any questions about these Terms, please contact us at: <a href="mailto:legal@pansgpt.com" className="text-primary hover:underline">legal@pansgpt.com</a> or <a href="mailto:team@pansgpt.com" className="text-primary hover:underline">team@pansgpt.com</a></p>
+                    <p className="text-sm">If you have any questions about these Terms, please contact us at: <a href="mailto:support@pansgpt.site" className="text-primary hover:underline">support@pansgpt.site</a></p>
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+
+              <AccordionItem value="fees-payments" className="bg-card border border-border rounded-lg px-6">
+                <AccordionTrigger className="text-foreground hover:text-primary">
+                  16. Fees and Payments
+                </AccordionTrigger>
+                <AccordionContent className="text-muted-foreground pt-4">
+                  <p className="text-sm">
+                    The Service is currently provided to you free of charge. We reserve the right to introduce fees, premium subscriptions, or pricing tiers for certain features or services in the future. In the event that we introduce any fees or modify this policy, we will provide you with reasonable advance notice, and you will have the opportunity to review and accept the changes or terminate your Account.
+                  </p>
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
+          </motion.div>
+
+          {/* PART E: LECTURER-SPECIFIC PROVISIONS */}
+          <motion.div
+            id="lecturer-provisions"
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+          >
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center">
+                <Brain className="w-6 h-6 text-primary" />
+              </div>
+              <h2 className="text-3xl text-foreground">Part E: Lecturer-Specific Provisions</h2>
+            </div>
+
+            <Accordion type="single" collapsible className="space-y-4">
+              <AccordionItem value="lecturer-materials" className="bg-card border border-border rounded-lg px-6">
+                <AccordionTrigger className="text-foreground hover:text-primary">
+                  17. Lecturer Materials and Access
+                </AccordionTrigger>
+                <AccordionContent className="text-muted-foreground space-y-4 pt-4">
+                  <div>
+                    <p className="text-foreground mb-2">17.1. Ownership and Warranties</p>
+                    <p className="text-sm">By registering as a Lecturer on the Service and uploading any course materials (including but not limited to lecture slides, notes, handouts, practical manuals, and test banks), you represent and warrant that you hold all necessary intellectual property rights, copyrights, or legal permissions to host and distribute such materials. You agree that your uploads do not infringe upon the copyrights or rights of any third party, publisher, or institution.</p>
+                  </div>
+                  <div>
+                    <p className="text-foreground mb-2">17.2. License to the Service (RAG & Processing)</p>
+                    <p className="text-sm">You grant PansGPT a non-exclusive, worldwide, royalty-free, sublicensable, and transferable license to store, parse, index, chunk, and process your uploaded materials solely for the purpose of serving as context (via Retrieval-Augmented Generation or similar AI processing techniques) to answer student queries, generate study aids, and improve academic helper outputs. This license remains in effect as long as your materials remain on the Service.</p>
+                  </div>
+                  <div>
+                    <p className="text-foreground mb-2">17.3. Removal and Restriction Rights</p>
+                    <p className="text-sm">You retain full authority over your uploaded materials. You have the right to restrict access to, hide, or permanently delete any of your materials from the Service's database at any time. You can perform these actions directly via the Lecturer Dashboard, or by requesting removal by contacting support at <a href="mailto:support@pansgpt.site" className="text-primary hover:underline">support@pansgpt.site</a>.</p>
                   </div>
                 </AccordionContent>
               </AccordionItem>

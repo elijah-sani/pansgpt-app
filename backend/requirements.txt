@@ -24,7 +24,6 @@ sentry-sdk[fastapi]==2.53.0
 httpx==0.28.1
 tavily-python==0.7.22
 PyJWT==2.11.0
-json-repair==0.30.0
 
 # dev
 pytest>=7.0.0

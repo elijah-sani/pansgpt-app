@@ -141,6 +141,14 @@ export function useAuthPage() {
     }
 
     const searchParams = new URLSearchParams(window.location.search);
+    const initialView = searchParams.get('view') as AuthView;
+    if (initialView === 'signup' || initialView === 'login' || initialView === 'forgot') {
+      setView(initialView);
+      if (initialView === 'signup') {
+        setSignupStep(0);
+      }
+    }
+
     if (searchParams.get('confirmed') === 'true' || searchParams.get('error') === 'callback_failed') {
       window.history.replaceState(null, '', window.location.pathname);
       return;

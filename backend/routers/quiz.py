@@ -453,102 +453,6 @@ def _is_valid_correct_answer(correct_val: str, options: Optional[List[str]], q_t
     return False
 
 
-def _inline_schema_defs(schema: dict) -> dict:
-    import copy
-    schema_copy = copy.deepcopy(schema)
-    defs = schema_copy.pop("$defs", {})
-    if not defs:
-        return schema_copy
-
-    def resolve_refs(node):
-        if isinstance(node, dict):
-            if "$ref" in node:
-                ref_path = node["$ref"]
-                if ref_path.startswith("#/$defs/"):
-                    def_name = ref_path.split("/")[-1]
-                    if def_name in defs:
-                        resolved = copy.deepcopy(defs[def_name])
-                        node.pop("$ref")
-                        for k, v in resolved.items():
-                            node[k] = v
-                        resolve_refs(node)
-                        return
-            for val in node.values():
-                resolve_refs(val)
-        elif isinstance(node, list):
-            for item in node:
-                resolve_refs(item)
-
-    resolve_refs(schema_copy)
-    return schema_copy
-
-
-def _parse_quiz_batch(raw: str, *, timing_meta: Optional[dict[str, Any]] = None) -> list[dict]:
-    parse_started = time.perf_counter()
-    # Before parsing, add an explicit empty-response check
-    if not raw or not raw.strip():
-        _quiz_timing_log("parse_quiz_batch_empty", (time.perf_counter() - parse_started) * 1000, **(timing_meta or {}))
-        raise ValueError("LLM returned empty response")
-
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
-    if cleaned.endswith("```"):
-        cleaned = cleaned[:-3]
-    cleaned = cleaned.strip()
-    if cleaned.lower().startswith("json"):
-        cleaned = cleaned[4:].strip()
-
-    # Find the bounds of the JSON structure (either '{'/'}' or '['/']')
-    first_brace = cleaned.find('{')
-    first_bracket = cleaned.find('[')
-    
-    start_idx = -1
-    end_idx = -1
-    if first_brace != -1 and (first_bracket == -1 or first_brace < first_bracket):
-        start_idx = first_brace
-        end_idx = cleaned.rfind('}')
-    elif first_bracket != -1:
-        start_idx = first_bracket
-        end_idx = cleaned.rfind(']')
-        
-    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-        cleaned = cleaned[start_idx:end_idx+1]
-
-    # Additional empty-response check after cleaning
-    if not cleaned or not cleaned.strip():
-        _quiz_timing_log("parse_quiz_batch_empty_after_clean", (time.perf_counter() - parse_started) * 1000, **(timing_meta or {}))
-        raise ValueError("LLM returned empty response after cleaning JSON structure")
-
-    try:
-        try:
-            parsed = json.loads(cleaned)
-        except Exception as e:
-            logger.warning(f"Standard JSON parsing failed, attempting repair: {e}")
-            import json_repair
-            repair_started = time.perf_counter()
-            parsed = json_repair.loads(cleaned)
-            _quiz_timing_log("json_repair", (time.perf_counter() - repair_started) * 1000, **(timing_meta or {}))
-
-        if isinstance(parsed, list):
-            parsed = {"questions": parsed}
-
-        # Validate using Pydantic
-        batch_model = QuizBatchModel.model_validate(parsed)
-        _quiz_timing_log("parse_quiz_batch_success", (time.perf_counter() - parse_started) * 1000, **(timing_meta or {}))
-        return [q.model_dump() for q in batch_model.questions]
-    except Exception as e:
-        preview = (raw or "")[:1000]
-        logger.error(f"Failed to parse/validate quiz batch: {e}. Raw preview (1000 chars):\n{preview}")
-        _quiz_timing_log(
-            "parse_quiz_batch_failure",
-            (time.perf_counter() - parse_started) * 1000,
-            error_type=type(e).__name__,
-            **(timing_meta or {}),
-        )
-        raise e
-
-
 def _normalize_tagged_question_type(value: str) -> str:
     q_type = (value or "").strip()
     upper = q_type.upper()
@@ -1869,27 +1773,11 @@ async def _generate_quiz_now(
     if q_type in ("OBJECTIVE", "multiple_choice", "MCQ"):
         type_desc = "multiple-choice"
         if q_type == "MCQ":
-            format_reqs = '''- "questionType": "MCQ"
-- "options": an array of exactly 5 option strings, e.g. ["A. Option A", "B. Option B", "C. Option C", "D. Option D", "E. Option E"]
-- "correctAnswer": a string of comma-separated option labels from ["A","B","C","D","E"], e.g. "A, C, E"
-- Include in the question stem: "Select one or more."
-- EXACTLY 3 options must be true and EXACTLY 2 options must be false.'''
             tagged_format_reqs = '''- TYPE: MCQ
 - Provide exactly five options: A:, B:, C:, D:, and E:
 - ANSWER: exactly three comma-separated option letters, for example A,C,E
 - Include in the question stem: "Select one or more."
 - EXACTLY 3 options must be true and EXACTLY 2 options must be false.'''
-            example_json = '''{
-  "questions": [
-    {
-      "questionText": "Which of the following are primary side effects of drug X? Select one or more.",
-      "questionType": "MCQ",
-      "options": ["A. Side effect 1", "B. Side effect 2", "C. Side effect 3", "D. Side effect 4", "E. Side effect 5"],
-      "correctAnswer": "A, C, E",
-      "explanation": "Brief explanation of why A, C, and E are the correct side effects."
-    }
-  ]
-}'''
             tagged_example = '''<question>
 TEXT: Which of the following are primary side effects of drug X? Select one or more.
 TYPE: MCQ
@@ -1902,24 +1790,10 @@ ANSWER: A,C,E
 EXPLANATION: Brief explanation of why A, C, and E are correct.
 </question>'''
         else:
-            format_reqs = '''- "questionType": "multiple_choice"
-- "options": an array of exactly 4 option strings, e.g. ["A. Option A", "B. Option B", "C. Option C", "D. Option D"]
-- "correctAnswer": the letter of the correct option (e.g. "A") or the full labeled option (e.g. "A. Option A")'''
             tagged_format_reqs = '''- TYPE: multiple_choice
 - Provide exactly four options: A:, B:, C:, and D:
 - Use E: only when a fifth option is genuinely useful.
 - ANSWER: exactly one available option letter, for example A, B, C, or D.'''
-            example_json = '''{
-  "questions": [
-    {
-      "questionText": "Example pharmacy question?",
-      "questionType": "multiple_choice",
-      "options": ["A. Option one", "B. Option two", "C. Option three", "D. Option four"],
-      "correctAnswer": "A. Option one",
-      "explanation": "Brief explanation of why A is correct."
-    }
-  ]
-}'''
             tagged_example = '''<question>
 TEXT: Which of the following best describes viscosity?
 TYPE: multiple_choice
@@ -1932,23 +1806,9 @@ EXPLANATION: Viscosity is the internal resistance of a fluid to flow.
 </question>'''
     elif q_type == "TRUE_FALSE":
         type_desc = "true/false"
-        format_reqs = '''- "questionType": "TRUE_FALSE"
-- "options": ["True", "False"]
-- "correctAnswer": "True" or "False"'''
         tagged_format_reqs = '''- TYPE: TRUE_FALSE
 - Do not include A:, B:, C:, D:, or E: fields.
 - ANSWER: must be exactly True or False.'''
-        example_json = '''{
-  "questions": [
-    {
-      "questionText": "Drug X is classified as a beta-blocker.",
-      "questionType": "TRUE_FALSE",
-      "options": ["True", "False"],
-      "correctAnswer": "True",
-      "explanation": "Brief explanation of why it is True."
-    }
-  ]
-}'''
         tagged_example = '''<question>
 TEXT: Drug X is classified as a beta-blocker.
 TYPE: TRUE_FALSE
@@ -1957,23 +1817,9 @@ EXPLANATION: Drug X belongs to the beta-blocker class, so the statement is true.
 </question>'''
     elif q_type == "SHORT_ANSWER":
         type_desc = "short answer"
-        format_reqs = '''- "questionType": "SHORT_ANSWER"
-- "correctAnswer": the exact short phrase or word that answers the question
-(Do not include an options field)'''
         tagged_format_reqs = '''- TYPE: SHORT_ANSWER
 - Do not include A:, B:, C:, D:, or E: fields.
 - ANSWER: must be the exact short phrase or word that answers the question.'''
-        example_json = '''{
-  "questions": [
-    {
-      "questionText": "What is the chemical name of drug Y?",
-      "questionType": "SHORT_ANSWER",
-      "options": null,
-      "correctAnswer": "Y-name",
-      "explanation": "Brief explanation of why Y-name is correct."
-    }
-  ]
-}'''
         tagged_example = '''<question>
 TEXT: What is the chemical name of drug Y?
 TYPE: SHORT_ANSWER
@@ -1982,24 +1828,10 @@ EXPLANATION: Y-name is the accepted chemical name of drug Y.
 </question>'''
     else:
         type_desc = "multiple-choice"
-        format_reqs = '''- "questionType": "multiple_choice"
-- "options": an array of 4 option strings ["A. ...", "B. ...", "C. ...", "D. ..."]
-- "correctAnswer": the letter of the correct option (e.g. "A") or the full labeled option (e.g. "A. Option A")'''
         tagged_format_reqs = '''- TYPE: multiple_choice
 - Provide exactly four options: A:, B:, C:, and D:
 - Use E: only when a fifth option is genuinely useful.
 - ANSWER: exactly one available option letter, for example A, B, C, or D.'''
-        example_json = '''{
-  "questions": [
-    {
-      "questionText": "Example pharmacy question?",
-      "questionType": "multiple_choice",
-      "options": ["A. Option one", "B. Option two", "C. Option three", "D. Option four"],
-      "correctAnswer": "A. Option one",
-      "explanation": "Brief explanation of why A is correct."
-    }
-  ]
-}'''
         tagged_example = '''<question>
 TEXT: Which of the following best matches the requested concept?
 TYPE: multiple_choice
@@ -2068,7 +1900,6 @@ EXPLANATION: Brief explanation of why A is correct.
         batch_count: int,
         already_used: list[str],
         compact: bool = False,
-        output_format: str = "tagged_text",
     ) -> tuple[str, str]:
         nonce = str(uuid.uuid4())[:8]
         used_block = ""
@@ -2134,56 +1965,6 @@ Return only <question>...</question> blocks."""
 
             return system_prompt, user_prompt
 
-        # Legacy JSON remains as a final fallback until tagged text generation
-        # has enough production history to remove the older structured path.
-        system_prompt = f"""/no_think
-You are PANSGPT's quiz generation engine for pharmacy students.
-
-You must return only machine-parseable JSON conforming to the requested schema. Do not include markdown, code fences, prose, comments, headings, or thinking tags.
-
-Output contract:
-- Return a JSON object containing a "questions" key which holds a list of exactly {batch_count} question objects.
-- Each object must include:
-  - "questionText": the question string (minimum 10 characters)
-  - "questionType": one of ["mcq", "multiple_choice", "TRUE_FALSE", "SHORT_ANSWER"]
-  - "options": options list or null
-  - "correctAnswer": the correct answer string
-  - "explanation": a detailed explanation of the correct answer (minimum 10 characters)
-
-Specific rules by type:
-{format_reqs}
-
-Example output format:
-{example_json}
-
-Diversity rules:
-- Avoid repeating any previously asked questions or close paraphrases.
-- Spread questions across different concepts/sections of the material.
-- Vary question phrasing and scenario framing.
-
-Grounding rules:
-- Build questions from the retrieved curriculum context when provided.
-- Cover multiple different excerpts/sources in the context, not just one narrow subsection.
-- Do not invent facts outside the retrieved context unless needed for wording clarity.
-- Do not copy sentences verbatim from the retrieved context. Rephrase questions, options, and explanations in your own words to avoid copying/recitation safety filters."""
-
-        user_prompt = f"""Generate {batch_count} {type_desc} quiz questions.
-
-Course title: {body.courseTitle}
-Course code: {body.courseCode}
-Topic: {body.topic or 'General'}
-Difficulty: {body.difficulty}
-Academic level: {body.level}
-Generation nonce: {nonce}
-
-{context_block_small if not compact else "CURRICULUM CONTEXT: Use the same course/topic constraints, but keep the prompt compact for this retry."}
-
-{recent_block_small}
-{used_block}
-
-Return only the JSON object."""
-
-        return system_prompt, user_prompt
 
     try:
         target_count = max(1, int(body.numQuestions or 10))
@@ -2222,23 +2003,6 @@ Return only the JSON object."""
             quiz_id=quiz_id,
         )
 
-        # Resolve $refs and remove $defs from the final schema passed to Gemini
-        inlined_schema = _inline_schema_defs(QuizBatchModel.model_json_schema())
-        if os.getenv("ENVIRONMENT", "development").lower() != "production":
-            has_defs = "$defs" in inlined_schema
-            has_refs = "$ref" in json.dumps(inlined_schema)
-            logger.info(f"[DEBUG] Final inlined schema info: has_defs={has_defs}, has_refs={has_refs}")
-
-        # JSON Schema format dictionary for structured outputs
-        batch_schema = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "quiz_batch",
-                "schema": inlined_schema,
-                "strict": True
-            }
-        }
-
         batch_number = 0
         while len(questions) < target_count:
             batch_number += 1
@@ -2251,26 +2015,18 @@ Return only the JSON object."""
             already_used = [str(q.get("questionText", "")).strip() for q in questions if str(q.get("questionText", "")).strip()]
             for attempt in range(1, 4):
                 compact_mode = attempt >= 2 and target_count >= 15
-                if attempt in (1, 2) or last_failure_code == "dedupe_rejected_all":
-                    generation_format = "tagged_text"
-                    current_response_format = None
-                    if attempt == 1:
-                        response_format_mode = "tagged_text"
-                    elif last_failure_code == "dedupe_rejected_all":
-                        response_format_mode = "tagged_text_dedupe_retry"
-                    else:
-                        response_format_mode = "tagged_text_retry"
+                if attempt == 1:
+                    response_format_mode = "tagged_text"
+                elif last_failure_code == "dedupe_rejected_all":
+                    response_format_mode = "tagged_text_dedupe_retry"
                 else:
-                    generation_format = "json_legacy"
-                    current_response_format = batch_schema
-                    response_format_mode = "json_schema_legacy"
+                    response_format_mode = "tagged_text_retry"
 
                 prompt_started = time.perf_counter()
                 system_prompt, user_prompt = _build_generation_prompts(
                     current_batch,
                     already_used,
                     compact=compact_mode,
-                    output_format=generation_format,
                 )
                 _quiz_timing_log(
                     "build_generation_prompts",
@@ -2304,7 +2060,6 @@ Return only the JSON object."""
                         _generate_quiz_json_response(
                             system_prompt,
                             user_prompt,
-                            response_format=current_response_format,
                             audit_meta={
                                 **request_meta,
                                 "quiz_id": quiz_id,
@@ -2355,10 +2110,7 @@ Return only the JSON object."""
                         "response_format_mode": response_format_mode,
                         "generated_count_so_far": len(questions),
                     }
-                    if generation_format == "tagged_text":
-                        parsed = _parse_tagged_quiz_batch(raw, timing_meta=parse_meta)
-                    else:
-                        parsed = _parse_quiz_batch(raw, timing_meta=parse_meta)
+                    parsed = _parse_tagged_quiz_batch(raw, timing_meta=parse_meta)
                 except asyncio.TimeoutError:
                     last_failure_code = "llm_timeout"
                     last_failure_detail = "llm_timeout: provider or attempt did not complete within configured timeout"
