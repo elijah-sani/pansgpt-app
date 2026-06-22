@@ -25,6 +25,16 @@ type QuizGenerationJob = {
   };
 };
 
+function getStructuredJobErrorMessage(errorMessage?: string | null) {
+  if (!errorMessage) return null;
+  try {
+    const parsed = JSON.parse(errorMessage) as { message?: string };
+    return parsed.message || errorMessage;
+  } catch {
+    return errorMessage;
+  }
+}
+
 function SkeletonLine({ className = '' }: { className?: string }) {
   return <div className={`rounded-md bg-muted-foreground/20 ${className}`} />;
 }
@@ -145,9 +155,9 @@ export default function QuizGeneratingScreen({ jobId }: { jobId: string }) {
   const readyQuestionCount = job?.generated_question_count || 0;
   const targetQuestionCount = job?.target_question_count || job?.request_payload?.numQuestions || 0;
   const statusText = failed
-    ? job?.error_message || 'Unable to generate this quiz.'
+    ? getStructuredJobErrorMessage(job?.error_message) || 'Unable to generate this quiz.'
     : readyQuestionCount > 0
-      ? `${readyQuestionCount}${targetQuestionCount > 0 ? ` of ${targetQuestionCount}` : ''} question${readyQuestionCount === 1 ? '' : 's'} generated. ${job?.current_step || 'Generating more questions...'}`
+      ? `${readyQuestionCount}${targetQuestionCount > 0 ? ` of ${targetQuestionCount}` : ''} question${readyQuestionCount === 1 ? '' : 's'} generated. ${job?.current_step || 'Generating more questions...'}` 
       : job?.current_step || 'Generating practice exam...';
   const currentFact = factDeck[factIndex] || DID_YOU_KNOW_FACTS[0];
   const shouldShowFactPopup = Boolean(currentFact && !isFactPopupDismissed);

@@ -90,6 +90,9 @@ export default function QuizPage() {
   const [isBuilderOpen, setIsBuilderOpen] = useState(false);
 
   useEffect(() => {
+    if (typeof window !== "undefined" && window.localStorage.getItem("pansgpt-active-quiz-job-id")) {
+      return;
+    }
     if (quizHistoryLoaded || quizHistory.results.length > 0) return;
     void fetchQuizHistory().catch(() => {});
   }, [fetchQuizHistory, quizHistory.results.length, quizHistoryLoaded]);

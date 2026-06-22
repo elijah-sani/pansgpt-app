@@ -1,6 +1,7 @@
 'use client';
 
-import React, { createContext, useContext, useMemo, useState } from 'react';
+import React, { createContext, useContext, useMemo, useRef, useState, useCallback } from 'react';
+import { usePathname } from 'next/navigation';
 import { api } from '@/lib/api';
 
 export interface QuizDocument {
@@ -43,6 +44,7 @@ type QuizCacheContextType = {
 const QuizCacheContext = createContext<QuizCacheContextType | null>(null);
 
 export function QuizCacheProvider({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
   const [documents, setDocuments] = useState<QuizDocument[]>([]);
   const [documentsLoaded, setDocumentsLoaded] = useState(false);
   const [documentsLoading, setDocumentsLoading] = useState(false);
@@ -55,6 +57,11 @@ export function QuizCacheProvider({ children }: { children: React.ReactNode }) {
   });
   const [quizHistoryLoaded, setQuizHistoryLoaded] = useState(false);
   const [quizHistoryLoading, setQuizHistoryLoading] = useState(false);
+  const documentsRequestRef = useRef<Promise<void> | null>(null);
+  const userLevelRequestRef = useRef<Promise<void> | null>(null);
+  const quizHistoryRequestRef = useRef<Promise<void> | null>(null);
+
+  const isQuizGenerationRoute = /^\/quiz\/generating\/[^/]+$/.test(pathname || '');
 
   const courses = useMemo(() => {
     const seen = new Set<string>();
@@ -78,63 +85,97 @@ export function QuizCacheProvider({ children }: { children: React.ReactNode }) {
     return nextCourses;
   }, [documents]);
 
-  const fetchDocuments = async (force = false) => {
+  const fetchDocuments = useCallback(async (force = false) => {
+    if (isQuizGenerationRoute && !force) {
+      return;
+    }
     if ((documentsLoaded || documents.length > 0) && !force) {
       return;
     }
-
-    setDocumentsLoading(true);
-    try {
-      const response = await api.get('/documents');
-      if (!response.ok) {
-        throw new Error('Failed to load documents');
-      }
-      const data = await response.json();
-      setDocuments(data || []);
-      setDocumentsLoaded(true);
-    } finally {
-      setDocumentsLoading(false);
+    if (documentsRequestRef.current && !force) {
+      return documentsRequestRef.current;
     }
-  };
 
-  const fetchUserLevel = async (force = false) => {
+    const request = (async () => {
+      setDocumentsLoading(true);
+      try {
+        const response = await api.get('/documents');
+        if (!response.ok) {
+          throw new Error('Failed to load documents');
+        }
+        const data = await response.json();
+        setDocuments(data || []);
+        setDocumentsLoaded(true);
+      } finally {
+        setDocumentsLoading(false);
+        documentsRequestRef.current = null;
+      }
+    })();
+    documentsRequestRef.current = request;
+    return request;
+  }, [documents.length, documentsLoaded, isQuizGenerationRoute]);
+
+  const fetchUserLevel = useCallback(async (force = false) => {
+    if (isQuizGenerationRoute && !force) {
+      return;
+    }
     if ((userLevelLoaded || userLevel) && !force) {
       return;
     }
-
-    const response = await api.get('/me/bootstrap');
-    if (!response.ok) {
-      return;
+    if (userLevelRequestRef.current && !force) {
+      return userLevelRequestRef.current;
     }
 
-    const data = await response.json();
-    setUserLevel(data?.profile?.level || '');
-    setUserLevelLoaded(true);
-  };
-
-  const fetchQuizHistory = async (force = false) => {
-    if (quizHistoryLoaded && !force) {
-      return;
-    }
-
-    setQuizHistoryLoading(true);
-    try {
-      const response = await api.get('/api/quiz/history?limit=50');
+    const request = (async () => {
+      const response = await api.get('/me/bootstrap');
       if (!response.ok) {
-        throw new Error('Failed to fetch quiz history');
+        return;
       }
 
       const data = await response.json();
-      setQuizHistory({
-        results: data.data?.results || data.quizzes || [],
-        analytics: data.data?.analytics || null,
-        pagination: data.data?.pagination || null,
-      });
-      setQuizHistoryLoaded(true);
-    } finally {
-      setQuizHistoryLoading(false);
+      setUserLevel(data?.profile?.level || '');
+      setUserLevelLoaded(true);
+    })().finally(() => {
+      userLevelRequestRef.current = null;
+    });
+    userLevelRequestRef.current = request;
+    return request;
+  }, [isQuizGenerationRoute, userLevel, userLevelLoaded]);
+
+  const fetchQuizHistory = useCallback(async (force = false) => {
+    if (isQuizGenerationRoute && !force) {
+      return;
     }
-  };
+    if (quizHistoryLoaded && !force) {
+      return;
+    }
+    if (quizHistoryRequestRef.current && !force) {
+      return quizHistoryRequestRef.current;
+    }
+
+    const request = (async () => {
+      setQuizHistoryLoading(true);
+      try {
+        const response = await api.get('/api/quiz/history?limit=50');
+        if (!response.ok) {
+          throw new Error('Failed to fetch quiz history');
+        }
+
+        const data = await response.json();
+        setQuizHistory({
+          results: data.data?.results || data.quizzes || [],
+          analytics: data.data?.analytics || null,
+          pagination: data.data?.pagination || null,
+        });
+        setQuizHistoryLoaded(true);
+      } finally {
+        setQuizHistoryLoading(false);
+        quizHistoryRequestRef.current = null;
+      }
+    })();
+    quizHistoryRequestRef.current = request;
+    return request;
+  }, [isQuizGenerationRoute, quizHistoryLoaded]);
 
   const value = useMemo(
     () => ({
@@ -156,6 +197,9 @@ export function QuizCacheProvider({ children }: { children: React.ReactNode }) {
       documents,
       documentsLoaded,
       documentsLoading,
+      fetchDocuments,
+      fetchQuizHistory,
+      fetchUserLevel,
       quizHistory,
       quizHistoryLoaded,
       quizHistoryLoading,

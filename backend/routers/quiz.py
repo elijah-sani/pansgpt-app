@@ -4,7 +4,7 @@ Quiz router – Generate, submit, and retrieve quizzes.
 from fastapi import APIRouter, HTTPException, Request, Depends, Header, BackgroundTasks, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 from dependencies import get_current_user, User, UNIVERSITY_SUSPENDED_MESSAGE
-from pydantic import BaseModel, field_validator, Field, model_validator
+from pydantic import BaseModel, ValidationError, field_validator, Field, model_validator
 from typing import Optional, List, Union, Any
 import json
 import logging
@@ -140,6 +140,14 @@ def _quiz_context_cache_key(body: "QuizGenerateRequest", student_university_id: 
         (body.questionType or "").strip().lower(),
         (body.difficulty or "").strip().lower(),
     )
+
+
+def _job_payload_without_count_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in payload.items()
+        if key not in {"generated_question_count", "target_question_count"}
+    }
 
 
 def merge_system_into_user(messages: List[dict]) -> List[dict]:
@@ -1235,6 +1243,8 @@ async def _update_quiz_generation_job(
     current_step: str,
     error_message: Optional[str] = None,
     quiz_id: Optional[str] = None,
+    generated_question_count: Optional[int] = None,
+    target_question_count: Optional[int] = None,
 ) -> None:
     if not job_id:
         return
@@ -1248,6 +1258,10 @@ async def _update_quiz_generation_job(
     }
     if quiz_id is not None:
         payload["quiz_id"] = quiz_id
+    if generated_question_count is not None:
+        payload["generated_question_count"] = max(0, int(generated_question_count))
+    if target_question_count is not None:
+        payload["target_question_count"] = max(0, int(target_question_count))
     if status in {"completed", "failed", "cancelled"}:
         payload["completed_at"] = datetime.now(timezone.utc).isoformat()
 
@@ -1256,7 +1270,16 @@ async def _update_quiz_generation_job(
             query = sb.table("quiz_generation_jobs").update(payload).eq("id", job_id)
             if status != "cancelled":
                 query = query.neq("status", "cancelled")
-            query.execute()
+            try:
+                query.execute()
+            except Exception as exc:
+                if "generated_question_count" not in str(exc) and "target_question_count" not in str(exc):
+                    raise
+                fallback_payload = _job_payload_without_count_fields(payload)
+                fallback_query = sb.table("quiz_generation_jobs").update(fallback_payload).eq("id", job_id)
+                if status != "cancelled":
+                    fallback_query = fallback_query.neq("status", "cancelled")
+                fallback_query.execute()
         await asyncio.to_thread(_update)
         _quiz_timing_log(
             "update_quiz_generation_job",
@@ -1271,7 +1294,13 @@ async def _update_quiz_generation_job(
 # [QUIZ BATCH FIX]
 
 
-async def _generate_quiz_json_response(system_prompt: str, user_prompt: str, response_format: Optional[dict] = None) -> str:
+async def _generate_quiz_json_response(
+    system_prompt: str,
+    user_prompt: str,
+    response_format: Optional[dict] = None,
+    *,
+    audit_meta: Optional[dict[str, Any]] = None,
+) -> str:
     messages = merge_system_into_user([
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
@@ -1285,6 +1314,7 @@ async def _generate_quiz_json_response(system_prompt: str, user_prompt: str, res
         force_google=False,
         requested_model=llm_engine.TEXT_SECONDARY,  # [QUIZ BATCH FIX]
         response_format=response_format,
+        audit_meta=audit_meta,
     )
     if response is None:
         raise RuntimeError("LLM generation failed on all available clients")
@@ -1312,6 +1342,25 @@ async def _generate_quiz_json_response(system_prompt: str, user_prompt: str, res
 
     visible_text, _thinking_text = strip_thinking_tokens(str(content or ""))
     return str(visible_text).strip()
+
+
+def _classify_quiz_generation_exception(exc: Exception) -> str:
+    if isinstance(exc, asyncio.TimeoutError):
+        return "llm_timeout"
+
+    if isinstance(exc, ValidationError):
+        return "schema_validation_failure"
+
+    message = str(exc or "").strip().lower()
+    if "empty response" in message:
+        return "empty_response"
+    if "json" in message and ("parse" in message or "decode" in message or "repair" in message):
+        return "parse_failure"
+    if "validation" in message or "pydantic" in message:
+        return "schema_validation_failure"
+    if "provider" in message or "client" in message or "model" in message:
+        return "provider_error"
+    return "provider_error"
 
 
 
@@ -1371,6 +1420,8 @@ async def _generate_quiz_now(
         status="retrieving",
         progress=12,
         current_step="Finding course materials",
+        generated_question_count=0,
+        target_question_count=max(1, int(body.numQuestions or 10)),
     )
     student_context_started = time.perf_counter()
     student_context = await resolve_student_university_context(current_user)
@@ -1613,6 +1664,8 @@ Return only the JSON object."""
             status="generating",
             progress=20,
             current_step="Generating questions",
+            generated_question_count=0,
+            target_question_count=target_count,
             quiz_id=quiz_id,
         )
 
@@ -1639,6 +1692,7 @@ Return only the JSON object."""
             remaining = target_count - len(questions)
             current_batch = min(batch_size, remaining)
             generated_this_batch = None
+            last_failure_code = "provider_error"
 
             already_used = [str(q.get("questionText", "")).strip() for q in questions if str(q.get("questionText", "")).strip()]
             for attempt in range(1, 4):
@@ -1668,11 +1722,50 @@ Return only the JSON object."""
                     response_format_mode = "plain_text"
 
                 batch_attempt_started = time.perf_counter()
+                _quiz_timing_log(
+                    "llm_attempt_started",
+                    0.0,
+                    quiz_id=quiz_id,
+                    batch_number=batch_number,
+                    batch_size=current_batch,
+                    attempt_number=attempt,
+                    response_format_mode=response_format_mode,
+                    generated_count_so_far=len(questions),
+                    model=llm_engine.TEXT_SECONDARY,
+                    timeout_seconds=QUIZ_LLM_ATTEMPT_TIMEOUT_SECONDS,
+                    **request_meta,
+                )
                 try:
                     llm_started = time.perf_counter()
                     raw = await asyncio.wait_for(
-                        _generate_quiz_json_response(system_prompt, user_prompt, response_format=current_response_format),
+                        _generate_quiz_json_response(
+                            system_prompt,
+                            user_prompt,
+                            response_format=current_response_format,
+                            audit_meta={
+                                **request_meta,
+                                "quiz_id": quiz_id,
+                                "batch_number": batch_number,
+                                "batch_size": current_batch,
+                                "attempt_number": attempt,
+                                "generated_count_so_far": len(questions),
+                                "timeout_seconds": QUIZ_LLM_ATTEMPT_TIMEOUT_SECONDS,
+                            },
+                        ),
                         timeout=QUIZ_LLM_ATTEMPT_TIMEOUT_SECONDS,
+                    )
+                    _quiz_timing_log(
+                        "llm_attempt_completed",
+                        (time.perf_counter() - llm_started) * 1000,
+                        quiz_id=quiz_id,
+                        batch_number=batch_number,
+                        batch_size=current_batch,
+                        attempt_number=attempt,
+                        response_format_mode=response_format_mode,
+                        generated_count_so_far=len(questions),
+                        model=llm_engine.TEXT_SECONDARY,
+                        timeout_seconds=QUIZ_LLM_ATTEMPT_TIMEOUT_SECONDS,
+                        **request_meta,
                     )
                     _quiz_timing_log(
                         "generate_quiz_json_response",
@@ -1698,6 +1791,21 @@ Return only the JSON object."""
                         },
                     )
                 except asyncio.TimeoutError:
+                    last_failure_code = "llm_timeout"
+                    _quiz_timing_log(
+                        "llm_attempt_timeout",
+                        (time.perf_counter() - llm_started) * 1000,
+                        quiz_id=quiz_id,
+                        batch_number=batch_number,
+                        batch_size=current_batch,
+                        attempt_number=attempt,
+                        response_format_mode=response_format_mode,
+                        generated_count_so_far=len(questions),
+                        model=llm_engine.TEXT_SECONDARY,
+                        timeout_seconds=QUIZ_LLM_ATTEMPT_TIMEOUT_SECONDS,
+                        failure_code="llm_timeout",
+                        **request_meta,
+                    )
                     _quiz_timing_log(
                         "generate_quiz_json_response_timeout",
                         (time.perf_counter() - llm_started) * 1000,
@@ -1726,6 +1834,23 @@ Return only the JSON object."""
                     continue
                 except Exception as e:
                     logger.warning(f"Quiz batch generation or parse failed (batch={current_batch}, attempt={attempt}): {e}")
+                    failure_code = _classify_quiz_generation_exception(e)
+                    last_failure_code = failure_code
+                    _quiz_timing_log(
+                        "llm_attempt_failed",
+                        (time.perf_counter() - llm_started) * 1000,
+                        quiz_id=quiz_id,
+                        batch_number=batch_number,
+                        batch_size=current_batch,
+                        attempt_number=attempt,
+                        response_format_mode=response_format_mode,
+                        generated_count_so_far=len(questions),
+                        model=llm_engine.TEXT_SECONDARY,
+                        timeout_seconds=QUIZ_LLM_ATTEMPT_TIMEOUT_SECONDS,
+                        failure_code=failure_code,
+                        error_type=type(e).__name__,
+                        **request_meta,
+                    )
                     _quiz_timing_log(
                         "llm_batch_attempt_failure",
                         (time.perf_counter() - batch_attempt_started) * 1000,
@@ -1736,6 +1861,7 @@ Return only the JSON object."""
                         response_format_mode=response_format_mode,
                         generated_count_so_far=len(questions),
                         error_type=type(e).__name__,
+                        failure_code=failure_code,
                         **request_meta,
                     )
                     continue
@@ -1809,12 +1935,41 @@ Return only the JSON object."""
                 )
 
                 if (internal_repeat or overlap_ratio > overlap_limit) and attempt < 3:
+                    last_failure_code = "dedupe_rejected_all"
+                    _quiz_timing_log(
+                        "llm_batch_attempt_rejected",
+                        (time.perf_counter() - batch_attempt_started) * 1000,
+                        quiz_id=quiz_id,
+                        batch_number=batch_number,
+                        batch_size=current_batch,
+                        attempt_number=attempt,
+                        response_format_mode=response_format_mode,
+                        generated_count_so_far=len(questions),
+                        failure_code="dedupe_rejected_all",
+                        internal_repeat=internal_repeat,
+                        overlap_ratio=round(overlap_ratio, 4),
+                        **request_meta,
+                    )
                     logger.warning(
                         f"Quiz batch repetition high (attempt={attempt}, internal={internal_repeat}, overlap={overlap_ratio:.2f})"
                     )
                     continue
 
                 if not deduped and attempt < 3:
+                    last_failure_code = "quality_validation_rejected_all"
+                    _quiz_timing_log(
+                        "llm_batch_attempt_rejected",
+                        (time.perf_counter() - batch_attempt_started) * 1000,
+                        quiz_id=quiz_id,
+                        batch_number=batch_number,
+                        batch_size=current_batch,
+                        attempt_number=attempt,
+                        response_format_mode=response_format_mode,
+                        generated_count_so_far=len(questions),
+                        failure_code="quality_validation_rejected_all",
+                        parsed_count=len(parsed),
+                        **request_meta,
+                    )
                     continue
 
                 generated_this_batch = deduped[:current_batch]
@@ -1835,7 +1990,10 @@ Return only the JSON object."""
             if not generated_this_batch:
                 raise HTTPException(
                     status_code=500,
-                    detail="Unable to generate enough diverse questions right now. Please try fewer questions or try again.",
+                    detail={
+                        "code": last_failure_code,
+                        "message": "Unable to generate enough diverse questions right now. Please try fewer questions or try again.",
+                    },
                 )
 
             questions.extend(generated_this_batch)
@@ -1984,6 +2142,8 @@ Return only the JSON object."""
                 status="generating",
                 progress=batch_progress,
                 current_step=f"Generated {len(questions)} of {target_count} questions",
+                generated_question_count=len(questions),
+                target_question_count=target_count,
             )
             # [QUIZ BATCH FIX]
 
@@ -1996,6 +2156,8 @@ Return only the JSON object."""
             status="saving",
             progress=86,
             current_step="Saving quiz",
+            generated_question_count=len(questions),
+            target_question_count=target_count,
         )
         # [QUIZ BATCH FIX] — completed progress update
         await _update_quiz_generation_job(
@@ -2005,6 +2167,8 @@ Return only the JSON object."""
             progress=100,
             current_step="Quiz ready",
             quiz_id=quiz_id,
+            generated_question_count=len(questions),
+            target_question_count=target_count,
         )
 
         # Return the created quiz
@@ -2017,10 +2181,10 @@ Return only the JSON object."""
         raise
     except json.JSONDecodeError as e:
         logger.error(f"Quiz generation: JSON parse error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to parse AI response into quiz questions")
+        raise HTTPException(status_code=500, detail={"code": "parse_failure", "message": "Failed to parse AI response into quiz questions"})
     except Exception as e:
         logger.error(f"Quiz generation error: {e}")
-        raise HTTPException(status_code=500, detail="Unable to generate quiz. Please try again.")
+        raise HTTPException(status_code=500, detail={"code": _classify_quiz_generation_exception(e), "message": "Unable to generate quiz. Please try again."})
 
 
 async def _process_quiz_generation_job(job_id: str, body_payload: dict, user_payload: dict) -> None:
@@ -2048,7 +2212,7 @@ async def _process_quiz_generation_job(job_id: str, body_payload: dict, user_pay
             status="failed",
             progress=100,
             current_step="Could not generate quiz",
-            error_message="Unable to generate quiz. Please try again.",
+            error_message=_serialize_http_detail({"code": _classify_quiz_generation_exception(exc), "message": "Unable to generate quiz. Please try again."}),
         )
 
 
@@ -2094,10 +2258,17 @@ async def create_quiz_generation_job(
         "status": "queued",
         "progress": 3,
         "current_step": "Queued",
+        "generated_question_count": 0,
+        "target_question_count": max(1, int(body.numQuestions or 10)),
     }
 
     try:
-        job_res = sb.table("quiz_generation_jobs").insert(job_payload).execute()
+        try:
+            job_res = sb.table("quiz_generation_jobs").insert(job_payload).execute()
+        except Exception as exc:
+            if "generated_question_count" not in str(exc) and "target_question_count" not in str(exc):
+                raise
+            job_res = sb.table("quiz_generation_jobs").insert(_job_payload_without_count_fields(job_payload)).execute()
         job_rows = job_res.data or []
         if not job_rows:
             raise RuntimeError("No quiz job row returned")
@@ -2119,7 +2290,6 @@ async def create_quiz_generation_job(
 @router.post("/{quiz_id}/stream-token", dependencies=[Depends(_verify_api_key)])
 async def generate_quiz_stream_token(quiz_id: str, current_user: User = Depends(get_current_user)):
     """Generate a short-lived transient JWT for the EventSource route to verify ownership."""
-    await resolve_student_university_context(current_user)
     sb = _get_supabase()
     
     try:
@@ -2178,14 +2348,26 @@ async def quiz_generation_events(
                 new_questions = []
                 
             try:
-                job_res = await asyncio.to_thread(
-                    lambda: sb.table("quiz_generation_jobs")
-                    .select("status,error_message,progress,request_payload")
-                    .eq("quiz_id", quiz_id)
-                    .order("created_at", desc=True)
-                    .limit(1)
-                    .execute()
-                )
+                try:
+                    job_res = await asyncio.to_thread(
+                        lambda: sb.table("quiz_generation_jobs")
+                        .select("status,error_message,progress,request_payload,generated_question_count,target_question_count")
+                        .eq("quiz_id", quiz_id)
+                        .order("created_at", desc=True)
+                        .limit(1)
+                        .execute()
+                    )
+                except Exception as exc:
+                    if "generated_question_count" not in str(exc) and "target_question_count" not in str(exc):
+                        raise
+                    job_res = await asyncio.to_thread(
+                        lambda: sb.table("quiz_generation_jobs")
+                        .select("status,error_message,progress,request_payload")
+                        .eq("quiz_id", quiz_id)
+                        .order("created_at", desc=True)
+                        .limit(1)
+                        .execute()
+                    )
                 job = job_res.data[0] if job_res.data else None
             except Exception as e:
                 logger.error(f"Error fetching job status in SSE generator: {e}")
@@ -2196,11 +2378,16 @@ async def quiz_generation_events(
                     "quiz_id": quiz_id,
                     "question": q,
                     "generated_question_count": q["question_order"],
-                    "target_question_count": 0
+                    "target_question_count": 0,
                 }
                 
-                if job and job.get("request_payload"):
-                    payload["target_question_count"] = job["request_payload"].get("numQuestions", 10)
+                if job:
+                    payload["generated_question_count"] = int(job.get("generated_question_count") or q["question_order"])
+                    payload["target_question_count"] = int(
+                        job.get("target_question_count")
+                        or (job.get("request_payload") or {}).get("numQuestions")
+                        or 10
+                    )
                 
                 yield f"id: {q['question_order']}\n"
                 yield f"event: question_added\n"
@@ -2212,15 +2399,16 @@ async def quiz_generation_events(
             if job:
                 status = job.get("status")
                 error_msg = job.get("error_message")
-                target_count = job.get("request_payload", {}).get("numQuestions", 10)
-                
-                try:
-                    count_res = await asyncio.to_thread(
-                        lambda: sb.table("quiz_questions").select("id", count="exact").eq("quiz_id", quiz_id).execute()
-                    )
-                    gen_count = count_res.count or last_sent_order
-                except Exception:
-                    gen_count = last_sent_order
+                target_count = int(job.get("target_question_count") or job.get("request_payload", {}).get("numQuestions", 10))
+                gen_count = int(job.get("generated_question_count") or last_sent_order)
+                if "generated_question_count" not in job:
+                    try:
+                        count_res = await asyncio.to_thread(
+                            lambda: sb.table("quiz_questions").select("id", count="exact").eq("quiz_id", quiz_id).execute()
+                        )
+                        gen_count = int(count_res.count or gen_count)
+                    except Exception:
+                        pass
                 
                 if status == "completed":
                     payload = {
@@ -2264,14 +2452,26 @@ async def get_quiz_generation_job(job_id: str, current_user: User = Depends(get_
     sb = _get_supabase()
     started = time.perf_counter()
     try:
-        res = await asyncio.to_thread(
-            lambda: sb.table("quiz_generation_jobs")
-            .select("id,user_id,status,progress,current_step,error_message,quiz_id,request_payload,created_at,updated_at,completed_at")
-            .eq("id", job_id)
-            .eq("user_id", current_user.id)
-            .limit(1)
-            .execute()
-        )
+        try:
+            res = await asyncio.to_thread(
+                lambda: sb.table("quiz_generation_jobs")
+                .select("id,user_id,status,progress,current_step,error_message,quiz_id,generated_question_count,target_question_count,request_payload,created_at,updated_at,completed_at")
+                .eq("id", job_id)
+                .eq("user_id", current_user.id)
+                .limit(1)
+                .execute()
+            )
+        except Exception as exc:
+            if "generated_question_count" not in str(exc) and "target_question_count" not in str(exc):
+                raise
+            res = await asyncio.to_thread(
+                lambda: sb.table("quiz_generation_jobs")
+                .select("id,user_id,status,progress,current_step,error_message,quiz_id,request_payload,created_at,updated_at,completed_at")
+                .eq("id", job_id)
+                .eq("user_id", current_user.id)
+                .limit(1)
+                .execute()
+            )
         rows = res.data or []
     except Exception as exc:
         logger.error("Could not load quiz generation job %s: %s", job_id, exc)
@@ -2281,11 +2481,10 @@ async def get_quiz_generation_job(job_id: str, current_user: User = Depends(get_
         raise HTTPException(status_code=404, detail="Quiz generation job not found.")
 
     row = rows[0]
-    generated_question_count = 0
-    target_question_count = int((row.get("request_payload") or {}).get("numQuestions") or 0)
-
+    generated_question_count = int(row.get("generated_question_count") or 0)
+    target_question_count = int(row.get("target_question_count") or (row.get("request_payload") or {}).get("numQuestions") or 0)
     quiz_id = row.get("quiz_id")
-    if quiz_id:
+    if quiz_id and ("generated_question_count" not in row or "target_question_count" not in row):
         try:
             count_res = await asyncio.to_thread(
                 lambda: sb.table("quiz_questions").select("id", count="exact").eq("quiz_id", quiz_id).execute()
@@ -2293,17 +2492,6 @@ async def get_quiz_generation_job(job_id: str, current_user: User = Depends(get_
             generated_question_count = int(count_res.count or 0)
         except Exception as exc:
             logger.warning("Could not count generated quiz questions for job %s: %s", job_id, exc)
-
-        if target_question_count <= 0:
-            try:
-                quiz_res = await asyncio.to_thread(
-                    lambda: sb.table("quizzes").select("num_questions").eq("id", quiz_id).limit(1).execute()
-                )
-                quiz_rows = quiz_res.data or []
-                if quiz_rows:
-                    target_question_count = int(quiz_rows[0].get("num_questions") or 0)
-            except Exception as exc:
-                logger.warning("Could not resolve target question count for job %s: %s", job_id, exc)
 
     normalized = _normalize_quiz_generation_job(
         {
@@ -2381,30 +2569,40 @@ async def quiz_history(limit: int = 50, current_user: User = Depends(get_current
 
     sb = _get_supabase()
     try:
-        # Fetch quizzes
-        quiz_res = sb.table("quizzes") \
-            .select("*") \
-            .eq("user_id", current_user.id) \
-            .order("created_at", desc=True) \
-            .limit(limit) \
+        quiz_res = await asyncio.to_thread(
+            lambda: sb.table("quizzes")
+            .select("*")
+            .eq("user_id", current_user.id)
+            .order("created_at", desc=True)
+            .limit(limit)
             .execute()
+        )
+        quiz_rows = quiz_res.data or []
+        quiz_ids = [quiz.get("id") for quiz in quiz_rows if quiz.get("id")]
 
-        quizzes = []
-        for quiz in (quiz_res.data or []):
-            # Get results for this quiz
-            result_res = sb.table("quiz_results") \
-                .select("*") \
-                .eq("quiz_id", quiz["id"]) \
-                .eq("user_id", current_user.id) \
-                .order("completed_at", desc=True) \
-                .limit(1) \
+        latest_results_by_quiz: dict[str, dict] = {}
+        if quiz_ids:
+            result_res = await asyncio.to_thread(
+                lambda: sb.table("quiz_results")
+                .select("*")
+                .eq("user_id", current_user.id)
+                .in_("quiz_id", quiz_ids)
+                .order("completed_at", desc=True)
+                .order("created_at", desc=True)
                 .execute()
+            )
+            for result in (result_res.data or []):
+                quiz_id = result.get("quiz_id")
+                if quiz_id and quiz_id not in latest_results_by_quiz:
+                    latest_results_by_quiz[quiz_id] = result
 
-            result = result_res.data[0] if result_res.data else None
-            quizzes.append({
+        quizzes = [
+            {
                 **quiz,
-                "result": result,
-            })
+                "result": latest_results_by_quiz.get(quiz.get("id")),
+            }
+            for quiz in quiz_rows
+        ]
 
         return {"quizzes": quizzes}
 
@@ -2418,8 +2616,6 @@ async def quiz_history(limit: int = 50, current_user: User = Depends(get_current
 @router.get("/{quiz_id}", dependencies=[Depends(_verify_api_key)])
 async def get_quiz(quiz_id: str, current_user: User = Depends(get_current_user)):
     """Get a quiz with its questions."""
-    await resolve_student_university_context(current_user)
-
     sb = _get_supabase()
     started = time.perf_counter()
     try:
@@ -2427,6 +2623,7 @@ async def get_quiz(quiz_id: str, current_user: User = Depends(get_current_user))
             lambda: sb.table("quizzes")
             .select("*")
             .eq("id", quiz_id)
+            .eq("user_id", current_user.id)
             .limit(1)
             .execute()
         )
@@ -2443,27 +2640,43 @@ async def get_quiz(quiz_id: str, current_user: User = Depends(get_current_user))
             .execute()
         )
 
-        job_res = await asyncio.to_thread(
-            lambda: sb.table("quiz_generation_jobs")
-            .select("status,error_message")
-            .eq("quiz_id", quiz_id)
-            .order("created_at", desc=True)
-            .limit(1)
-            .execute()
-        )
+        try:
+            job_res = await asyncio.to_thread(
+                lambda: sb.table("quiz_generation_jobs")
+                .select("status,error_message,generated_question_count,target_question_count")
+                .eq("quiz_id", quiz_id)
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+        except Exception as exc:
+            if "generated_question_count" not in str(exc) and "target_question_count" not in str(exc):
+                raise
+            job_res = await asyncio.to_thread(
+                lambda: sb.table("quiz_generation_jobs")
+                .select("status,error_message")
+                .eq("quiz_id", quiz_id)
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
 
         job_status = "completed"
         job_error = None
+        generated_question_count = len(questions_res.data or [])
+        target_question_count = quiz_rows[0].get("num_questions", generated_question_count)
         if job_res.data:
             job_status = job_res.data[0].get("status")
             job_error = job_res.data[0].get("error_message")
+            generated_question_count = int(job_res.data[0].get("generated_question_count") or generated_question_count)
+            target_question_count = int(job_res.data[0].get("target_question_count") or target_question_count)
 
         result = {
             "quiz": {
                 **quiz_rows[0],
                 "questions": questions_res.data or [],
-                "target_question_count": quiz_rows[0].get("num_questions", len(questions_res.data or [])),
-                "generated_question_count": len(questions_res.data or []),
+                "target_question_count": target_question_count,
+                "generated_question_count": generated_question_count,
                 "generation_job_status": job_status,
                 "generation_job_error": job_error,
             }

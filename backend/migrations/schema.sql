@@ -1096,6 +1096,8 @@ create table if not exists public.quiz_generation_jobs (
   current_step text,
   error_message text,
   quiz_id uuid references public.quizzes(id) on delete set null,
+  generated_question_count integer not null default 0,
+  target_question_count integer not null default 0,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null,
   completed_at timestamp with time zone
