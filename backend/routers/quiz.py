@@ -1940,15 +1940,30 @@ EXPLANATION: Brief explanation of why A is correct.
         batch_count: int,
         already_used: list[str],
         compact: bool = False,
+        dedupe_retry: bool = False,
     ) -> tuple[str, str]:
         nonce = str(uuid.uuid4())[:8]
         used_block = ""
+        dedupe_retry_block = ""
         if already_used:
             used_lines = "\n".join([f"- {q}" for q in already_used[:40]])
             used_block = (
                 "ALREADY GENERATED IN THIS QUIZ (DO NOT REUSE/PARAPHRASE):\n"
                 f"{used_lines}\n"
             )
+            if dedupe_retry:
+                blocked_lines = "\n".join([f"- {q}" for q in already_used[:12]])
+                dedupe_retry_block = (
+                    "HARD DIVERSITY RETRY RULES:\n"
+                    "Your previous batch overlapped too heavily with questions already accepted in this quiz.\n"
+                    "Treat the following questions as blocked concepts, not just blocked wording:\n"
+                    f"{blocked_lines}\n"
+                    "You must not generate another question about the same definition, same instrument, same mechanism,\n"
+                    "same direct fact target, same comparison pair, or the same answer target hidden behind new wording.\n"
+                    "Every new question must test a materially different idea or excerpt from the curriculum context.\n"
+                    "If the context is narrow, prefer applications, implications, scenario-based reasoning, exceptions,\n"
+                    "contrasts, calculations, classifications, or cause-effect relationships that were not already used.\n"
+                )
 
         system_prompt = f"""/no_think
 You are PANSGPT's quiz generation engine for pharmacy students.
@@ -1979,6 +1994,9 @@ Diversity rules:
 - Avoid repeating any previously asked questions or close paraphrases.
 - Spread questions across different concepts/sections of the material.
 - Vary question phrasing and scenario framing.
+- On a diversity retry, treat already-used questions as blocked concepts, not just blocked wording.
+- Do not ask about the same answer target, same key term, same instrument, same mechanism, or same one-step fact in a new wrapper.
+- Prefer untouched concepts, applications, contrasts, exceptions, or scenario-based uses from the provided context.
 
 Grounding rules:
 - Build questions from the retrieved curriculum context when provided.
@@ -1999,6 +2017,7 @@ Generation nonce: {nonce}
 
 {recent_block_small}
 {used_block}
+{dedupe_retry_block}
 
 Return only <question>...</question> blocks."""
 
@@ -2066,6 +2085,7 @@ Return only <question>...</question> blocks."""
                     current_batch,
                     already_used,
                     compact=compact_mode,
+                    dedupe_retry=(last_failure_code == "dedupe_rejected_all"),
                 )
                 _quiz_timing_log(
                     "build_generation_prompts",
