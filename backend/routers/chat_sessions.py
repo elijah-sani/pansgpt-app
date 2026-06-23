@@ -89,6 +89,35 @@ def _format_background_llm_error(exc: Exception) -> str:
     return f"type={type(exc).__name__}, status={status_code or 'n/a'}, class={hint}, message={msg}"
 
 
+def _normalize_history_search(value: Optional[str]) -> str:
+    return " ".join((value or "").strip().split())[:200]
+
+
+def _build_message_search_preview(content: str, query: str, window: int = 70) -> str:
+    text = " ".join((content or "").split())
+    if not text:
+        return ""
+
+    lowered_text = text.lower()
+    lowered_query = query.lower().strip()
+    if not lowered_query:
+        return text[: (window * 2) + 3]
+
+    match_index = lowered_text.find(lowered_query)
+    if match_index < 0:
+        return text[: (window * 2) + 3]
+
+    start = max(match_index - window, 0)
+    end = min(match_index + len(query) + window, len(text))
+    preview = text[start:end].strip()
+
+    if start > 0:
+        preview = f"...{preview}"
+    if end < len(text):
+        preview = f"{preview}..."
+    return preview
+
+
 async def _call_background_llm_with_retry(call_fn, operation_name: str, max_attempts: int = 3):
     for attempt in range(1, max_attempts + 1):
         try:
@@ -241,6 +270,8 @@ router = APIRouter(tags=["sessions"])
 async def get_chat_history(
     context_id: Optional[str] = None,
     is_main: Optional[bool] = False,
+    search: Optional[str] = None,
+    session_ids: Optional[str] = None,
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -257,12 +288,61 @@ async def get_chat_history(
             query = query.eq("context_id", context_id)
         elif is_main:
             query = query.is_("context_id", "null")
+
+        scoped_session_ids = [
+            item.strip()
+            for item in (session_ids or "").split(",")
+            if item.strip()
+        ]
+        if scoped_session_ids:
+            query = query.in_("id", scoped_session_ids)
         
         res = await _execute_with_retry(
             lambda: query.execute(),
             "Fetch chat history sessions",
         )
-        return res.data
+        sessions = res.data or []
+
+        normalized_search = _normalize_history_search(search)
+        if not normalized_search:
+            return sessions
+
+        lowered_search = normalized_search.lower()
+        session_map = {session["id"]: dict(session) for session in sessions if session.get("id")}
+        matched_session_ids: set[str] = set()
+
+        for session in session_map.values():
+            title = str(session.get("title") or "")
+            if lowered_search in title.lower():
+                session["search_match_source"] = "title"
+                matched_session_ids.add(session["id"])
+
+        session_id_list = list(session_map.keys())
+        if session_id_list:
+            message_res = await _execute_with_retry(
+                lambda: shared.supabase_client.table("chat_messages")
+                .select("session_id,content,created_at")
+                .in_("session_id", session_id_list)
+                .ilike("content", f"%{normalized_search}%")
+                .order("created_at", desc=True)
+                .limit(200)
+                .execute(),
+                "Fetch matching chat messages",
+            )
+
+            for row in message_res.data or []:
+                session_id = row.get("session_id")
+                if not session_id or session_id not in session_map:
+                    continue
+                session = session_map[session_id]
+                if not session.get("search_preview"):
+                    preview = _build_message_search_preview(str(row.get("content") or ""), normalized_search)
+                    if preview:
+                        session["search_preview"] = preview
+                        session["search_match_source"] = "message"
+                matched_session_ids.add(session_id)
+
+        return [session_map[sid] for sid in session_map if sid in matched_session_ids]
     except Exception as e:
         logger.error(f"History Fetch Error: {e}")
         raise HTTPException(status_code=500, detail="Unable to load your chat history. Please try again.")

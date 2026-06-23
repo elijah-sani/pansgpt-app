@@ -656,6 +656,8 @@ class ChatSession(BaseModel):
     context_id: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
+    search_preview: Optional[str] = None
+    search_match_source: Optional[str] = None
 
 class CreateSessionResponse(BaseModel):
     id: str

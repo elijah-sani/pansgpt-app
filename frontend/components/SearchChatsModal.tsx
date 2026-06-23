@@ -2,12 +2,15 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { X, Search, MessageSquare } from 'lucide-react';
+import { api } from '@/lib/api';
 
 interface ChatSession {
     id: string;
     title: string;
     created_at: string;
     updated_at?: string | null;
+    search_preview?: string | null;
+    search_match_source?: string | null;
 }
 
 interface SearchChatsModalProps {
@@ -19,17 +22,64 @@ interface SearchChatsModalProps {
 
 export default function SearchChatsModal({ isOpen, onClose, sessions, onSelectSession }: SearchChatsModalProps) {
     const [query, setQuery] = useState('');
+    const [remoteResults, setRemoteResults] = useState<ChatSession[]>([]);
+    const [isSearching, setIsSearching] = useState(false);
 
     useEffect(() => {
         if (isOpen) {
             setQuery('');
+            setRemoteResults([]);
         }
     }, [isOpen]);
 
+    useEffect(() => {
+        const trimmedQuery = query.trim();
+        if (!isOpen || !trimmedQuery) {
+            setIsSearching(false);
+            setRemoteResults([]);
+            return;
+        }
+
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(async () => {
+            setIsSearching(true);
+            try {
+                const sessionIds = sessions.map((session) => session.id).filter(Boolean).join(',');
+                const params = new URLSearchParams({ search: trimmedQuery });
+                if (sessionIds) {
+                    params.set('session_ids', sessionIds);
+                }
+
+                const response = await api.fetch(`/history?${params.toString()}`, {
+                    signal: controller.signal,
+                });
+
+                if (response.ok) {
+                    const payload = await response.json() as ChatSession[];
+                    setRemoteResults(Array.isArray(payload) ? payload : []);
+                }
+            } catch (error) {
+                if (!(error instanceof DOMException && error.name === 'AbortError')) {
+                    console.error('Failed to search chats:', error);
+                    setRemoteResults([]);
+                }
+            } finally {
+                if (!controller.signal.aborted) {
+                    setIsSearching(false);
+                }
+            }
+        }, 180);
+
+        return () => {
+            controller.abort();
+            window.clearTimeout(timeoutId);
+        };
+    }, [isOpen, query, sessions]);
+
     const filteredSessions = useMemo(() => {
         if (!query.trim()) return sessions;
-        return sessions.filter(s => s.title.toLowerCase().includes(query.toLowerCase()));
-    }, [query, sessions]);
+        return remoteResults;
+    }, [query, remoteResults, sessions]);
 
     const grouped = useMemo(() => {
         const groups: Record<string, ChatSession[]> = {
@@ -66,6 +116,33 @@ export default function SearchChatsModal({ isOpen, onClose, sessions, onSelectSe
         return groups;
     }, [filteredSessions]);
 
+    const renderHighlightedText = (text: string, searchQuery: string, muted = false) => {
+        const trimmedQuery = searchQuery.trim();
+        if (!trimmedQuery) {
+            return <span>{text}</span>;
+        }
+
+        const pattern = new RegExp(`(${trimmedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'ig');
+        const parts = text.split(pattern);
+
+        return (
+            <>
+                {parts.map((part, index) => (
+                    part.toLowerCase() === trimmedQuery.toLowerCase() ? (
+                        <mark
+                            key={`${part}-${index}`}
+                            className={muted ? 'rounded bg-primary/15 px-0.5 text-foreground' : 'rounded bg-primary/20 px-0.5 text-foreground'}
+                        >
+                            {part}
+                        </mark>
+                    ) : (
+                        <span key={`${part}-${index}`}>{part}</span>
+                    )
+                ))}
+            </>
+        );
+    };
+
     if (!isOpen) return null;
 
     return (
@@ -92,6 +169,9 @@ export default function SearchChatsModal({ isOpen, onClose, sessions, onSelectSe
 
                 {/* Results List */}
                 <div className="flex-1 overflow-y-auto px-2 py-4 space-y-6 bg-card">
+                    {isSearching ? (
+                        <div className="px-4 text-sm text-muted-foreground">Searching chats...</div>
+                    ) : null}
                     {Object.entries(grouped).map(([label, groupSessions]) => {
                         if (groupSessions.length === 0) return null;
                         return (
@@ -109,8 +189,17 @@ export default function SearchChatsModal({ isOpen, onClose, sessions, onSelectSe
                                             }}
                                             className="w-full flex items-center gap-3 px-4 py-3 text-sm text-foreground hover:bg-muted/50 rounded-lg transition-colors text-left"
                                         >
-                                            <MessageSquare className="w-4 h-4 text-muted-foreground shrink-0" />
-                                            <span className="truncate flex-1 font-medium">{session.title}</span>
+                                            <MessageSquare className="w-4 h-4 text-muted-foreground shrink-0 self-start mt-0.5" />
+                                            <div className="min-w-0 flex-1">
+                                                <div className="truncate font-medium">
+                                                    {renderHighlightedText(session.title, query)}
+                                                </div>
+                                                {session.search_preview ? (
+                                                    <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                                                        {renderHighlightedText(session.search_preview, query, true)}
+                                                    </p>
+                                                ) : null}
+                                            </div>
                                         </button>
                                     ))}
                                 </div>
