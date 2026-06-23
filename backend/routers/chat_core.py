@@ -76,6 +76,42 @@ import random
 from restrictions import build_restriction_block_payload, get_applicable_user_restriction
 
 WEB_SEARCH_FEATURE_ENABLED = os.getenv("WEB_SEARCH_FEATURE_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+VISION_HISTORY_MAX_TOKENS = max(2000, int(os.getenv("VISION_HISTORY_MAX_TOKENS", "9000")))
+VISION_MAX_OUTPUT_TOKENS = max(256, int(os.getenv("VISION_MAX_OUTPUT_TOKENS", "768")))
+VISION_RAG_CHUNK_COUNT = max(1, int(os.getenv("VISION_RAG_CHUNK_COUNT", "2")))
+VISION_CONTEXT_MAX_CHARS = max(600, int(os.getenv("VISION_CONTEXT_MAX_CHARS", "1800")))
+VISION_MAX_CONVERSATION_MESSAGES = max(1, int(os.getenv("VISION_MAX_CONVERSATION_MESSAGES", "4")))
+VISION_IMAGE_TOKEN_COST = max(64, int(os.getenv("VISION_IMAGE_TOKEN_COST", "512")))
+
+
+def _estimate_message_tokens(
+    messages: list[dict],
+    *,
+    chars_per_token: int = 4,
+    image_token_cost: int = VISION_IMAGE_TOKEN_COST,
+) -> int:
+    def _content_tokens(content: object) -> int:
+        if isinstance(content, list):
+            total = 0
+            for part in content:
+                if isinstance(part, dict):
+                    part_type = part.get("type")
+                    if part_type == "text":
+                        total += len(str(part.get("text", ""))) // chars_per_token
+                    elif part_type == "image_url":
+                        total += image_token_cost
+                    else:
+                        total += len(str(part)) // chars_per_token
+                else:
+                    total += len(str(part)) // chars_per_token
+            return total
+        if isinstance(content, dict):
+            if content.get("type") == "image_url":
+                return image_token_cost
+            return len(str(content)) // chars_per_token
+        return len(str(content or "")) // chars_per_token
+
+    return sum(_content_tokens(message.get("content", "")) for message in messages)
 
 
 def _trim_messages_to_fit(
@@ -89,14 +125,8 @@ def _trim_messages_to_fit(
     Always keeps the system prompt and the most recent user message.
     Removes oldest messages first when over budget.
     """
-    # Estimate token usage
-    def estimate_tokens(msgs: list[dict]) -> int:
-        total_chars = sum(len(str(m.get("content", ""))) for m in msgs)
-        # system prompt text is already inside `msgs` as a system message
-        return total_chars // chars_per_token
-
     # If already within budget, return as-is
-    if estimate_tokens(messages) <= max_tokens:
+    if _estimate_message_tokens(messages, chars_per_token=chars_per_token) <= max_tokens:
         return messages
 
     # Separate system messages from conversation messages
@@ -111,12 +141,88 @@ def _trim_messages_to_fit(
     trimable = conversation_msgs[:-1]
 
     # Remove oldest messages until within budget
-    while trimable and estimate_tokens(system_msgs + trimable + [last_msg]) > max_tokens:
+    while trimable and _estimate_message_tokens(system_msgs + trimable + [last_msg], chars_per_token=chars_per_token) > max_tokens:
         trimable.pop(0)
         logger.warning(f"Trimmed 1 message from context window. Remaining: {len(trimable)}")
 
     trimmed = system_msgs + trimable + [last_msg]
-    logger.info(f"Context window: {len(trimmed)} messages, ~{estimate_tokens(trimmed)} tokens estimated")
+    logger.info(f"Context window: {len(trimmed)} messages, ~{_estimate_message_tokens(trimmed, chars_per_token=chars_per_token)} tokens estimated")
+    return trimmed
+
+
+def _apply_vision_pipeline_budget(pipeline_params: dict) -> dict:
+    adjusted = dict(pipeline_params or {})
+    adjusted["rag_chunk_count"] = min(int(adjusted.get("rag_chunk_count", VISION_RAG_CHUNK_COUNT)), VISION_RAG_CHUNK_COUNT)
+    adjusted["fetch_timetable"] = False
+    adjusted["fetch_faculty"] = False
+    adjusted["run_web_search"] = False
+    return adjusted
+
+
+def _truncate_vision_context(context_text: str) -> str:
+    text = (context_text or "").strip()
+    if not text:
+        return ""
+    if len(text) <= VISION_CONTEXT_MAX_CHARS:
+        return text
+    return text[:VISION_CONTEXT_MAX_CHARS].rstrip() + "..."
+
+
+def _build_vision_system_prompt(
+    *,
+    system_prompt: str,
+    student_profile_text: str,
+    current_time_str: str,
+    tomorrow_str: str,
+    context_text: str,
+    study_mode: bool,
+) -> str:
+    compact_context = _truncate_vision_context(context_text)
+    base = f"""{system_prompt}
+
+CURRENT TIME & DATE (NIGERIA):
+Today: {current_time_str}
+Tomorrow: {tomorrow_str}
+
+STUDENT PROFILE:
+{student_profile_text}
+
+VISION MODE - STRICT RULES:
+- Focus on the attached image or snippet first.
+- Answer directly without greetings or filler.
+- Keep the explanation concise unless the user explicitly asks for more detail.
+- Use only the most relevant curriculum context below.
+- If the image is blurry, unreadable, or incomplete, say so briefly and explain what can still be inferred.
+- Do not cite sources, lecturers, course codes, or page numbers inline.
+"""
+    if study_mode:
+        base += "\nSTUDY MODE:\n- Prioritise interpreting the attached document snippet over general background discussion.\n"
+    if compact_context:
+        base += f"\nRELEVANT CURRICULUM CONTEXT (TRUNCATED):\n{compact_context}\n"
+    return base
+
+
+def _shape_vision_messages(messages: list[dict], vision_system_prompt: str) -> list[dict]:
+    system_msgs = [msg for msg in messages if msg.get("role") == "system"]
+    conversation_msgs = [msg for msg in messages if msg.get("role") != "system"]
+    kept_conversation = conversation_msgs[-VISION_MAX_CONVERSATION_MESSAGES:]
+
+    shaped_messages: list[dict] = [{"role": "system", "content": vision_system_prompt}]
+    if len(system_msgs) > 1:
+        shaped_messages.extend(system_msgs[1:])
+    shaped_messages.extend(kept_conversation)
+
+    trimmed = _trim_messages_to_fit(
+        shaped_messages,
+        vision_system_prompt,
+        max_tokens=VISION_HISTORY_MAX_TOKENS,
+    )
+    logger.info(
+        "Vision request shaping: kept_conversation=%s total_messages=%s estimated_tokens=%s",
+        len(kept_conversation),
+        len(trimmed),
+        _estimate_message_tokens(trimmed),
+    )
     return trimmed
 
 
@@ -1039,6 +1145,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
         import time
         web_search_text = ""
         web_search_limit_reached = False
+        direct_vision_mode = bool(request.images)
 
         if request.thinking_mode:
             pipeline_params = STREAMING_PLANNER_DEFAULTS.copy()
@@ -1069,6 +1176,9 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
             )
         else:
             pipeline_params = FAST_MODE_DEFAULTS.copy()
+
+        if direct_vision_mode:
+            pipeline_params = _apply_vision_pipeline_budget(pipeline_params)
 
         rag_chunk_count = pipeline_params["rag_chunk_count"]
         should_web_search = pipeline_params["run_web_search"]
@@ -1464,7 +1574,21 @@ Do not mention the limit in your response unless the user explicitly asks why we
             messages.append({"role": "user", "content": content_blocks})
 
             try:
-                messages = _trim_messages_to_fit(messages, final_system_prompt)
+                vision_system_prompt = _build_vision_system_prompt(
+                    system_prompt=system_prompt,
+                    student_profile_text=student_profile_text,
+                    current_time_str=current_time_str,
+                    tomorrow_str=tomorrow_str,
+                    context_text=context_text,
+                    study_mode=bool(request.document_id),
+                )
+                logger.info(
+                    "Vision request budget: rag_chunks=%s context_chars=%s output_tokens=%s",
+                    rag_chunk_count,
+                    len(_truncate_vision_context(context_text)),
+                    VISION_MAX_OUTPUT_TOKENS,
+                )
+                messages = _shape_vision_messages(messages, vision_system_prompt)
                 messages = merge_system_into_user(messages)
 
                 selected_model = llm_engine.VISION_PRIMARY
@@ -1496,7 +1620,8 @@ Do not mention the limit in your response unless the user explicitly asks why we
                     messages=messages,
                     has_images=True,
                     temperature=temperature,
-                    max_tokens=2048,
+                    max_tokens=VISION_MAX_OUTPUT_TOKENS,
+                    requested_model="VISION_PRIMARY",
                 )
                 yield {"status": "preparing_response"}
                 async for event in _stream_completion_events(completion_stream):
@@ -1552,6 +1677,8 @@ Do not mention the limit in your response unless the user explicitly asks why we
                 selected_model = llm_engine.VISION_PRIMARY
                 logger.info(f"Smart Router: Found images in history, using {selected_model}")
                 is_vision_mode = True
+                pipeline_params = _apply_vision_pipeline_budget(pipeline_params)
+                rag_chunk_count = pipeline_params["rag_chunk_count"]
             else:
                 selected_model = llm_engine.TEXT_PRIMARY if request.thinking_mode else llm_engine.TEXT_SECONDARY
                 logger.info(f"Smart Router: Pure text detected, processing efficiently with {selected_model}")
@@ -1586,7 +1713,24 @@ Do not mention the limit in your response unless the user explicitly asks why we
                         msg["content"] = "/no_think\n" + msg["content"]
                         break
 
-            messages = _trim_messages_to_fit(messages, final_system_prompt)
+            if is_vision_mode:
+                vision_system_prompt = _build_vision_system_prompt(
+                    system_prompt=system_prompt,
+                    student_profile_text=student_profile_text,
+                    current_time_str=current_time_str,
+                    tomorrow_str=tomorrow_str,
+                    context_text=context_text,
+                    study_mode=bool(request.document_id),
+                )
+                logger.info(
+                    "Vision request budget: rag_chunks=%s context_chars=%s output_tokens=%s",
+                    rag_chunk_count,
+                    len(_truncate_vision_context(context_text)),
+                    VISION_MAX_OUTPUT_TOKENS,
+                )
+                messages = _shape_vision_messages(messages, vision_system_prompt)
+            else:
+                messages = _trim_messages_to_fit(messages, final_system_prompt)
 
             messages = merge_system_into_user(messages)
 
@@ -1603,8 +1747,9 @@ Do not mention the limit in your response unless the user explicitly asks why we
                 messages=messages,
                 has_images=is_vision_mode,
                 temperature=temperature,
-                max_tokens=2048,
-                requested_model="TEXT_PRIMARY" if request.thinking_mode else "TEXT_SECONDARY",
+                max_tokens=VISION_MAX_OUTPUT_TOKENS if is_vision_mode else 2048,
+                requested_model="VISION_PRIMARY" if is_vision_mode else ("TEXT_PRIMARY" if request.thinking_mode else "TEXT_SECONDARY"),
+                preferred_models=None if request.thinking_mode else llm_engine.FAST_TEXT_MODEL_ORDER,
             )
             yield {"status": "preparing_response"}
             async for event in _stream_completion_events(completion_stream):
@@ -1970,6 +2115,9 @@ async def edit_message(
             else:
                 pipeline_params = FAST_MODE_DEFAULTS.copy()
 
+            if has_images_for_rag:
+                pipeline_params = _apply_vision_pipeline_budget(pipeline_params)
+
             rag_chunk_count = pipeline_params["rag_chunk_count"]
             should_web_search = pipeline_params["run_web_search"]
             should_timetable = pipeline_params["fetch_timetable"]
@@ -2331,6 +2479,8 @@ Do not mention the limit in your response unless the user explicitly asks why we
                 selected_model = llm_engine.VISION_PRIMARY
                 logger.info(f"Smart Router: Images detected in context, using {selected_model}")
                 is_vision_mode = True
+                pipeline_params = _apply_vision_pipeline_budget(pipeline_params)
+                rag_chunk_count = pipeline_params["rag_chunk_count"]
             else:
                 selected_model = llm_engine.TEXT_PRIMARY if payload.thinking_mode else llm_engine.TEXT_SECONDARY
                 logger.info(f"Smart Router: Text-only context, using {selected_model}")
@@ -2355,14 +2505,31 @@ Do not mention the limit in your response unless the user explicitly asks why we
                         msg["content"] = "/no_think\n" + msg["content"]
                         break
 
-            llm_messages = _trim_messages_to_fit(llm_messages, final_system_prompt)
+            if is_vision_mode:
+                vision_system_prompt = _build_vision_system_prompt(
+                    system_prompt=system_prompt,
+                    student_profile_text=student_profile_text,
+                    current_time_str=current_time_str,
+                    tomorrow_str=tomorrow_str,
+                    context_text=context_text,
+                    study_mode=False,
+                )
+                logger.info(
+                    "Vision request budget: rag_chunks=%s context_chars=%s output_tokens=%s",
+                    rag_chunk_count,
+                    len(_truncate_vision_context(context_text)),
+                    VISION_MAX_OUTPUT_TOKENS,
+                )
+                llm_messages = _shape_vision_messages(llm_messages, vision_system_prompt)
+            else:
+                llm_messages = _trim_messages_to_fit(llm_messages, final_system_prompt)
             llm_messages = merge_system_into_user(llm_messages)
             completion_stream = llm_engine.generate_dual_cloud_stream(
                 messages=llm_messages,
                 has_images=is_vision_mode,
                 temperature=temperature,
-                max_tokens=2048,
-                requested_model="TEXT_PRIMARY" if payload.thinking_mode else "TEXT_SECONDARY",
+                max_tokens=VISION_MAX_OUTPUT_TOKENS if is_vision_mode else 2048,
+                requested_model="VISION_PRIMARY" if is_vision_mode else ("TEXT_PRIMARY" if payload.thinking_mode else "TEXT_SECONDARY"),
             )
             yield {"status": "preparing_response"}
             async for event in _stream_completion_events(completion_stream):
@@ -2468,6 +2635,9 @@ async def regenerate_response(
                         pipeline_params = planner_event["pipeline_params"]
             else:
                 pipeline_params = FAST_MODE_DEFAULTS.copy()
+
+            if has_images_for_rag:
+                pipeline_params = _apply_vision_pipeline_budget(pipeline_params)
 
             rag_chunk_count = pipeline_params["rag_chunk_count"]
             should_web_search = pipeline_params["run_web_search"]
@@ -2800,6 +2970,8 @@ Do not mention the limit in your response unless the user explicitly asks why we
                 selected_model = llm_engine.VISION_PRIMARY
                 logger.info(f"Smart Router: Images detected in context, using {selected_model}")
                 is_vision_mode = True
+                pipeline_params = _apply_vision_pipeline_budget(pipeline_params)
+                rag_chunk_count = pipeline_params["rag_chunk_count"]
             else:
                 selected_model = llm_engine.TEXT_PRIMARY if payload.thinking_mode else llm_engine.TEXT_SECONDARY
                 logger.info(f"Smart Router: Text-only context, using {selected_model}")
@@ -2824,14 +2996,31 @@ Do not mention the limit in your response unless the user explicitly asks why we
                         msg["content"] = "/no_think\n" + msg["content"]
                         break
 
-            llm_messages = _trim_messages_to_fit(llm_messages, final_system_prompt)
+            if is_vision_mode:
+                vision_system_prompt = _build_vision_system_prompt(
+                    system_prompt=system_prompt,
+                    student_profile_text=student_profile_text,
+                    current_time_str=current_time_str,
+                    tomorrow_str=tomorrow_str,
+                    context_text=context_text,
+                    study_mode=False,
+                )
+                logger.info(
+                    "Vision request budget: rag_chunks=%s context_chars=%s output_tokens=%s",
+                    rag_chunk_count,
+                    len(_truncate_vision_context(context_text)),
+                    VISION_MAX_OUTPUT_TOKENS,
+                )
+                llm_messages = _shape_vision_messages(llm_messages, vision_system_prompt)
+            else:
+                llm_messages = _trim_messages_to_fit(llm_messages, final_system_prompt)
             llm_messages = merge_system_into_user(llm_messages)
             completion_stream = llm_engine.generate_dual_cloud_stream(
                 messages=llm_messages,
                 has_images=is_vision_mode,
                 temperature=temperature,
-                max_tokens=2048,
-                requested_model="TEXT_PRIMARY" if payload.thinking_mode else "TEXT_SECONDARY",
+                max_tokens=VISION_MAX_OUTPUT_TOKENS if is_vision_mode else 2048,
+                requested_model="VISION_PRIMARY" if is_vision_mode else ("TEXT_PRIMARY" if payload.thinking_mode else "TEXT_SECONDARY"),
             )
             yield {"status": "preparing_response"}
             async for event in _stream_completion_events(completion_stream):

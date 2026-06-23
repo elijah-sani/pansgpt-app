@@ -14,6 +14,7 @@ TEXT_SECONDARY = "gemma-4-26b-a4b-it"         # Google AI Studio fallback
 TEXT_TERTIARY = "meta-llama/llama-4-scout-17b-16e-instruct"  # [GROQ TERTIARY FIX]
 # Compatibility alias for callers still referencing TEXT_FALLBACK.
 TEXT_FALLBACK = TEXT_SECONDARY
+FAST_TEXT_MODEL_ORDER = [TEXT_TERTIARY, TEXT_SECONDARY, TEXT_PRIMARY]
 QUIZ_TEXT_MODEL_ORDER = [TEXT_TERTIARY, TEXT_SECONDARY, TEXT_PRIMARY]
 
 SMALL_PRIMARY = "meta-llama/llama-3.3-70b-instruct:free"   # OpenRouter (Llama 3.3 70B Free)
@@ -21,8 +22,22 @@ SMALL_SECONDARY = "llama-3.1-8b-instant"                  # Groq (Llama 3.1 8b)
 SMALL_TERTIARY = "qwen/qwen-2.5-72b-instruct:free"         # OpenRouter (Qwen 2.5 72B Free)
 TEXT_FAST = SMALL_PRIMARY                  # Smaller and faster model for quick tasks (e.g. titles)
 
-VISION_PRIMARY = "gemma-4-31b-it"           # Google AI Studio vision primary
-VISION_FALLBACK = "qwen/qwen3-vl-235b-a22b-thinking"  # OpenRouter vision fallback
+VISION_PRIMARY = "meta-llama/llama-4-scout-17b-16e-instruct"
+VISION_SECONDARY = "gemma-4-31b-it"
+VISION_TERTIARY = "gemma-4-26b-a4b-it"
+VISION_QUATERNARY = "qwen/qwen3-vl-235b-a22b-thinking"
+VISION_MODEL_ORDER = [
+    VISION_PRIMARY,
+    VISION_SECONDARY,
+    VISION_TERTIARY,
+    VISION_QUATERNARY,
+]
+VISION_MODEL_MAX_TOKENS = {
+    VISION_PRIMARY: 768,
+    VISION_SECONDARY: 640,
+    VISION_TERTIARY: 512,
+    VISION_QUATERNARY: 384,
+}
 
 openrouter_client = None
 google_client = None
@@ -203,7 +218,7 @@ async def generate_completion_with_failover(
     if force_google:
         if google_client is None:
             raise RuntimeError("Google fallback client not initialized.")
-        forced_model = VISION_FALLBACK if has_images else TEXT_PRIMARY
+        forced_model = VISION_SECONDARY if has_images else TEXT_PRIMARY
         logger.info(f"[INFO] Forcing generation with Google model: {forced_model}")
         logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "FORCE_GOOGLE", forced_model)
         
@@ -254,34 +269,49 @@ async def generate_completion_with_failover(
                     return res
             raise exc
 
-    # --- Vision path (unchanged logic, just updated model names) ---
+    # --- Vision path ---
     if has_images:
-        # Try Google vision primary first
-        try:
-            if google_client is None:
-                raise RuntimeError("Google fallback client not initialized")
-            logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "VISION_PRIMARY", VISION_PRIMARY)
-            return await google_client.chat.completions.create(
-                model=VISION_PRIMARY,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stream=stream,
-            )
-        except Exception as exc:
-            logger.warning(f"Vision primary failed ({VISION_PRIMARY}), falling back to OpenRouter: {exc}")
+        last_exc = None
+        for model_name in VISION_MODEL_ORDER:
+            if model_name == VISION_PRIMARY:
+                client = groq_text_client
+            elif model_name in {VISION_SECONDARY, VISION_TERTIARY}:
+                client = google_client
+            else:
+                client = openrouter_client
 
-        # Fallback to OpenRouter for vision
-        if openrouter_client is None:
-            raise RuntimeError("OpenRouter client not initialized.")
-        logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "VISION_PRIMARY", VISION_FALLBACK)
-        return await openrouter_client.chat.completions.create(
-            model=VISION_FALLBACK,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=stream,
-        )
+            if client is None:
+                continue
+
+            try:
+                vision_max_tokens = min(max_tokens, VISION_MODEL_MAX_TOKENS.get(model_name, max_tokens))
+                if client is openrouter_client:
+                    vision_max_tokens = min(vision_max_tokens, OPENROUTER_FALLBACK_MAX_TOKENS)
+
+                logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "VISION_PRIMARY", model_name)
+                kwargs = {
+                    "model": model_name,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": vision_max_tokens,
+                    "stream": stream,
+                }
+                res = await _create_completion_with_audit(
+                    client,
+                    kwargs,
+                    audit_meta=audit_meta,
+                    timeout_seconds=per_provider_timeout_seconds,
+                )
+                if _should_reject_response_content(res, stream=stream):
+                    raise ValueError(f"{model_name} returned empty or thinking-only response content")
+                return res
+            except Exception as exc:
+                last_exc = exc
+                logger.warning(f"Vision model failed ({model_name}), trying next: {exc}")
+
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("No vision-capable client is available.")
 
     # [MODEL ROUTING FIX]
     full_order = [
@@ -438,6 +468,7 @@ async def generate_dual_cloud_stream(
     temperature: float = 0.7,
     max_tokens: int = 2048,
     requested_model: Optional[str] = None,
+    preferred_models: Optional[list[str]] = None,
 ) -> AsyncIterator[Any]:
     completion_stream = await generate_completion_with_failover(
         messages=messages,
@@ -446,6 +477,7 @@ async def generate_dual_cloud_stream(
         has_images=has_images,
         stream=True,
         requested_model=requested_model,
+        preferred_models=preferred_models,
     )
     if completion_stream is None:
         return
