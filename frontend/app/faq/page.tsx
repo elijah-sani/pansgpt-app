@@ -1,215 +1,365 @@
-'use client';
+"use client";
 
-import React, { useState } from 'react';
+import { useEffect, useMemo, useState } from "react";
+import { motion } from "framer-motion";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  AlertCircle,
+  ArrowUp,
+  BookOpen,
+  Brain,
+  CircleHelp,
+  FileQuestion,
+  LineChart,
+  Lock,
+  MessageSquare,
+  Send,
+  Sparkles,
+} from "lucide-react";
+import Navigation from "@/components/landing/Navigation";
+import Footer from "@/components/landing/Footer";
 
-const faqs = [
+type FaqItem = {
+  question: string;
+  answer: string;
+};
+
+type FaqSection = {
+  id: string;
+  title: string;
+  description: string;
+  icon: typeof CircleHelp;
+  items: FaqItem[];
+};
+
+const faqSections: FaqSection[] = [
   {
-    q: 'What is PansGPT?',
-    a: 'PansGPT is an AI-powered learning platform that combines advanced chat, personalized quizzes, analytics, and document search to help you master your courses. It uses state-of-the-art AI to answer your questions, generate quizzes from your materials, and track your progress.'
+    id: "getting-started",
+    title: "Getting Started",
+    description: "Core questions about what PansGPT is and how to begin using it well.",
+    icon: Sparkles,
+    items: [
+      {
+        question: "What is PansGPT?",
+        answer:
+          "PansGPT is an AI-powered learning platform that combines advanced chat, personalized quizzes, analytics, and document search to help you master your courses. It answers questions, generates quizzes from your materials, and helps track study progress.",
+      },
+      {
+        question: "How do I use the AI chat?",
+        answer:
+          "Type your question or topic into the chat box on the main page. The AI responds using your uploaded course materials when available, plus general academic knowledge. You can also edit a previous message and the assistant will regenerate the answer from the updated prompt.",
+      },
+      {
+        question: "Can I use PansGPT for any subject?",
+        answer:
+          "Yes. PansGPT is designed to support academic study across different subjects. Results improve when you upload clear, relevant materials for the specific course you want to study.",
+      },
+      {
+        question: "How do I get the best results from the AI?",
+        answer:
+          "Upload clean, well-organized materials, ask specific questions, and provide context when something is ambiguous. The quiz and study features work better when your documents are complete and clearly titled.",
+      },
+    ],
   },
   {
-    q: 'How do I use the AI chat?',
-    a: 'Simply type your question or topic into the chat box on the main page. The AI will respond with detailed, context-aware answers, drawing from your uploaded course materials and general academic knowledge. You can edit your previous messages, and the AI will update its response accordingly.'
+    id: "quizzes",
+    title: "Quizzes and Study Tools",
+    description: "How quiz generation, grading, and practice behavior work.",
+    icon: Brain,
+    items: [
+      {
+        question: "How does quiz generation work?",
+        answer:
+          "Go to the Quiz page and select your course or topic. PansGPT generates multiple-choice or short-answer questions from your uploaded materials and available course context, while trying to keep them relevant and non-repetitive.",
+      },
+      {
+        question: "How are quizzes graded?",
+        answer:
+          "Multiple-choice questions are graded automatically. Short-answer responses are evaluated by AI using expected concepts, accuracy, and completeness, and may receive partial credit when the answer is close but incomplete.",
+      },
+      {
+        question: "Why are some quiz questions missing or repeated?",
+        answer:
+          "Quiz quality depends heavily on the amount and variety of your uploaded materials. If the source material is narrow or repetitive, generated questions may also cluster around the same ideas.",
+      },
+      {
+        question: "What do the analytics and streaks mean?",
+        answer:
+          "The Analytics page summarizes your study activity, such as questions asked, answers read, documents opened, and your consistency over time. Streaks track consecutive study days.",
+      },
+      {
+        question: "How do achievements work?",
+        answer:
+          "Achievements unlock as you use the platform more deeply, such as reading documents, taking quizzes, or exploring different study workflows. You can view unlocked badges on your profile.",
+      },
+    ],
   },
   {
-    q: 'How does quiz generation work?',
-    a: 'Go to the Quiz page and select your course or topic. PansGPT will generate a set of multiple-choice or short-answer questions based on your uploaded materials. The AI ensures questions are unique and relevant. You can take quizzes to test your understanding and get instant feedback.'
+    id: "account-data",
+    title: "Account, Profile, and Data",
+    description: "Privacy, profile updates, and account-related expectations.",
+    icon: Lock,
+    items: [
+      {
+        question: "How do I update my profile?",
+        answer:
+          "Open your Profile page and choose Edit Profile. You can update your name, level, bio, and profile picture, and changes are reflected across the platform.",
+      },
+      {
+        question: "Is my data private and secure?",
+        answer:
+          "Your uploaded documents, chat history, and learning activity are intended to remain private to your account and are stored using standard application security controls.",
+      },
+      {
+        question: "How do I reset my password?",
+        answer:
+          'On the login page, click "Forgot password?" and follow the reset instructions sent to your email.',
+      },
+    ],
   },
   {
-    q: 'How are quizzes graded?',
-    a: "Multiple-choice questions are graded automatically. For short-answer questions, PansGPT uses AI to evaluate your response, considering key concepts, accuracy, and completeness. You'll receive a score and detailed feedback. Partial credit is awarded when your answer is close but not fully correct."
-  },
-  {
-    q: 'What do the analytics and streaks mean?',
-    a: "The Analytics page summarizes your learning activity: questions asked, responses read, documents accessed, and your study streak. Streaks show how many consecutive days you've studied, motivating you to keep learning!"
-  },
-  {
-    q: 'How do achievements work?',
-    a: 'Achievements are unlocked as you use PansGPT-viewing documents, taking quizzes, or exploring new topics. Each achievement has a unique badge. You can view your unlocked achievements on your profile page.'
-  },
-  {
-    q: 'How do I update my profile?',
-    a: 'Go to your Profile page and click "Edit Profile." You can update your name, level, bio, and profile picture. Changes are saved instantly and will be visible across the platform.'
-  },
-  {
-    q: 'Is my data private and secure?',
-    a: 'Yes! Your uploaded documents, chat history, and analytics are private and securely stored. Only you can access your data. We use industry-standard security practices to protect your information.'
-  },
-  {
-    q: 'Why are some quiz questions missing or repeated?',
-    a: 'Quiz quality depends on the amount and quality of your uploaded materials. If you see repeated or missing questions, try uploading more comprehensive notes or documents. The AI does its best to generate unique, relevant questions each time.'
-  },
-  {
-    q: 'What should I do if the AI gives a wrong or confusing answer?',
-    a: 'AI is powerful but not perfect. If you get a confusing answer, try rephrasing your question or providing more context. You can also edit your previous message to clarify, and the AI will update its response.'
-  },
-  {
-    q: 'How do I contact support or give feedback?',
-    a: 'Click the three dots in the top right of the main page and select "Feedback." You can send us your suggestions, bug reports, or questions. We value your input and are always working to improve PansGPT!'
-  },
-  {
-    q: 'What browsers and devices are supported?',
-    a: 'PansGPT works best on modern browsers like Chrome, Edge, or Firefox, and is fully responsive for use on desktop, tablet, or mobile devices.'
-  },
-  {
-    q: 'How do I reset my password?',
-    a: 'On the login page, click "Forgot password?" and follow the instructions. You will receive an email to reset your password securely.'
-  },
-  {
-    q: 'Can I use PansGPT for any subject?',
-    a: 'Yes! PansGPT is designed to help with any academic subject. Upload your course materials, ask questions, and generate quizzes for science, engineering, humanities, and more.'
-  },
-  {
-    q: 'How do I get the best results from the AI?',
-    a: 'Upload clear, well-organized course materials. Ask specific questions, and use the quiz feature regularly. The more you interact, the better PansGPT can personalize your learning experience.'
-  },
-  {
-    q: 'What if I run into technical issues?',
-    a: "Try refreshing the page or logging out and back in. If problems persist, contact support through the Feedback page. We're here to help!"
+    id: "support",
+    title: "Support and Troubleshooting",
+    description: "Where to go when answers are wrong, issues appear, or you need help.",
+    icon: MessageSquare,
+    items: [
+      {
+        question: "What should I do if the AI gives a wrong or confusing answer?",
+        answer:
+          "Try rephrasing the question, adding more context, or editing the previous message so the assistant can regenerate with clearer instructions. AI answers can be imperfect, so verification still matters.",
+      },
+      {
+        question: "What browsers and devices are supported?",
+        answer:
+          "PansGPT works best on current versions of major browsers like Chrome, Edge, and Firefox, and is designed to work on desktop, tablet, and mobile layouts.",
+      },
+      {
+        question: "What if I run into technical issues?",
+        answer:
+          "Refresh the page first, then sign out and back in if needed. If the issue persists, contact support or report the problem through the app support surfaces.",
+      },
+      {
+        question: "How do I contact support or give feedback?",
+        answer:
+          "Use the support and feedback options available inside the app. If you need direct help, use the Contact Us entry from the Help or Settings area.",
+      },
+    ],
   },
 ];
 
-const levels = [
-  '100 Level',
-  '200 Level',
-  '300 Level',
-  '400 Level',
-  '500 Level',
-  '600 Level'
-];
+export default function FaqPage() {
+  const [showScrollTop, setShowScrollTop] = useState(false);
 
-const FaqPage = () => {
-  const [openIdx, setOpenIdx] = useState<number | null>(null);
-  const [showDialog, setShowDialog] = useState(false);
-  const [formData, setFormData] = useState({ level: '', message: '' });
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [submitStatus, setSubmitStatus] = useState<'idle' | 'success' | 'error'>('idle');
-  const handleChange = (e: React.ChangeEvent<HTMLSelectElement | HTMLTextAreaElement>) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
-  };
+  useEffect(() => {
+    const handleScroll = () => setShowScrollTop(window.scrollY > 400);
+    window.addEventListener("scroll", handleScroll);
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSubmitting(true);
-    setSubmitStatus('idle');
-    try {
-      const response = await fetch('/api/feedback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...formData, recipientEmail: 'ojochegbeng@gmail.com' }),
-      });
-      if (!response.ok) throw new Error('Failed to send question');
-      setSubmitStatus('success');
-      setFormData({ level: '', message: '' });
-      setTimeout(() => {
-        setShowDialog(false);
-        setSubmitStatus('idle');
-      }, 2000);
-    } catch {
-      setSubmitStatus('error');
-    } finally {
-      setIsSubmitting(false);
+  const quickLinks = useMemo(
+    () =>
+      faqSections.map((section) => ({
+        id: section.id,
+        title: section.title,
+        icon: section.icon,
+      })),
+    []
+  );
+
+  const scrollToSection = (id: string) => {
+    const element = document.getElementById(id);
+    if (element) {
+      element.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   };
 
+  const scrollToTop = () => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col items-center py-10 px-4">
-      <div className="w-full max-w-6xl mx-auto px-6 sm:px-8 lg:px-12">
-        <div className="rounded-2xl p-8 flex flex-col gap-8 border border-border bg-card max-w-2xl mx-auto">
-          <h1 className="text-4xl md:text-5xl font-extrabold text-foreground text-center mb-4">PansGPT FAQs</h1>
-          <p className="text-lg text-muted-foreground text-center mb-8 max-w-2xl mx-auto">
-            Find answers to common questions about using PansGPT for AI chat, quizzes, analytics, and more. If you have a question that is not listed here, reach out via the Feedback page!
-          </p>
-          <div className="flex flex-col gap-4">
-            {faqs.map((faq, idx) => (
-              <div key={faq.q} className="rounded-xl border border-border p-4 bg-card">
-                <button
-                  className="w-full flex justify-between items-center text-left text-lg font-semibold text-foreground focus:outline-none"
-                  onClick={() => setOpenIdx(openIdx === idx ? null : idx)}
-                  aria-expanded={openIdx === idx}
-                >
-                  <span>{faq.q}</span>
-                  <span className={`ml-2 transition-transform text-primary ${openIdx === idx ? 'rotate-90' : ''}`}>{'>'}</span>
-                </button>
-                {openIdx === idx && (
-                  <div className="mt-3 text-base text-muted-foreground leading-relaxed animate-fade-in">
-                    {faq.a}
+    <div className="min-h-screen bg-background dark">
+      <Navigation />
+
+      <div className="mx-auto max-w-6xl">
+        <section className="px-6 pb-12 pt-32 sm:px-8 lg:px-12">
+          <motion.div
+            className="space-y-6 text-center"
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6 }}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: 0.2 }}
+            >
+              <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-primary/20 to-primary/5">
+                <FileQuestion className="h-10 w-10 text-primary" />
+              </div>
+            </motion.div>
+
+            <h1 className="text-5xl text-foreground lg:text-6xl">
+              Frequently Asked Questions
+            </h1>
+
+            <p className="mx-auto max-w-3xl text-xl text-muted-foreground">
+              Clear answers to the questions students ask most about chat, quizzes,
+              documents, account settings, and getting support inside PansGPT.
+            </p>
+
+            <div className="flex flex-col justify-center gap-4 pt-4 sm:flex-row">
+              <Badge className="border-muted-foreground/20 bg-muted-foreground/10 text-muted-foreground">
+                <span className="mr-2">Coverage:</span> Chat, Quizzes, Support
+              </Badge>
+              <Badge className="border-muted-foreground/20 bg-muted-foreground/10 text-muted-foreground">
+                <span className="mr-2">Updated:</span> June 23, 2026
+              </Badge>
+            </div>
+          </motion.div>
+        </section>
+
+        <section className="px-6 pb-12 sm:px-8 lg:px-12">
+          <motion.div
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+          >
+            <Card className="border-primary/20 bg-primary/5">
+              <CardContent className="pt-6">
+                <div className="flex gap-4">
+                  <AlertCircle className="mt-1 h-6 w-6 shrink-0 text-primary" />
+                  <div>
+                    <h3 className="mb-2 text-foreground">Before You Ask</h3>
+                    <p className="text-muted-foreground">
+                      PansGPT works best when your uploaded course materials are clear,
+                      complete, and relevant to the question you are asking. If something
+                      feels off, it is often a context or source-quality issue rather than
+                      only an AI issue.
+                    </p>
                   </div>
-                )}
-              </div>
-            ))}
-          </div>
-          <div className="flex justify-center mt-8">
-            <button
-              className="font-bold py-3 px-8 rounded-xl text-lg transition-all duration-200 bg-primary text-primary-foreground hover:bg-primary/90"
-              onClick={() => setShowDialog(true)}
-            >
-              Ask a New Question
-            </button>
-          </div>
-        </div>
-      </div>
-      {showDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 dark:bg-black/80">
-          <div className="rounded-2xl p-8 w-full max-w-md relative border border-border bg-card">
-            <button
-              className="absolute top-3 right-3 text-muted-foreground hover:text-destructive text-2xl transition-colors"
-              onClick={() => setShowDialog(false)}
-              aria-label="Close dialog"
-            >
-              x
-            </button>
-            <h2 className="text-2xl font-bold text-foreground mb-4 text-center">Ask a New Question</h2>
-            <form onSubmit={handleSubmit} className="space-y-5">
-              <div>
-                <label htmlFor="level" className="block text-sm font-medium text-foreground mb-1">Level</label>
-                <select
-                  id="level"
-                  name="level"
-                  value={formData.level}
-                  onChange={handleChange}
-                  required
-                  className="w-full rounded-lg border border-border bg-input-background text-foreground px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors"
-                >
-                  <option value="">Select your level</option>
-                  {levels.map(level => (
-                    <option key={level} value={level}>{level}</option>
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        </section>
+
+        <section className="px-6 pb-12 sm:px-8 lg:px-12">
+          <motion.div
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+          >
+            <Card className="border-border bg-card">
+              <CardContent className="pt-6">
+                <h3 className="mb-4 flex items-center gap-2 text-foreground">
+                  <BookOpen className="h-5 w-5 text-primary" />
+                  Quick Navigation
+                </h3>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {quickLinks.map((item) => (
+                    <motion.button
+                      key={item.id}
+                      onClick={() => scrollToSection(item.id)}
+                      className="flex items-center gap-3 rounded-lg border border-transparent bg-muted/50 p-3 text-left transition-colors hover:border-primary/20 hover:bg-primary/10"
+                      whileHover={{ x: 5 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      <item.icon className="h-4 w-4 shrink-0 text-primary" />
+                      <span className="text-sm text-muted-foreground">{item.title}</span>
+                    </motion.button>
                   ))}
-                </select>
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        </section>
+
+        <section className="space-y-12 px-6 pb-20 sm:px-8 lg:px-12">
+          {faqSections.map((section) => (
+            <motion.div
+              key={section.id}
+              id={section.id}
+              initial={{ opacity: 0, y: 30 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+            >
+              <div className="mb-6 flex items-center gap-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
+                  <section.icon className="h-6 w-6 text-primary" />
+                </div>
+                <div>
+                  <h2 className="text-3xl text-foreground">{section.title}</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">{section.description}</p>
+                </div>
               </div>
-              <div>
-                <label htmlFor="message" className="block text-sm font-medium text-foreground mb-1">Your Question</label>
-                <textarea
-                  id="message"
-                  name="message"
-                  value={formData.message}
-                  onChange={handleChange}
-                  required
-                  rows={4}
-                  className="w-full rounded-lg border border-border bg-input-background text-foreground px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors resize-none placeholder:text-muted-foreground"
-                  placeholder="Enter your question..."
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="w-full py-3 rounded-lg font-medium text-primary-foreground transition-all bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isSubmitting ? 'Sending...' : 'Submit Question'}
-              </button>
-              {submitStatus === 'success' && (
-                <p className="text-center text-primary">Your question was sent successfully!</p>
-              )}
-              {submitStatus === 'error' && (
-                <p className="text-center text-destructive">Failed to send your question. Please try again.</p>
-              )}
-            </form>
-          </div>
-        </div>
+
+              <Accordion type="single" collapsible className="space-y-4">
+                {section.items.map((item, index) => (
+                  <AccordionItem
+                    key={`${section.id}-${index}`}
+                    value={`${section.id}-${index}`}
+                    className="rounded-lg border border-border bg-card px-6"
+                  >
+                    <AccordionTrigger className="text-left text-foreground hover:text-primary">
+                      {item.question}
+                    </AccordionTrigger>
+                    <AccordionContent className="pt-4 text-sm leading-7 text-muted-foreground">
+                      {item.answer}
+                    </AccordionContent>
+                  </AccordionItem>
+                ))}
+              </Accordion>
+            </motion.div>
+          ))}
+
+          <motion.div
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+          >
+            <Card className="border-primary/20 bg-primary/5">
+              <CardContent className="pt-6">
+                <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+                  <div className="space-y-2">
+                    <h3 className="flex items-center gap-2 text-foreground">
+                      <Send className="h-5 w-5 text-primary" />
+                      Still need help?
+                    </h3>
+                    <p className="max-w-2xl text-sm text-muted-foreground">
+                      If your issue is not covered here, use the in-app support and contact
+                      options. For bug reports, account problems, or product questions, the
+                      Help and Settings surfaces will get you to the right support path.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                    <LineChart className="h-4 w-4 text-primary" />
+                    Better questions plus better source material usually produce better answers.
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        </section>
+      </div>
+
+      <Footer />
+
+      {showScrollTop && (
+        <motion.button
+          onClick={scrollToTop}
+          className="fixed bottom-8 right-8 z-50 rounded-full bg-primary p-3 text-primary-foreground shadow-lg transition-colors hover:bg-primary/90"
+          initial={{ opacity: 0, scale: 0.8 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.8 }}
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.95 }}
+        >
+          <ArrowUp className="h-5 w-5" />
+        </motion.button>
       )}
     </div>
   );
-};
-
-export default FaqPage;
+}
