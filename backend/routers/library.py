@@ -457,6 +457,7 @@ FAST_TEXT_MODEL = "gemma-4-31b-it"     # For pure text
 MAX_VISION_RETRIES = 5
 VISION_RETRY_BASE_DELAY_SECONDS = 1.0
 VISION_REQUEST_THROTTLE_SECONDS = 2.1
+MAX_IMAGES_PER_PAGE = 3
 
 
 # --- Hybrid Extraction Helpers ---
@@ -731,6 +732,8 @@ def process_page_images(page) -> list[bytes]:
                 continue
 
             valid_images.append(image_bytes)
+            if len(valid_images) >= MAX_IMAGES_PER_PAGE:
+                break
 
         except Exception:
             continue
@@ -810,7 +813,7 @@ def extract_hybrid_content(file_content: bytes, document_id: str, ingestion_run_
     # --- Pre-scan: Count total images to know denominator ---
     total_images = 0
     for page in doc:
-        total_images += len(page.get_images(full=True))
+        total_images += len(process_page_images(page))
     
     total_steps = total_pages + total_images
     steps_done = 0
