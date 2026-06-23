@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
-import { Bug, CalendarDays, ChevronDown, ChevronRight, CircleHelp, FileText, Mail, MoreVertical, PanelLeft, Pencil, Search, Settings, NotepadText, MessageSquare, BookOpen, Brain, Trash2, X, SquarePen } from "lucide-react";
+import { Bug, CalendarDays, ChevronDown, ChevronRight, CircleHelp, ExternalLink, FileText, Mail, MoreVertical, PanelLeft, Pencil, Search, Settings, NotepadText, MessageSquare, BookOpen, Brain, Trash2, X, SquarePen } from "lucide-react";
 import Logo from "@/components/Logo";
 import { useChatSession } from "@/lib/ChatSessionContext";
 import { MainSidebarContent } from "@/components/sidebar/MainSidebarContent";
@@ -12,6 +12,7 @@ import { SidebarConversationList } from "@/components/sidebar/SidebarConversatio
 import { SidebarLink } from "@/components/sidebar/SidebarPrimitives";
 import { SidebarNotesSection, type SidebarNoteItem } from "@/components/sidebar/SidebarNotesSection";
 import { api } from "@/lib/api";
+import { buildWhatsAppSupportUrl } from "@/lib/support-config";
 
 interface AppSidebarProps {
   isOpen: boolean;
@@ -27,6 +28,7 @@ interface AppSidebarProps {
 const HELP_SUBMENU_HEIGHT = 196;
 const SIDEBAR_NOTES_LIMIT = 2;
 const LEGACY_QUICK_NOTE_TAG_PREFIX = "quick:v1";
+const CONTACT_SUPPORT_MESSAGE = "Hi PansGPT Support, I need help with my account or app.";
 
 type SidebarChatSession = {
   id: string;
@@ -320,6 +322,13 @@ export default function AppSidebar({
     closeSettingsMenu();
     if (typeof window !== "undefined") {
       window.open(path, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const openWhatsAppSupport = () => {
+    closeSettingsMenu();
+    if (typeof window !== "undefined") {
+      window.open(buildWhatsAppSupportUrl(CONTACT_SUPPORT_MESSAGE), "_blank", "noopener,noreferrer");
     }
   };
 
@@ -790,7 +799,8 @@ export default function AppSidebar({
                 style={{ WebkitTapHighlightColor: 'transparent' }}
               >
                 <FileText className="h-4 w-4 shrink-0" />
-                <span>Terms & Policies</span>
+                <span className="flex-1">Terms & Policies</span>
+                <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               </button>
               <button
                 onClick={() => openHelpPage("/faq")}
@@ -798,15 +808,17 @@ export default function AppSidebar({
                 style={{ WebkitTapHighlightColor: 'transparent' }}
               >
                 <CircleHelp className="h-4 w-4 shrink-0" />
-                <span>FAQ</span>
+                <span className="flex-1">FAQ</span>
+                <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               </button>
               <button
-                onClick={() => openHelpPage("/contact")}
+                onClick={openWhatsAppSupport}
                 className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-popover-foreground transition-colors hover:bg-muted active:bg-muted/80"
                 style={{ WebkitTapHighlightColor: 'transparent' }}
               >
                 <Mail className="h-4 w-4 shrink-0" />
-                <span>Contact Us</span>
+                <span className="flex-1">Contact Us</span>
+                <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               </button>
             </div>,
             document.body

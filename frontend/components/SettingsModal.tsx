@@ -38,8 +38,10 @@ import {
   dispatchWebSearchDefaultUpdated,
   type ChatTextSize,
 } from '@/lib/settings-events';
+import { buildWhatsAppSupportUrl } from '@/lib/support-config';
 
 type SettingsSection = 'general' | 'account' | 'data' | 'about';
+const CONTACT_SUPPORT_MESSAGE = 'Hi PansGPT Support, I need help with my account or app.';
 
 type SettingsModalProps = {
   isOpen: boolean;
@@ -260,6 +262,13 @@ export default function SettingsModal({
   const handleTextSizeStepChange = (step: number) => {
     const size = getSizeFromStep(step);
     handleChatTextSizeChange(size);
+  };
+
+  const openWhatsAppSupport = () => {
+    onClose();
+    if (typeof window !== 'undefined') {
+      window.open(buildWhatsAppSupportUrl(CONTACT_SUPPORT_MESSAGE), '_blank', 'noopener,noreferrer');
+    }
   };
 
   const renderSectionContent = (section: SettingsSection) => {
@@ -636,71 +645,6 @@ export default function SettingsModal({
           </div>
         </div>
 
-        {/* Section 3: Data & Privacy */}
-        <div>
-          <p className="text-xs font-semibold text-muted-foreground tracking-wider uppercase mb-2 px-1">Data & Privacy</p>
-          <div className="bg-muted/30 dark:bg-muted/15 border border-border/60 rounded-2xl overflow-hidden divide-y divide-border/40">
-            {/* Clear History Row */}
-            <div className="flex items-center justify-between w-full px-4 py-3.5">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                  <Database className="h-4.5 w-4.5" />
-                </div>
-                <div className="text-left min-w-0">
-                  <p className="text-sm font-medium text-foreground">Clear Chat History</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">Delete all saved chat sessions</p>
-                </div>
-              </div>
-              <div>
-                {clearConfirming ? (
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      onClick={() => setClearConfirming(false)}
-                      className="rounded-lg border border-border px-2.5 py-1 text-xs font-semibold text-foreground transition-colors hover:bg-muted"
-                    >
-                      No
-                    </button>
-                    <button
-                      onClick={() => void handleClearHistory()}
-                      disabled={busyAction === 'clear'}
-                      className="rounded-lg bg-destructive px-2.5 py-1 text-xs font-semibold text-destructive-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
-                    >
-                      {busyAction === 'clear' ? 'Wait...' : 'Yes'}
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => setClearConfirming(true)}
-                    className="rounded-lg border border-border/80 px-2.5 py-1 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Delete Account Row */}
-            <button
-              onClick={() => {
-                setActionError(null);
-                setDeleteConfirmText('');
-                setIsDeleteDialogOpen(true);
-              }}
-              className="flex items-center justify-between w-full px-4 py-3.5 hover:bg-destructive/5 transition-colors text-left"
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-destructive/10 text-destructive">
-                  <Trash2 className="h-4.5 w-4.5" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-destructive">Delete Account</p>
-                  <p className="text-xs text-destructive/80 mt-0.5">Permanently delete account & data</p>
-                </div>
-              </div>
-            </button>
-          </div>
-        </div>
-
         {/* Help & Support Group */}
         <div>
           <p className="text-xs font-semibold text-muted-foreground tracking-wider uppercase mb-2 px-1">Help & Support</p>
@@ -749,10 +693,7 @@ export default function SettingsModal({
 
             {/* Contact Us */}
             <button
-              onClick={() => {
-                onClose();
-                router.push('/contact');
-              }}
+              onClick={openWhatsAppSupport}
               className="flex items-center justify-between w-full px-4 py-3.5 hover:bg-muted/20 transition-colors text-left"
             >
               <div className="flex items-center gap-3 min-w-0">
@@ -826,7 +767,10 @@ export default function SettingsModal({
                   <p className="text-xs text-muted-foreground mt-0.5">How your data is protected</p>
                 </div>
               </div>
-              <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+              <div className="flex items-center gap-2 shrink-0 text-muted-foreground">
+                <ExternalLink className="h-3.5 w-3.5" />
+                <ChevronRight className="h-4 w-4" />
+              </div>
             </button>
 
             <button
@@ -846,6 +790,71 @@ export default function SettingsModal({
                 </div>
               </div>
               <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+            </button>
+          </div>
+        </div>
+
+        {/* Section 4: Data & Privacy */}
+        <div>
+          <p className="text-xs font-semibold text-muted-foreground tracking-wider uppercase mb-2 px-1">Data & Privacy</p>
+          <div className="bg-muted/30 dark:bg-muted/15 border border-border/60 rounded-2xl overflow-hidden divide-y divide-border/40">
+            {/* Clear History Row */}
+            <div className="flex items-center justify-between w-full px-4 py-3.5">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                  <Database className="h-4.5 w-4.5" />
+                </div>
+                <div className="text-left min-w-0">
+                  <p className="text-sm font-medium text-foreground">Clear Chat History</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Delete all saved chat sessions</p>
+                </div>
+              </div>
+              <div>
+                {clearConfirming ? (
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => setClearConfirming(false)}
+                      className="rounded-lg border border-border px-2.5 py-1 text-xs font-semibold text-foreground transition-colors hover:bg-muted"
+                    >
+                      No
+                    </button>
+                    <button
+                      onClick={() => void handleClearHistory()}
+                      disabled={busyAction === 'clear'}
+                      className="rounded-lg bg-destructive px-2.5 py-1 text-xs font-semibold text-destructive-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
+                    >
+                      {busyAction === 'clear' ? 'Wait...' : 'Yes'}
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setClearConfirming(true)}
+                    className="rounded-lg border border-border/80 px-2.5 py-1 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Delete Account Row */}
+            <button
+              onClick={() => {
+                setActionError(null);
+                setDeleteConfirmText('');
+                setIsDeleteDialogOpen(true);
+              }}
+              className="flex items-center justify-between w-full px-4 py-3.5 hover:bg-destructive/5 transition-colors text-left"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-destructive/10 text-destructive">
+                  <Trash2 className="h-4.5 w-4.5" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-destructive">Delete Account</p>
+                  <p className="text-xs text-destructive/80 mt-0.5">Permanently delete account & data</p>
+                </div>
+              </div>
             </button>
           </div>
         </div>
