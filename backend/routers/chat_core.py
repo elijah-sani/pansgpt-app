@@ -2115,9 +2115,6 @@ async def edit_message(
             else:
                 pipeline_params = FAST_MODE_DEFAULTS.copy()
 
-            if has_images_for_rag:
-                pipeline_params = _apply_vision_pipeline_budget(pipeline_params)
-
             rag_chunk_count = pipeline_params["rag_chunk_count"]
             should_web_search = pipeline_params["run_web_search"]
             should_timetable = pipeline_params["fetch_timetable"]
@@ -2147,6 +2144,13 @@ async def edit_message(
                         images = [image_data]
                 if images:
                     has_images_for_rag = True
+
+            if has_images_for_rag:
+                pipeline_params = _apply_vision_pipeline_budget(pipeline_params)
+                rag_chunk_count = pipeline_params["rag_chunk_count"]
+                should_web_search = pipeline_params["run_web_search"]
+                should_timetable = pipeline_params["fetch_timetable"]
+                should_faculty = pipeline_params["fetch_faculty"]
 
             # Concurrently gather recent summaries, faculty info, timetable info, web search, and RAG retrieval
             gather_tasks = {}
@@ -2636,9 +2640,6 @@ async def regenerate_response(
             else:
                 pipeline_params = FAST_MODE_DEFAULTS.copy()
 
-            if has_images_for_rag:
-                pipeline_params = _apply_vision_pipeline_budget(pipeline_params)
-
             rag_chunk_count = pipeline_params["rag_chunk_count"]
             should_web_search = pipeline_params["run_web_search"]
             should_timetable = pipeline_params["fetch_timetable"]
@@ -2655,6 +2656,13 @@ async def regenerate_response(
                     images = [image_data]
                 if images:
                     has_images_for_rag = True
+
+            if has_images_for_rag:
+                pipeline_params = _apply_vision_pipeline_budget(pipeline_params)
+                rag_chunk_count = pipeline_params["rag_chunk_count"]
+                should_web_search = pipeline_params["run_web_search"]
+                should_timetable = pipeline_params["fetch_timetable"]
+                should_faculty = pipeline_params["fetch_faculty"]
 
             # Concurrently gather recent summaries, faculty info, timetable info, web search, and RAG retrieval
             gather_tasks = {}
