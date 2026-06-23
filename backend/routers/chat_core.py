@@ -1680,7 +1680,7 @@ Do not mention the limit in your response unless the user explicitly asks why we
                 pipeline_params = _apply_vision_pipeline_budget(pipeline_params)
                 rag_chunk_count = pipeline_params["rag_chunk_count"]
             else:
-                selected_model = llm_engine.TEXT_PRIMARY if request.thinking_mode else llm_engine.TEXT_SECONDARY
+                selected_model = llm_engine.TEXT_PRIMARY if request.thinking_mode else llm_engine.FAST_TEXT_PRIMARY
                 logger.info(f"Smart Router: Pure text detected, processing efficiently with {selected_model}")
                 is_vision_mode = False
 
@@ -1748,7 +1748,7 @@ Do not mention the limit in your response unless the user explicitly asks why we
                 has_images=is_vision_mode,
                 temperature=temperature,
                 max_tokens=VISION_MAX_OUTPUT_TOKENS if is_vision_mode else 2048,
-                requested_model="VISION_PRIMARY" if is_vision_mode else ("TEXT_PRIMARY" if request.thinking_mode else "TEXT_SECONDARY"),
+                requested_model="VISION_PRIMARY" if is_vision_mode else (llm_engine.TEXT_PRIMARY if request.thinking_mode else llm_engine.FAST_TEXT_PRIMARY),
                 preferred_models=None if request.thinking_mode else llm_engine.FAST_TEXT_MODEL_ORDER,
             )
             yield {"status": "preparing_response"}
@@ -2486,7 +2486,7 @@ Do not mention the limit in your response unless the user explicitly asks why we
                 pipeline_params = _apply_vision_pipeline_budget(pipeline_params)
                 rag_chunk_count = pipeline_params["rag_chunk_count"]
             else:
-                selected_model = llm_engine.TEXT_PRIMARY if payload.thinking_mode else llm_engine.TEXT_SECONDARY
+                selected_model = llm_engine.TEXT_PRIMARY if payload.thinking_mode else llm_engine.FAST_TEXT_PRIMARY
                 logger.info(f"Smart Router: Text-only context, using {selected_model}")
                 is_vision_mode = False
             yield {"status": "thinking"}
@@ -2533,7 +2533,8 @@ Do not mention the limit in your response unless the user explicitly asks why we
                 has_images=is_vision_mode,
                 temperature=temperature,
                 max_tokens=VISION_MAX_OUTPUT_TOKENS if is_vision_mode else 2048,
-                requested_model="VISION_PRIMARY" if is_vision_mode else ("TEXT_PRIMARY" if payload.thinking_mode else "TEXT_SECONDARY"),
+                requested_model="VISION_PRIMARY" if is_vision_mode else (llm_engine.TEXT_PRIMARY if payload.thinking_mode else llm_engine.FAST_TEXT_PRIMARY),
+                preferred_models=None if payload.thinking_mode else llm_engine.FAST_TEXT_MODEL_ORDER,
             )
             yield {"status": "preparing_response"}
             async for event in _stream_completion_events(completion_stream):
@@ -2981,7 +2982,7 @@ Do not mention the limit in your response unless the user explicitly asks why we
                 pipeline_params = _apply_vision_pipeline_budget(pipeline_params)
                 rag_chunk_count = pipeline_params["rag_chunk_count"]
             else:
-                selected_model = llm_engine.TEXT_PRIMARY if payload.thinking_mode else llm_engine.TEXT_SECONDARY
+                selected_model = llm_engine.TEXT_PRIMARY if payload.thinking_mode else llm_engine.FAST_TEXT_PRIMARY
                 logger.info(f"Smart Router: Text-only context, using {selected_model}")
                 is_vision_mode = False
             yield {"status": "thinking"}
@@ -3028,7 +3029,8 @@ Do not mention the limit in your response unless the user explicitly asks why we
                 has_images=is_vision_mode,
                 temperature=temperature,
                 max_tokens=VISION_MAX_OUTPUT_TOKENS if is_vision_mode else 2048,
-                requested_model="VISION_PRIMARY" if is_vision_mode else ("TEXT_PRIMARY" if payload.thinking_mode else "TEXT_SECONDARY"),
+                requested_model="VISION_PRIMARY" if is_vision_mode else (llm_engine.TEXT_PRIMARY if payload.thinking_mode else llm_engine.FAST_TEXT_PRIMARY),
+                preferred_models=None if payload.thinking_mode else llm_engine.FAST_TEXT_MODEL_ORDER,
             )
             yield {"status": "preparing_response"}
             async for event in _stream_completion_events(completion_stream):

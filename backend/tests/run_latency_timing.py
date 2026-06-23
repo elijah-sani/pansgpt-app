@@ -30,6 +30,7 @@ from fastapi.testclient import TestClient
 from api import app
 from dependencies import get_current_user, User
 from routers.shared import verify_api_key
+import services.llm_engine as llm_engine
 
 # Override authentication to bypass JWT checks and DB calls
 app.dependency_overrides[get_current_user] = lambda: User(id="dummy-user-id", email="student@unibadan.edu.ng")
@@ -169,7 +170,10 @@ def run_query_timing(question: str, thinking_mode: bool):
 
     selected_model = stages.get("selected_model", "unknown")
     actual_model = stages.get("actual_model_attempted", selected_model)
-    requested_model = stages.get("requested_model", "TEXT_PRIMARY" if thinking_mode else "TEXT_SECONDARY")
+    requested_model = stages.get(
+        "requested_model",
+        llm_engine.TEXT_PRIMARY if thinking_mode else llm_engine.FAST_TEXT_PRIMARY,
+    )
     
     # Parse parameter values from logged metadata
     rag_chunk_count = stages.get("rag_chunk_count", "unknown")
