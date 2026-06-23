@@ -38,112 +38,140 @@ const faqSections: FaqSection[] = [
   {
     id: "getting-started",
     title: "Getting Started",
-    description: "Core questions about what PansGPT is and how to begin using it well.",
+    description: "What PansGPT is, who it is for, and how to get useful answers quickly.",
     icon: Sparkles,
     items: [
       {
         question: "What is PansGPT?",
         answer:
-          "PansGPT is an AI-powered learning platform that combines advanced chat, personalized quizzes, analytics, and document search to help you master your courses. It answers questions, generates quizzes from your materials, and helps track study progress.",
+          "PansGPT is a study platform built around your curriculum. It lets you ask course questions, read materials in study mode, generate quizzes from approved notes, and revisit past chats so your learning stays tied to the content you actually use in school.",
       },
+      {
+        question: "Who is PansGPT built for?",
+        answer:
+          "PansGPT is designed primarily for students using institution-linked course materials, especially pharmacy-focused study workflows. The product can answer broader academic questions, but it works best when the course, topic, or supporting material is clear.",
+      },
+      {
+        question: "Do I need to upload my own documents before using it?",
+        answer:
+          "Not always. If your school or lecturer materials have already been added to the library, you can start studying from those. Uploads mainly matter when the course material you need is not yet available in the system.",
+      },
+      {
+        question: "How do I get the best answers from PansGPT?",
+        answer:
+          "Ask specific questions, mention the concept or course when needed, and keep your prompts focused. PansGPT performs better when the material behind the answer is clear, complete, and relevant to what you are asking.",
+      },
+    ],
+  },
+  {
+    id: "chat-study",
+    title: "Chat and Study Mode",
+    description: "How the chat, PDF reader, and chat history work together.",
+    icon: BookOpen,
+    items: [
       {
         question: "How do I use the AI chat?",
         answer:
-          "Type your question or topic into the chat box on the main page. The AI responds using your uploaded course materials when available, plus general academic knowledge. You can also edit a previous message and the assistant will regenerate the answer from the updated prompt.",
+          "Open the main chat area, type your question, and send it. PansGPT will answer using relevant course context when available. You can also edit a previous message and regenerate the answer if you want to clarify or correct your prompt.",
       },
       {
-        question: "Can I use PansGPT for any subject?",
+        question: "What is Study Mode?",
         answer:
-          "Yes. PansGPT is designed to support academic study across different subjects. Results improve when you upload clear, relevant materials for the specific course you want to study.",
+          "Study Mode is the reading flow for course materials. It gives you a cleaner way to read approved documents, move through pages, and switch back into question-asking when you want clarification on what you are studying.",
       },
       {
-        question: "How do I get the best results from the AI?",
+        question: "Can I ask questions while reading a document?",
         answer:
-          "Upload clean, well-organized materials, ask specific questions, and provide context when something is ambiguous. The quiz and study features work better when your documents are complete and clearly titled.",
+          "Yes. That is one of the main workflows. You can study a document, move into chat, and ask for explanations, simplifications, or follow-up help based on that material.",
+      },
+      {
+        question: "Can I search past chats?",
+        answer:
+          "Yes. Chat search can now match both chat titles and message content, so you can find an older conversation even when you only remember a phrase from the actual messages.",
       },
     ],
   },
   {
     id: "quizzes",
-    title: "Quizzes and Study Tools",
-    description: "How quiz generation, grading, and practice behavior work.",
+    title: "Quizzes and Results",
+    description: "How quiz generation, grading, retries, and result feedback behave in the app.",
     icon: Brain,
     items: [
       {
         question: "How does quiz generation work?",
         answer:
-          "Go to the Quiz page and select your course or topic. PansGPT generates multiple-choice or short-answer questions from your uploaded materials and available course context, while trying to keep them relevant and non-repetitive.",
+          "Go to the Quiz area, choose the course or topic you want, and PansGPT will generate questions from the available course material. The system tries to keep the batch relevant, varied, and tied to what has actually been uploaded or approved.",
+      },
+      {
+        question: "Why does quiz generation sometimes fail or return fewer questions?",
+        answer:
+          "This usually happens when the available source material is too narrow, too repetitive, or not strong enough to support the requested number of distinct questions. In those cases, trying fewer questions or a more specific topic usually helps.",
       },
       {
         question: "How are quizzes graded?",
         answer:
-          "Multiple-choice questions are graded automatically. Short-answer responses are evaluated by AI using expected concepts, accuracy, and completeness, and may receive partial credit when the answer is close but incomplete.",
+          "Multiple-choice questions are graded automatically. Short-answer questions are checked by AI against the expected idea, key concepts, and overall correctness, so a response can receive full credit, partial credit, or no credit depending on how close it is.",
       },
       {
-        question: "Why are some quiz questions missing or repeated?",
+        question: "Why do quiz results include explanations?",
         answer:
-          "Quiz quality depends heavily on the amount and variety of your uploaded materials. If the source material is narrow or repetitive, generated questions may also cluster around the same ideas.",
-      },
-      {
-        question: "What do the analytics and streaks mean?",
-        answer:
-          "The Analytics page summarizes your study activity, such as questions asked, answers read, documents opened, and your consistency over time. Streaks track consecutive study days.",
-      },
-      {
-        question: "How do achievements work?",
-        answer:
-          "Achievements unlock as you use the platform more deeply, such as reading documents, taking quizzes, or exploring different study workflows. You can view unlocked badges on your profile.",
+          "PansGPT is designed to help you learn, not just mark you right or wrong. That is why quiz results include explanations and the correct answer, so you can understand the concept you missed instead of only seeing a score.",
       },
     ],
   },
   {
-    id: "account-data",
-    title: "Account, Profile, and Data",
-    description: "Privacy, profile updates, and account-related expectations.",
+    id: "account-access",
+    title: "Account and Access",
+    description: "Profile updates, sign-in issues, and what account-level settings actually do.",
     icon: Lock,
     items: [
       {
         question: "How do I update my profile?",
         answer:
-          "Open your Profile page and choose Edit Profile. You can update your name, level, bio, and profile picture, and changes are reflected across the platform.",
-      },
-      {
-        question: "Is my data private and secure?",
-        answer:
-          "Your uploaded documents, chat history, and learning activity are intended to remain private to your account and are stored using standard application security controls.",
+          "Open your profile or account settings area and edit the details you want to change, such as your name, level, or profile image. Changes are reflected across the app once saved.",
       },
       {
         question: "How do I reset my password?",
         answer:
-          'On the login page, click "Forgot password?" and follow the reset instructions sent to your email.',
+          'Use the "Forgot password?" option on the login page and follow the email reset flow. If the email does not arrive, check spam first and then contact support.',
+      },
+      {
+        question: "Can I clear my chat history?",
+        answer:
+          "Yes. The settings area includes an option to clear saved chat history. This is separate from deleting your account.",
+      },
+      {
+        question: "Can I delete my account from inside the app?",
+        answer:
+          "Yes. There is a delete-account action in the settings area. Because it is permanent, the app asks you to confirm before continuing.",
       },
     ],
   },
   {
     id: "support",
-    title: "Support and Troubleshooting",
-    description: "Where to go when answers are wrong, issues appear, or you need help.",
+    title: "Support, Privacy, and Troubleshooting",
+    description: "Where answers come from, what to do when something looks wrong, and how to get help.",
     icon: MessageSquare,
     items: [
       {
-        question: "What should I do if the AI gives a wrong or confusing answer?",
+        question: "What should I do if an answer looks wrong or confusing?",
         answer:
-          "Try rephrasing the question, adding more context, or editing the previous message so the assistant can regenerate with clearer instructions. AI answers can be imperfect, so verification still matters.",
+          "Ask a more specific follow-up, mention the exact concept or document section, or edit your last message and regenerate the response. If the answer still looks wrong, verify it against your course material and report the issue.",
       },
       {
-        question: "What browsers and devices are supported?",
+        question: "Does PansGPT search the open internet for answers?",
         answer:
-          "PansGPT works best on current versions of major browsers like Chrome, Edge, and Firefox, and is designed to work on desktop, tablet, and mobile layouts.",
+          "PansGPT is built primarily around your curriculum and approved study material rather than random internet content. That means the best answers usually come from what has been added to the learning system, not from broad public web search.",
       },
       {
-        question: "What if I run into technical issues?",
+        question: "Is my data private?",
         answer:
-          "Refresh the page first, then sign out and back in if needed. If the issue persists, contact support or report the problem through the app support surfaces.",
+          "Your chats, study activity, and account data are intended to stay tied to your account and app permissions. Document and content visibility depend on how materials are managed inside your school or institution context.",
       },
       {
-        question: "How do I contact support or give feedback?",
+        question: "How do I contact support?",
         answer:
-          "Use the support and feedback options available inside the app. If you need direct help, use the Contact Us entry from the Help or Settings area.",
+          "Use the Contact Us entry in Help or Settings. In the current app flow, that opens the support WhatsApp link directly, which is the fastest route for product questions, account help, or bug reports.",
       },
     ],
   },
@@ -206,13 +234,13 @@ export default function FaqPage() {
             </h1>
 
             <p className="mx-auto max-w-3xl text-xl text-muted-foreground">
-              Clear answers to the questions students ask most about chat, quizzes,
-              documents, account settings, and getting support inside PansGPT.
+              Clear answers to the questions users actually ask about chat, study mode,
+              quizzes, account access, and support inside the current PansGPT app.
             </p>
 
             <div className="flex flex-col justify-center gap-4 pt-4 sm:flex-row">
               <Badge className="border-muted-foreground/20 bg-muted-foreground/10 text-muted-foreground">
-                <span className="mr-2">Coverage:</span> Chat, Quizzes, Support
+                <span className="mr-2">Coverage:</span> Chat, Study Mode, Quizzes, Support
               </Badge>
               <Badge className="border-muted-foreground/20 bg-muted-foreground/10 text-muted-foreground">
                 <span className="mr-2">Updated:</span> June 23, 2026
@@ -234,10 +262,10 @@ export default function FaqPage() {
                   <div>
                     <h3 className="mb-2 text-foreground">Before You Ask</h3>
                     <p className="text-muted-foreground">
-                      PansGPT works best when your uploaded course materials are clear,
-                      complete, and relevant to the question you are asking. If something
-                      feels off, it is often a context or source-quality issue rather than
-                      only an AI issue.
+                      PansGPT gives stronger answers when your question is specific and the
+                      course material behind it is available and relevant. Most weak answers
+                      come from vague prompts, thin source material, or asking for more variety
+                      than the available documents can support.
                     </p>
                   </div>
                 </div>
@@ -329,14 +357,14 @@ export default function FaqPage() {
                       Still need help?
                     </h3>
                     <p className="max-w-2xl text-sm text-muted-foreground">
-                      If your issue is not covered here, use the in-app support and contact
-                      options. For bug reports, account problems, or product questions, the
-                      Help and Settings surfaces will get you to the right support path.
+                      If your issue is not covered here, use the Contact Us entry in Help or
+                      Settings. That support path is better for bug reports, access issues,
+                      quiz problems, or questions about how the app should behave.
                     </p>
                   </div>
                   <div className="flex items-center gap-3 text-sm text-muted-foreground">
                     <LineChart className="h-4 w-4 text-primary" />
-                    Better questions plus better source material usually produce better answers.
+                    Specific questions plus better source material usually produce better answers.
                   </div>
                 </div>
               </CardContent>
