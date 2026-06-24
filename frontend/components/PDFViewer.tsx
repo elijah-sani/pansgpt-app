@@ -1140,41 +1140,34 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
         setSelectionMenu(null);
 
-        // Construct Prompt & System Instruction
+        // Construct the user-facing prompt
         let prompt = "";
-        let sysPrompt: string | undefined = undefined;
 
         switch (mode) {
             case "explain":
                 prompt = `Explain this concept: "${textToProcess}"`;
-                sysPrompt = "You are a helpful tutor. Explain the concept clearly and concisely.";
                 break;
             case "define":
                 prompt = `Give a short, simple definition for this term: "${textToProcess}"`;
-                sysPrompt = "Provide a precise and easy-to-understand definition, also provide synonyms.";
                 break;
             case "example":
                 prompt = `Give me a practical example to help understand this: "${textToProcess}"`;
-                sysPrompt = "You are a helpful tutor. Provide a clear, real-world example.";
                 break;
             case "summarize":
                 prompt = `Summarize this text in short, simple bullet points:\n\n"${textToProcess}"`;
-                sysPrompt = "Capture the key points in a concise bulleted list.";
                 break;
             case "answer":
                 prompt = `Answer this question: "${textToProcess}"`;
-                sysPrompt = "Provide a direct and accurate answer to the question.";
                 break;
             case "memory":
                 prompt = `Create a mnemonic or memory aid to help me remember this: "${textToProcess}"`;
-                sysPrompt = "You are a study assistant. Create a catchy mnemonic or memory trick.";
                 break;
             default:
                 prompt = textToProcess;
         }
 
         // Send via centralized handler
-        await sendMessage(prompt, [], sysPrompt);
+        await sendMessage(prompt, []);
     };
 
     const handleCopyText = () => {
@@ -1339,7 +1332,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         setIsSnipActive(false);
     };
 
-    const sendMessage = async (text: string, attachments: string[] = [], systemInstruction?: string, isRetry: boolean = false) => {
+    const sendMessage = async (text: string, attachments: string[] = [], intent?: 'snippet_explain', isRetry: boolean = false) => {
         if (isArchivedMaterial) {
             toast.info('AI study chat is only available for current materials for now.');
             return;
@@ -1454,12 +1447,11 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 messages: updatedHistory,
                 document_id: fileId,
                 images: attachments.map((base64Data) => base64Data),
-                image_base64: attachments.length > 0 ? attachments[0] : null,
                 session_id: activeSessionId,
                 is_retry: isRetry,
             };
-            if (systemInstruction) {
-                payload.system_instruction = systemInstruction;
+            if (intent) {
+                payload.intent = intent;
             }
 
             const response = await api.fetch('/chat', {
@@ -1737,7 +1729,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
     // --- NEW HANDLERS FOR SNIPPET MENU ---
 
-    const handleMenuSend = async ({ text, attachments, systemInstruction }: { text: string; attachments: string[], systemInstruction?: string }) => {
+    const handleMenuSend = async ({ text, attachments, intent }: { text: string; attachments: string[], intent?: 'snippet_explain' }) => {
         // 1. Open Sidebar
         if (window.innerWidth < 768) setActiveTab('chat');
         else setIsSidebarOpen(true);
@@ -1749,7 +1741,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         setSnipPopup(null);
 
         // 3. Send Immediately
-        await sendMessage(text, attachments, systemInstruction);
+        await sendMessage(text, attachments, intent);
     };
 
     const handleMenuAddToInput = (image: string) => {

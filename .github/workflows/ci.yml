@@ -32,7 +32,38 @@ jobs:
         run: ruff check backend --select E9,F63,F7,F82
 
       - name: Run backend tests
-        run: pytest backend/tests/ -q
+        run: |
+          pytest backend/tests/ -q \
+            --ignore=backend/tests/test_prompt_guard.py \
+            --ignore=backend/tests/test_chat_security.py
+        env:
+          PYTHONPATH: .
+
+  security-regression:
+    name: Security Regression
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install pytest
+
+      - name: Run security regression tests
+        run: |
+          pytest backend/tests/test_prompt_guard.py -q
+          pytest backend/tests/test_chat_security.py -q
         env:
           PYTHONPATH: .
 

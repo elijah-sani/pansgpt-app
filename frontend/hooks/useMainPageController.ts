@@ -803,7 +803,6 @@ export function useMainPageController() {
           mode: 'chat',
           messages: updatedHistory,
           images: attachments.map((base64Data) => base64Data),
-          image_base64: attachments.length > 0 ? attachments[0] : null,
           session_id: currentSessionId,
           is_retry: isRetry,
           web_search: WEB_SEARCH_FEATURE_ENABLED && isWebSearchEnabled,

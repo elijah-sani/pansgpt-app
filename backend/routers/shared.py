@@ -4,7 +4,7 @@ Handles AI-powered chat interactions using Groq with vector search.
 """
 from fastapi import APIRouter, HTTPException, Depends, Header, File, UploadFile, Request, Form
 from fastapi.responses import StreamingResponse, JSONResponse
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Any, AsyncIterator, List, Optional, Literal
 import logging
 import os
@@ -29,6 +29,7 @@ from dependencies import (
     UNIVERSITY_SUSPENDED_MESSAGE,
 )
 from restrictions import build_university_candidates, normalize_university_name
+from .sanitize import sanitize_text, CHAT_MAX
 
 logger = logging.getLogger("PansGPT")
 RAG_NETWORK_TIMEOUT_MESSAGE = (
@@ -611,20 +612,27 @@ async def get_cached_student_timetable(level: str, current_user: Optional[User] 
 
 # --- Models ---
 class Message(BaseModel):
-    role: str  # 'user' or 'assistant'
+    model_config = {"extra": "forbid"}
+    role: Literal["user", "assistant", "ai"]
     content: str
 
+    @field_validator("content", mode="before")
+    @classmethod
+    def sanitize_content_field(cls, v: str) -> str:
+        return sanitize_text(v, CHAT_MAX)
+
 class ChatRequest(BaseModel):
+    model_config = {"extra": "forbid"}
     text: str
-    mode: str  # 'explain', 'example', 'memory', 'chat'
+    mode: Literal["explain", "example", "memory", "chat"]
     context: Optional[str] = None
-    messages: Optional[List[Message]] = []
+    messages: List[Message] = Field(default_factory=list)
     document_id: Optional[str] = None  # For RAG: restricts search to specific PDF
     academic_session: Optional[str] = None
     semester: Optional[str] = None
     image: Optional[str] = None      # Base64 image string for DB storage
-    images: Optional[List[str]] = []    # New: multiple images
-    system_instruction: Optional[str] = None # For decoupled prompt logic (hidden instructions)
+    images: List[str] = Field(default_factory=list)    # New: multiple images
+    intent: Optional[Literal["snippet_explain"]] = None
     session_id: Optional[str] = None # For history persistence
     is_retry: bool = False  # If True, skip saving user message (already in DB from failed attempt)
     web_search: bool = False  # If True, augment response with live Tavily web search results
@@ -641,12 +649,39 @@ class ChatRequest(BaseModel):
         v = v.replace('\x00', '')
         return v.strip()[:4000]
 
+    @field_validator("context", "document_id", "academic_session", "session_id", mode="before")
+    @classmethod
+    def sanitize_optional_text_fields(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        cleaned = sanitize_text(v, CHAT_MAX)
+        return cleaned or None
+
+    @field_validator("image", mode="before")
+    @classmethod
+    def sanitize_image_field(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        cleaned = str(v).strip()
+        return cleaned or None
+
+    @field_validator("images", mode="before")
+    @classmethod
+    def validate_images_field(cls, v: Optional[List[str]]) -> List[str]:
+        if not v:
+            return []
+        cleaned = [str(item).strip() for item in v if str(item).strip()]
+        if len(cleaned) > 4:
+            raise ValueError("Maximum of 4 images allowed.")
+        return cleaned
+
     @field_validator('semester', mode='before')
     @classmethod
     def normalize_semester_field(cls, v: Optional[str]) -> Optional[str]:
         return normalize_semester(v)
 
 class CreateSessionRequest(BaseModel):
+    model_config = {"extra": "forbid"}
     title: Optional[str] = "New Chat"
     context_id: Optional[str] = None
 
@@ -668,6 +703,7 @@ class CreateSessionResponse(BaseModel):
 
 
 class FeedbackRequest(BaseModel):
+    model_config = {"extra": "forbid"}
     message_id: Optional[int] = None
     session_id: Optional[str] = None
     rating: Literal["up", "down", "report"]
@@ -675,16 +711,19 @@ class FeedbackRequest(BaseModel):
     comments: Optional[str] = None
 
 class FacultyKnowledgeCreateRequest(BaseModel):
+    model_config = {"extra": "forbid"}
     level: str
     knowledge_text: str
     university_id: Optional[str] = None
 
 class FacultyKnowledgeUpdateRequest(BaseModel):
+    model_config = {"extra": "forbid"}
     level: Optional[str] = None
     knowledge_text: Optional[str] = None
     university_id: Optional[str] = None
 
 class TimetableUpdateRequest(BaseModel):
+    model_config = {"extra": "forbid"}
     day: Optional[str] = None
     time_slot: Optional[str] = None
     start_time: Optional[str] = None
@@ -723,8 +762,9 @@ def contains_image(messages: List[dict]) -> bool:
 
 def merge_system_into_user(messages: List[dict]) -> List[dict]:
     """
-    Merges all 'system' role messages into the first 'user' role message.
-    Required for Google AI Studio's OpenAI-compatible endpoint which rejects 'system' roles.
+    Adapts system-role content for providers that reject system messages.
+    Converts the collected instructions into a leading assistant preamble
+    instead of serializing them into the user's message body.
     """
     system_content = []
     cleaned_messages = []
@@ -742,20 +782,17 @@ def merge_system_into_user(messages: List[dict]) -> List[dict]:
         return cleaned_messages
         
     full_system_prompt = "\n\n".join(system_content)
-    full_system_prompt = f"SYSTEM INSTRUCTIONS:\n{full_system_prompt}\n\nUSER REQUEST:\n"
-    
-    # 2. Prepend to first user message
-    for msg in cleaned_messages:
-        if msg.get("role") == "user":
-            content = msg.get("content")
-            if isinstance(content, str):
-                msg["content"] = full_system_prompt + content
-            elif isinstance(content, list):
-                # Multimodal content list -> insert text block at start
-                content.insert(0, {"type": "text", "text": full_system_prompt})
-            break
-            
-    return cleaned_messages
+
+    return [
+        {
+            "role": "assistant",
+            "content": (
+                "Conversation guidance for this response:\n"
+                f"{full_system_prompt}"
+            ),
+        },
+        *cleaned_messages,
+    ]
 
 
 async def _build_student_profile_text(current_user: User) -> tuple[str, str]:
@@ -796,6 +833,111 @@ async def _build_student_profile_text(current_user: User) -> tuple[str, str]:
     if first_name or other_names or level or university:
         _profile_cache[cache_key] = result
     return result
+
+
+RAG_EVIDENCE_MAX_SNIPPETS = max(2, int(os.getenv("RAG_EVIDENCE_MAX_SNIPPETS", "6")))
+RAG_EVIDENCE_SNIPPET_MAX_CHARS = max(120, int(os.getenv("RAG_EVIDENCE_SNIPPET_MAX_CHARS", "320")))
+RAG_EVIDENCE_TOTAL_MAX_CHARS = max(600, int(os.getenv("RAG_EVIDENCE_TOTAL_MAX_CHARS", "2400")))
+
+
+def _sanitize_evidence_text(text: Optional[str]) -> str:
+    cleaned = str(text or "").replace("\x00", " ")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
+def _truncate_evidence_text(text: str, max_chars: int) -> str:
+    normalized = _sanitize_evidence_text(text)
+    if len(normalized) <= max_chars:
+        return normalized
+    truncated = normalized[: max(1, max_chars - 3)].rstrip()
+    if " " in truncated:
+        truncated = truncated.rsplit(" ", 1)[0]
+    return truncated.rstrip(" ,;:.") + "..."
+
+
+def _build_source_summary(doc_meta: Optional[dict]) -> list[str]:
+    meta = doc_meta or {}
+    lines: list[str] = []
+    if meta.get("file_name"):
+        lines.append(f"Title: {meta['file_name']}")
+    if meta.get("topic"):
+        lines.append(f"Topic: {meta['topic']}")
+    if meta.get("course_code"):
+        lines.append(f"Course: {meta['course_code']}")
+    return lines
+
+
+def _format_evidence_context(
+    chunks: list[dict],
+    *,
+    study_mode: bool,
+    doc_metadata: Optional[dict] = None,
+    meta_by_id: Optional[dict] = None,
+) -> str:
+    normalized_chunks: list[dict] = []
+    seen_snippets: set[str] = set()
+    for chunk in chunks or []:
+        snippet = _truncate_evidence_text(chunk.get("content") or "", RAG_EVIDENCE_SNIPPET_MAX_CHARS)
+        if not snippet:
+            continue
+        dedupe_key = snippet.lower()
+        if dedupe_key in seen_snippets:
+            continue
+        seen_snippets.add(dedupe_key)
+        normalized_chunks.append({**chunk, "content": snippet})
+
+    if not normalized_chunks and not doc_metadata:
+        return ""
+
+    parts: list[str] = []
+    if study_mode and doc_metadata:
+        source_summary = _build_source_summary(doc_metadata)
+        if source_summary:
+            parts.append("Relevant document:")
+            parts.extend(source_summary)
+    elif not normalized_chunks and doc_metadata:
+        source_summary = _build_source_summary(doc_metadata)
+        if source_summary:
+            parts.append("Relevant source:")
+            parts.extend(source_summary)
+
+    if normalized_chunks:
+        parts.append("Evidence snippets:")
+        total_chars = 0
+        for index, chunk in enumerate(normalized_chunks[:RAG_EVIDENCE_MAX_SNIPPETS], start=1):
+            snippet_text = chunk.get("content", "")
+            if not study_mode:
+                source_meta = (meta_by_id or {}).get(chunk.get("document_id") or chunk.get("doc_id"), {})
+                source_label = (
+                    source_meta.get("file_name")
+                    or source_meta.get("topic")
+                    or source_meta.get("course_code")
+                    or "Unknown source"
+                )
+                snippet_text = f"{source_label}: {snippet_text}"
+
+            line = f"[{index}] {snippet_text}"
+            remaining = RAG_EVIDENCE_TOTAL_MAX_CHARS - total_chars
+            if remaining <= 0:
+                break
+            if len(line) > remaining:
+                min_content_room = max(40, remaining - len(f"[{index}] "))
+                if min_content_room <= 40:
+                    break
+                snippet_only = snippet_text.split(": ", 1)[-1] if not study_mode and ": " in snippet_text else snippet_text
+                shortened = _truncate_evidence_text(snippet_only, min_content_room)
+                if not shortened:
+                    break
+                if not study_mode and ": " in snippet_text:
+                    source_prefix = snippet_text.split(": ", 1)[0]
+                    line = f"[{index}] {source_prefix}: {shortened}"
+                else:
+                    line = f"[{index}] {shortened}"
+            parts.append(line)
+            total_chars += len(line)
+
+    return "\n".join(parts)
 
 
 
@@ -1008,22 +1150,6 @@ async def get_relevant_context(
                 if _out_rpc_rows is not None:
                     _out_rpc_rows.extend(response.data or [])
 
-            # Step 3: Build enhanced context with metadata + chunks
-            context_parts = []
-
-            # Add document metadata at the top
-            if doc_metadata:
-                metadata_text = "DOCUMENT INFORMATION:\n"
-                if doc_metadata.get('file_name'):
-                    metadata_text += f"Title: {doc_metadata['file_name']}\n"
-                if doc_metadata.get('topic'):
-                    metadata_text += f"Topic: {doc_metadata['topic']}\n"
-                if doc_metadata.get('lecturer_name'):
-                    metadata_text += f"Lecturer: {doc_metadata['lecturer_name']}\n"
-                if doc_metadata.get('course_code'):
-                    metadata_text += f"Course Code: {doc_metadata['course_code']}\n"
-                context_parts.append(metadata_text)
-
             # Add retrieved chunks
             if not response.data or len(response.data) == 0:
                 logger.warning(
@@ -1072,9 +1198,11 @@ async def get_relevant_context(
                     logger.warning(f"Text search fallback failed: {fb_err}")
 
                 if fallback_chunks:
-                    context_parts.append("RELEVANT CONTENT FROM LECTURE:")
-                    context_parts.append("\n\n---\n\n".join(c['content'] for c in fallback_chunks))
-                    context_text = "\n\n".join(context_parts)
+                    context_text = _format_evidence_context(
+                        fallback_chunks,
+                        study_mode=True,
+                        doc_metadata=doc_metadata,
+                    )
                     citation = {
                         "document_id": doc_metadata.get("id"),
                         "topic": (doc_metadata or {}).get("topic") or None,
@@ -1093,14 +1221,14 @@ async def get_relevant_context(
                         "course": doc_metadata.get("course_code") or "N/A",
                         "lecturer": doc_metadata.get("lecturer_name") or "N/A",
                     }
-                    return "\n".join(context_parts), [citation]
+                    return _format_evidence_context([], study_mode=True, doc_metadata=doc_metadata), [citation]
                 return "", []
 
-            context_parts.append("RELEVANT CONTENT FROM LECTURE:")
-            context_chunks = [item['content'] for item in response.data]
-            context_parts.append("\n\n---\n\n".join(context_chunks))
-
-            context_text = "\n\n".join(context_parts)
+            context_text = _format_evidence_context(
+                response.data,
+                study_mode=True,
+                doc_metadata=doc_metadata,
+            )
             logger.info(f"Retrieved {len(response.data)} chunks + metadata ({len(context_text)} chars)")
             citations_list: list[dict] = []
             citations_list.append(
@@ -1233,23 +1361,11 @@ async def get_relevant_context(
         )
         meta_by_id = {item.get("id"): item for item in (meta_res.data or [])}
 
-        context_parts = []
-        for row in rows:
-            chunk_text = (row.get("content") or "").strip()
-            if not chunk_text:
-                continue
-
-            doc_id = row.get("document_id") or row.get("doc_id")
-            source_meta = meta_by_id.get(doc_id, {})
-            file_name = source_meta.get("file_name") or "Unknown Document"
-            course_code = source_meta.get("course_code") or "N/A"
-            lecturer_name = source_meta.get("lecturer_name") or "N/A"
-
-            context_parts.append(
-                f"--- Source: {file_name} (Course: {course_code}) | Lecturer: {lecturer_name} ---\n{chunk_text}"
-            )
-
-        context_text = "\n\n".join(context_parts)
+        context_text = _format_evidence_context(
+            rows,
+            study_mode=False,
+            meta_by_id=meta_by_id,
+        )
         citations_list = []
         for doc_id in unique_doc_ids:
             source_meta = meta_by_id.get(doc_id, {})
@@ -1262,7 +1378,7 @@ async def get_relevant_context(
                     "lecturer": source_meta.get("lecturer_name") or "N/A",
                 }
             )
-        logger.info(f"Retrieved {len(context_parts)} globally-ranked chunks ({len(context_text)} chars)")
+        logger.info(f"Retrieved {len(rows)} globally-ranked chunks ({len(context_text)} chars)")
         return context_text, citations_list
         
     except Exception as e:
@@ -1968,53 +2084,32 @@ async def agentic_rag_loop(
     unique_doc_ids = list({c.get("document_id") for c in unique_chunks if c.get("document_id")})
     
     # Build context string
-    context_parts = []
-    if unique_chunks:
-        # Fetch metadata for the docs
-        meta_by_id = {}
-        if unique_doc_ids:
-            try:
-                meta_res = await _execute_with_retry(
-                    lambda: supabase_client.table("pans_library")
-                    .select("id,file_name,course_code,lecturer_name,topic")
-                    .in_("id", unique_doc_ids)
-                    .execute(),
-                    "Fetch global source metadata",
-                )
-                meta_by_id = {item.get("id"): item for item in (meta_res.data or [])}
-            except Exception as e:
-                logger.error(f"Failed to fetch metadata for agentic RAG loop: {e}")
+    meta_by_id = {}
+    if unique_chunks and unique_doc_ids:
+        try:
+            meta_res = await _execute_with_retry(
+                lambda: supabase_client.table("pans_library")
+                .select("id,file_name,course_code,lecturer_name,topic")
+                .in_("id", unique_doc_ids)
+                .execute(),
+                "Fetch global source metadata",
+            )
+            meta_by_id = {item.get("id"): item for item in (meta_res.data or [])}
+        except Exception as e:
+            logger.error(f"Failed to fetch metadata for agentic RAG loop: {e}")
 
-        # If study mode (document_id is set), we can put a nice metadata header once
-        if document_id and unique_chunks:
-            doc_meta = meta_by_id.get(document_id) or {}
-            metadata_text = "DOCUMENT INFORMATION:\n"
-            if doc_meta.get('file_name'):
-                metadata_text += f"Title: {doc_meta['file_name']}\n"
-            if doc_meta.get('topic'):
-                metadata_text += f"Topic: {doc_meta['topic']}\n"
-            if doc_meta.get('lecturer_name'):
-                metadata_text += f"Lecturer: {doc_meta['lecturer_name']}\n"
-            if doc_meta.get('course_code'):
-                metadata_text += f"Course Code: {doc_meta['course_code']}\n"
-            context_parts.append(metadata_text)
-            
-            context_parts.append("RELEVANT CONTENT FROM LECTURE:")
-            context_parts.append("\n\n---\n\n".join(c.get("content", "") for c in unique_chunks))
-        else:
-            # Global RAG multi-source format
-            for chunk in unique_chunks:
-                chunk_text = chunk.get("content", "").strip()
-                doc_uuid = chunk.get("document_id")
-                source_meta = meta_by_id.get(doc_uuid, {})
-                file_name = source_meta.get("file_name") or "Unknown Document"
-                course_code = source_meta.get("course_code") or "N/A"
-                lecturer_name = source_meta.get("lecturer_name") or "N/A"
-                context_parts.append(
-                    f"--- Source: {file_name} (Course: {course_code}) | Lecturer: {lecturer_name} ---\n{chunk_text}"
-                )
-    
-    merged_context = "\n\n".join(context_parts)
+    if document_id:
+        merged_context = _format_evidence_context(
+            unique_chunks,
+            study_mode=True,
+            doc_metadata=meta_by_id.get(document_id) or None,
+        )
+    else:
+        merged_context = _format_evidence_context(
+            unique_chunks,
+            study_mode=False,
+            meta_by_id=meta_by_id,
+        )
     
     # Deduplicate citations list
     deduplicated_citations = []

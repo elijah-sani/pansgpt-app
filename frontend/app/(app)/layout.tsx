@@ -133,7 +133,7 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
             return;
         }
 
-        const shouldCloseSidebar = window.innerWidth < 768 || pathname?.startsWith("/notes");
+        const shouldCloseSidebar = window.innerWidth < 768 || pathname?.startsWith("/notes") || pathname?.startsWith("/reader");
         if (!shouldCloseSidebar) {
             return;
         }

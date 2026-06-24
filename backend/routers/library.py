@@ -483,20 +483,17 @@ def merge_system_into_user_sync(messages: list[dict]) -> list[dict]:
         return cleaned_messages
         
     full_system_prompt = "\n\n".join(system_content)
-    full_system_prompt = f"SYSTEM INSTRUCTIONS:\n{full_system_prompt}\n\nUSER REQUEST:\n"
-    
-    # 2. Prepend to first user message
-    for msg in cleaned_messages:
-        if msg.get("role") == "user":
-            content = msg.get("content")
-            if isinstance(content, str):
-                msg["content"] = full_system_prompt + content
-            elif isinstance(content, list):
-                # Multimodal content list -> insert text block at start
-                content.insert(0, {"type": "text", "text": full_system_prompt})
-            break
-            
-    return cleaned_messages
+
+    return [
+        {
+            "role": "assistant",
+            "content": (
+                "Conversation guidance for this response:\n"
+                f"{full_system_prompt}"
+            ),
+        },
+        *cleaned_messages,
+    ]
 
 def _apply_ingestion_run_filter(query, ingestion_run_id: Optional[str]):
     if ingestion_run_id:
