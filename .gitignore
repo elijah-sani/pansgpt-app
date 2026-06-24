@@ -125,6 +125,7 @@ frontend/public/fallback-*.js.map
 # AI agent / Antigravity local files (never commit)
 .agent/
 .codex-backups/
+private-docs/
 
 # Local codebase diagnosis reports
 docs/CODEBASE_DIAGNOSIS_REPORT.md

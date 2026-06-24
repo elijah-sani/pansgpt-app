@@ -20,6 +20,7 @@ from restrictions import build_restriction_block_payload, get_applicable_user_re
 from utils.thinking_token_utils import strip_thinking_tokens
 
 from services import llm_engine
+from services.policy_guard import PROMPT_REFUSAL_TEXT, contains_prompt_leak, evaluate_request_policy
 
 logger = logging.getLogger("PansGPT")
 
@@ -155,6 +156,30 @@ def _job_payload_without_count_fields(payload: dict[str, Any]) -> dict[str, Any]
     }
 
 
+def _build_quiz_generation_policy_text(body: "QuizGenerateRequest") -> str:
+    return "\n".join(
+        [
+            body.courseTitle or "",
+            body.courseCode or "",
+            body.topic or "",
+            body.level or "",
+            body.difficulty or "",
+            body.questionType or "",
+        ]
+    ).strip()
+
+
+def _build_quiz_submission_policy_text(body: "QuizSubmitRequest") -> str:
+    answer_parts: list[str] = []
+    for answer in body.answers:
+        selected = answer.selectedAnswer
+        if isinstance(selected, list):
+            answer_parts.extend(str(item) for item in selected)
+        else:
+            answer_parts.append(str(selected))
+    return "\n".join(answer_parts).strip()
+
+
 def merge_system_into_user(messages: List[dict]) -> List[dict]:
     system_parts: list[str] = []
     next_messages: list[dict] = []
@@ -171,13 +196,16 @@ def merge_system_into_user(messages: List[dict]) -> List[dict]:
         return next_messages
 
     merged_system = "\n\n".join(system_parts).strip()
-    for message in next_messages:
-        if message.get("role") == "user":
-            user_content = str(message.get("content") or "")
-            message["content"] = f"{merged_system}\n\n{user_content}".strip()
-            return next_messages
-
-    return [{"role": "user", "content": merged_system}, *next_messages]
+    return [
+        {
+            "role": "assistant",
+            "content": (
+                "Conversation guidance for this response:\n"
+                f"{merged_system}"
+            ),
+        },
+        *next_messages,
+    ]
 
 
 async def get_current_academic_context(university_id: Optional[str]) -> Optional[dict]:
@@ -335,9 +363,11 @@ class QuizQuestionModel(BaseModel):
         return self
 
 class QuizBatchModel(BaseModel):
+    model_config = {"extra": "forbid"}
     questions: List[QuizQuestionModel] = Field(..., min_length=1)
 
 class QuizGenerateRequest(BaseModel):
+    model_config = {"extra": "forbid"}
     courseCode: str
     courseTitle: str
     topic: Optional[str] = None
@@ -353,6 +383,61 @@ class QuizGenerateRequest(BaseModel):
     @classmethod
     def normalize_semester_field(cls, value: Optional[str]) -> Optional[str]:
         return normalize_semester(value)
+
+    @field_validator("courseCode", "courseTitle", "topic", "level", "academic_session", mode="before")
+    @classmethod
+    def sanitize_text_fields(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = " ".join(str(value).strip().split())
+        return normalized or None
+
+    @field_validator("difficulty", mode="before")
+    @classmethod
+    def normalize_difficulty_field(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"easy", "medium", "hard"}:
+            raise ValueError("difficulty must be easy, medium, or hard")
+        return normalized
+
+    @field_validator("questionType", mode="before")
+    @classmethod
+    def normalize_question_type_field(cls, value: str) -> str:
+        upper = str(value or "").strip().upper()
+        aliases = {
+            "OBJECTIVE": "OBJECTIVE",
+            "MULTIPLE_CHOICE": "OBJECTIVE",
+            "MULTIPLE CHOICE": "OBJECTIVE",
+            "MCQ": "MCQ",
+            "TRUE_FALSE": "TRUE_FALSE",
+            "TRUE FALSE": "TRUE_FALSE",
+            "TRUEFALSE": "TRUE_FALSE",
+            "TF": "TRUE_FALSE",
+            "SHORT_ANSWER": "SHORT_ANSWER",
+            "SHORT ANSWER": "SHORT_ANSWER",
+            "SHORTANSWER": "SHORT_ANSWER",
+            "SA": "SHORT_ANSWER",
+        }
+        normalized = aliases.get(upper)
+        if not normalized:
+            raise ValueError("questionType must be MCQ, OBJECTIVE, TRUE_FALSE, or SHORT_ANSWER")
+        return normalized
+
+    @field_validator("numQuestions")
+    @classmethod
+    def validate_num_questions_field(cls, value: int) -> int:
+        if value < 1 or value > 50:
+            raise ValueError("numQuestions must be between 1 and 50")
+        return value
+
+    @field_validator("timeLimit")
+    @classmethod
+    def validate_time_limit_field(cls, value: Optional[int]) -> Optional[int]:
+        if value is None:
+            return None
+        if value < 1 or value > 300:
+            raise ValueError("timeLimit must be between 1 and 300 minutes")
+        return value
 
 
 def normalize_semester(value: Optional[str]) -> Optional[str]:
@@ -379,14 +464,33 @@ def normalize_semester(value: Optional[str]) -> Optional[str]:
 
 
 class AnswerItem(BaseModel):
+    model_config = {"extra": "forbid"}
     questionId: str
     selectedAnswer: Union[List[str], str]
 
 
 class QuizSubmitRequest(BaseModel):
+    model_config = {"extra": "forbid"}
     quizId: str
     answers: List[AnswerItem]
     timeTaken: Optional[int] = None
+
+    @field_validator("quizId", mode="before")
+    @classmethod
+    def sanitize_quiz_id_field(cls, value: str) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError("quizId is required")
+        return normalized
+
+    @field_validator("timeTaken")
+    @classmethod
+    def validate_time_taken_field(cls, value: Optional[int]) -> Optional[int]:
+        if value is None:
+            return None
+        if value < 0 or value > 86400:
+            raise ValueError("timeTaken must be between 0 and 86400 seconds")
+        return value
 
 
 def _strip_option_label(text: str) -> str:
@@ -1704,7 +1808,11 @@ async def _generate_quiz_json_response(
         )
 
     visible_text, _thinking_text = strip_thinking_tokens(str(content or ""))
-    return str(visible_text).strip()
+    final_text = str(visible_text).strip()
+    if contains_prompt_leak(final_text):
+        logger.warning("Blocked leaked quiz generation output before parsing")
+        raise RuntimeError("Unsafe quiz generation output blocked")
+    return final_text
 
 
 def _classify_quiz_generation_exception(exc: Exception) -> str:
@@ -1757,7 +1865,11 @@ async def _generate_quiz_grading_response(system_prompt: str, user_prompt: str) 
         )
 
     visible_text, _thinking_text = strip_thinking_tokens(str(content or ""))
-    return str(visible_text).strip()
+    final_text = str(visible_text).strip()
+    if contains_prompt_leak(final_text):
+        logger.warning("Blocked leaked quiz grading output before parsing")
+        raise RuntimeError("Unsafe quiz grading output blocked")
+    return final_text
 
 
 # ---------- Internal generation ----------
@@ -2581,6 +2693,15 @@ def _normalize_quiz_generation_job(row: dict) -> dict:
 
 @router.post("/generate", dependencies=[Depends(_verify_api_key)])
 async def generate_quiz(body: QuizGenerateRequest, current_user: User = Depends(get_current_user)):
+    policy_decision = evaluate_request_policy(_build_quiz_generation_policy_text(body))
+    if not policy_decision.allow:
+        logger.warning(
+            "Blocked quiz generate request by policy: route=/api/quiz/generate category=%s matched_rule=%s user_id=%s",
+            policy_decision.category,
+            policy_decision.matched_rule,
+            current_user.id,
+        )
+        raise HTTPException(status_code=400, detail=policy_decision.user_response or PROMPT_REFUSAL_TEXT)
     return await _generate_quiz_now(body, current_user)
 
 
@@ -2592,6 +2713,16 @@ async def create_quiz_generation_job(
 ):
     """Create a background quiz generation job and return immediately."""
     await resolve_student_university_context(current_user)
+
+    policy_decision = evaluate_request_policy(_build_quiz_generation_policy_text(body))
+    if not policy_decision.allow:
+        logger.warning(
+            "Blocked quiz job request by policy: route=/api/quiz/jobs category=%s matched_rule=%s user_id=%s",
+            policy_decision.category,
+            policy_decision.matched_rule,
+            current_user.id,
+        )
+        raise HTTPException(status_code=400, detail=policy_decision.user_response or PROMPT_REFUSAL_TEXT)
 
     restriction = await _get_quiz_restriction_if_any(current_user)
     if restriction:
@@ -3046,6 +3177,16 @@ async def get_quiz(quiz_id: str, current_user: User = Depends(get_current_user))
 async def submit_quiz(body: QuizSubmitRequest, current_user: User = Depends(get_current_user)):
     """Submit quiz answers, calculate score, save result."""
     await resolve_student_university_context(current_user)
+
+    policy_decision = evaluate_request_policy(_build_quiz_submission_policy_text(body))
+    if not policy_decision.allow:
+        logger.warning(
+            "Blocked quiz submit request by policy: route=/api/quiz/submit category=%s matched_rule=%s user_id=%s",
+            policy_decision.category,
+            policy_decision.matched_rule,
+            current_user.id,
+        )
+        raise HTTPException(status_code=400, detail=policy_decision.user_response or PROMPT_REFUSAL_TEXT)
 
     sb = _get_supabase()
     try:

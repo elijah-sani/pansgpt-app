@@ -40,6 +40,16 @@ VISION_MODEL_MAX_TOKENS = {
     VISION_TERTIARY: 512,
     VISION_QUATERNARY: 384,
 }
+SYSTEM_ROLE_SAFE_TEXT_MODEL_ORDER = [
+    TEXT_TERTIARY,
+    SMALL_SECONDARY,
+    SMALL_PRIMARY,
+    SMALL_TERTIARY,
+]
+SYSTEM_ROLE_SAFE_VISION_MODEL_ORDER = [
+    VISION_PRIMARY,
+    VISION_QUATERNARY,
+]
 
 openrouter_client = None
 google_client = None
@@ -143,6 +153,24 @@ def _response_format_mode(response_format: Optional[dict]) -> str:
     return str(response_format.get("type") or "unknown")
 
 
+def _client_for_text_model(model_name: str) -> Any:
+    if model_name == TEXT_TERTIARY:
+        return groq_text_client
+    if model_name in {TEXT_PRIMARY, TEXT_SECONDARY}:
+        return google_client
+    if model_name == SMALL_SECONDARY:
+        return groq_client
+    if model_name in {SMALL_PRIMARY, SMALL_TERTIARY}:
+        return openrouter_client
+    return None
+
+
+def _max_tokens_for_text_model(model_name: str, requested_max_tokens: int) -> int:
+    if model_name in {TEXT_TERTIARY, SMALL_PRIMARY, SMALL_TERTIARY}:
+        return min(requested_max_tokens, OPENROUTER_FALLBACK_MAX_TOKENS)
+    return requested_max_tokens
+
+
 def _log_quiz_provider_timing(event: str, duration_ms: float, model: str, response_format: Optional[dict], audit_meta: Optional[dict] = None, **extra: Any) -> None:
     meta = {
         "model": model,
@@ -216,6 +244,7 @@ async def generate_completion_with_failover(
     audit_meta: Optional[dict] = None,
     per_provider_timeout_seconds: Optional[float] = None,
     preferred_models: Optional[list[str]] = None,
+    require_system_role_support: bool = False,
 ) -> Optional[Any]:
     if force_google:
         if google_client is None:
@@ -274,7 +303,8 @@ async def generate_completion_with_failover(
     # --- Vision path ---
     if has_images:
         last_exc = None
-        for model_name in VISION_MODEL_ORDER:
+        vision_order = SYSTEM_ROLE_SAFE_VISION_MODEL_ORDER if require_system_role_support else VISION_MODEL_ORDER
+        for model_name in vision_order:
             if model_name == VISION_PRIMARY:
                 client = groq_text_client
             elif model_name in {VISION_SECONDARY, VISION_TERTIARY}:
@@ -316,11 +346,18 @@ async def generate_completion_with_failover(
         raise RuntimeError("No vision-capable client is available.")
 
     # [MODEL ROUTING FIX]
-    full_order = [
+    default_text_order = [
         ("TEXT_PRIMARY", TEXT_PRIMARY),
         ("TEXT_SECONDARY", TEXT_SECONDARY),
-        ("TEXT_TERTIARY", TEXT_TERTIARY)
+        ("TEXT_TERTIARY", TEXT_TERTIARY),
     ]
+    system_safe_order = [
+        ("TEXT_TERTIARY", TEXT_TERTIARY),
+        ("SMALL_SECONDARY", SMALL_SECONDARY),
+        ("SMALL_PRIMARY", SMALL_PRIMARY),
+        ("SMALL_TERTIARY", SMALL_TERTIARY),
+    ]
+    full_order = system_safe_order if require_system_role_support else default_text_order
     if preferred_models:
         preferred_set = {
             model_name
@@ -332,9 +369,7 @@ async def generate_completion_with_failover(
             for preferred_name in preferred_models
             for item in full_order
             if item[1] == preferred_name
-        ] + [
-            item for item in full_order if item[1] not in preferred_set
-        ]
+        ] + [item for item in full_order if item[1] not in preferred_set]
     else:
         matched_tuple = None
         if requested_model:
@@ -343,122 +378,69 @@ async def generate_completion_with_failover(
                     matched_tuple = (alias, name)
                     break
         if matched_tuple:
-            model_order = [matched_tuple] + [
-                item for item in full_order if item != matched_tuple
-            ]
+            model_order = [matched_tuple] + [item for item in full_order if item != matched_tuple]
         else:
             model_order = full_order
-    # [MODEL ROUTING FIX]
 
+    last_exc = None
     for model_alias, model_name in model_order:
-        if model_name == TEXT_TERTIARY:
-            if groq_text_client is None:  # [GROQ TERTIARY FIX]
-                logger.error("All models failed and Groq text client is not initialized.")  # [GROQ TERTIARY FIX]
-                return None  # [GROQ TERTIARY FIX]
+        client = _client_for_text_model(model_name)
+        if client is None:
+            continue
+        try:
+            logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "TEXT_PRIMARY", model_name)
+            kwargs = {
+                "model": model_name,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": _max_tokens_for_text_model(model_name, max_tokens),
+                "stream": stream,
+            }
+            if response_format:
+                kwargs["response_format"] = response_format
             try:
-                fallback_max_tokens = min(max_tokens, OPENROUTER_FALLBACK_MAX_TOKENS)
-                logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "TEXT_PRIMARY", model_name)
-                kwargs = {
-                    "model": model_name,
-                    "messages": messages,
-                    "temperature": temperature,
-                    "max_tokens": fallback_max_tokens,
-                    "stream": stream,
-                }
-                if response_format:
-                    kwargs["response_format"] = response_format
-                try:
-                    res = await _create_completion_with_audit(
-                        groq_text_client,
-                        kwargs,
-                        audit_meta=audit_meta,
-                        timeout_seconds=per_provider_timeout_seconds,
-                    )
-                    if _should_reject_response_content(res, stream=stream):
-                        raise ValueError("Groq client returned empty or thinking-only response content")
-                    return res
-                except Exception as exc:
-                    if response_format:
-                        logger.warning(f"Groq client failed with response_format, retrying with standard json_object format: {exc}")
-                        try:
-                            kwargs["response_format"] = {"type": "json_object"}
-                            res = await _create_completion_with_audit(
-                                groq_text_client,
-                                kwargs,
-                                audit_meta=audit_meta,
-                                timeout_seconds=per_provider_timeout_seconds,
-                            )
-                            if _should_reject_response_content(res, stream=stream):
-                                raise ValueError("Groq client returned empty or thinking-only response content under json_object")
-                            return res
-                        except Exception as inner_exc:
-                            logger.warning(f"Groq client failed with standard json_object format, retrying without format: {inner_exc}")
-                            kwargs.pop("response_format", None)
-                            res = await _create_completion_with_audit(
-                                groq_text_client,
-                                kwargs,
-                                audit_meta=audit_meta,
-                                timeout_seconds=per_provider_timeout_seconds,
-                            )
-                            if _should_reject_response_content(res, stream=stream):
-                                raise ValueError("Groq client returned empty or thinking-only response content without format")
-                            return res
-                    raise exc
+                res = await _create_completion_with_audit(
+                    client,
+                    kwargs,
+                    audit_meta=audit_meta,
+                    timeout_seconds=per_provider_timeout_seconds,
+                )
+                if _should_reject_response_content(res, stream=stream):
+                    raise ValueError(f"{model_name} returned empty or thinking-only response content")
+                return res
             except Exception as exc:
-                logger.error(f"All models failed. Last resort ({TEXT_TERTIARY}) error: {exc}")
-                raise exc
-        else:
-            if google_client is not None:
-                try:
-                    logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "TEXT_PRIMARY", model_name)
-                    kwargs = {
-                        "model": model_name,
-                        "messages": messages,
-                        "temperature": temperature,
-                        "max_tokens": max_tokens,
-                        "stream": stream,
-                    }
-                    if response_format:
-                        kwargs["response_format"] = response_format
+                if response_format:
+                    logger.warning(f"Model {model_name} failed with response_format, retrying with standard json_object format: {exc}")
                     try:
+                        kwargs["response_format"] = {"type": "json_object"}
                         res = await _create_completion_with_audit(
-                            google_client,
+                            client,
                             kwargs,
                             audit_meta=audit_meta,
                             timeout_seconds=per_provider_timeout_seconds,
                         )
                         if _should_reject_response_content(res, stream=stream):
-                            raise ValueError("Google client returned empty or thinking-only response content")
+                            raise ValueError(f"{model_name} returned empty or thinking-only response content under json_object")
                         return res
-                    except Exception as exc:
-                        if response_format:
-                            logger.warning(f"Google client failed with response_format for model {model_name}, retrying with standard json_object format: {exc}")
-                            try:
-                                kwargs["response_format"] = {"type": "json_object"}
-                                res = await _create_completion_with_audit(
-                                    google_client,
-                                    kwargs,
-                                    audit_meta=audit_meta,
-                                    timeout_seconds=per_provider_timeout_seconds,
-                                )
-                                if _should_reject_response_content(res, stream=stream):
-                                    raise ValueError("Google client returned empty or thinking-only response content under json_object")
-                                return res
-                            except Exception as inner_exc:
-                                logger.warning(f"Google client failed with standard json_object format for model {model_name}, retrying without format: {inner_exc}")
-                                kwargs.pop("response_format", None)
-                                res = await _create_completion_with_audit(
-                                    google_client,
-                                    kwargs,
-                                    audit_meta=audit_meta,
-                                    timeout_seconds=per_provider_timeout_seconds,
-                                )
-                                if _should_reject_response_content(res, stream=stream):
-                                    raise ValueError("Google client returned empty or thinking-only response content without format")
-                                return res
-                        raise exc
-                except Exception as exc:
-                    logger.warning(f"Model {model_alias} failed ({model_name}), trying next: {exc}")
+                    except Exception as inner_exc:
+                        logger.warning(f"Model {model_name} failed with standard json_object format, retrying without format: {inner_exc}")
+                        kwargs.pop("response_format", None)
+                        res = await _create_completion_with_audit(
+                            client,
+                            kwargs,
+                            audit_meta=audit_meta,
+                            timeout_seconds=per_provider_timeout_seconds,
+                        )
+                        if _should_reject_response_content(res, stream=stream):
+                            raise ValueError(f"{model_name} returned empty or thinking-only response content without format")
+                        return res
+                raise exc
+        except Exception as exc:
+            last_exc = exc
+            logger.warning(f"Model {model_alias} failed ({model_name}), trying next: {exc}")
+
+    if last_exc is not None:
+        raise last_exc
 
     return None
 
@@ -471,6 +453,7 @@ async def generate_dual_cloud_stream(
     max_tokens: int = 2048,
     requested_model: Optional[str] = None,
     preferred_models: Optional[list[str]] = None,
+    require_system_role_support: bool = False,
 ) -> AsyncIterator[Any]:
     completion_stream = await generate_completion_with_failover(
         messages=messages,
@@ -480,6 +463,7 @@ async def generate_dual_cloud_stream(
         stream=True,
         requested_model=requested_model,
         preferred_models=preferred_models,
+        require_system_role_support=require_system_role_support,
     )
     if completion_stream is None:
         return

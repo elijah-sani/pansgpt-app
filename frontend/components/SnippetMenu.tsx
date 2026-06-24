@@ -6,7 +6,7 @@ interface SnippetMenuProps {
     isLoading?: boolean;
     isSaving?: boolean;
     onClose: () => void;
-    onSend: (data: { text: string; attachments: string[]; systemInstruction?: string }) => void;
+    onSend: (data: { text: string; attachments: string[]; intent?: 'snippet_explain' }) => void;
     onAddToInput: (image: string) => void;
     onSaveNote?: (image: string) => void;
 }
@@ -25,21 +25,11 @@ const SnippetMenu: React.FC<SnippetMenuProps> = ({
         if (!attachment) return;
 
         const userVisibleText = "Can you explain this snippet for me?";
-        const hiddenPrompt = `
-      [SYSTEM: PHARMACY_VISUAL_ANALYSIS]
-      Analyze the attached image.
-      Goal: Provide a smooth, academic explanation of what is shown.
-      - Do NOT use prefixes like "Identify:", "Context:", or numbered lists for metadata.
-      - Weave identification and clinical context into a single, flowing explanation.
-      - If it is a diagram, trace the pathway naturally.
-      - Conclude with why this is clinically relevant.
-      - Keep it concise (under 2 paragraphs).
-    `;
 
         onSend({
             text: userVisibleText,
             attachments: [attachment],
-            systemInstruction: hiddenPrompt
+            intent: 'snippet_explain'
         });
         onClose();
     };
