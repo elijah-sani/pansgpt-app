@@ -356,12 +356,11 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
       const timeTaken = Math.floor((new Date().getTime() - startTime.getTime()) / 1000);
       const formattedAnswers = Object.entries(userAnswers).map(([questionId, ans]) => ({
         questionId,
-        selectedAnswer: Array.isArray(ans) ? JSON.stringify(ans) : ans,
+        selectedAnswer: ans,
       }));
 
       const response = await api.post('/api/quiz/submit', {
         quizId: quiz.id,
-        userId: userId || '',
         answers: formattedAnswers,
         timeTaken,
       });
