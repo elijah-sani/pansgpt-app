@@ -1441,10 +1441,17 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 setCurrentSessionId(activeSessionId);
             }
 
+            const sanitizedHistory = updatedHistory
+                .filter((message) => message.role !== 'system')
+                .map((message) => ({
+                    role: message.role,
+                    content: message.content,
+                }));
+
             const payload: Record<string, unknown> = {
                 text: text,
                 mode: 'chat',
-                messages: updatedHistory,
+                messages: sanitizedHistory,
                 document_id: fileId,
                 images: attachments.map((base64Data) => base64Data),
                 session_id: activeSessionId,

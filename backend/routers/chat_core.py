@@ -660,6 +660,21 @@ def _needs_profile_context(
     )
 
 
+def _needs_name_context(user_text: str) -> bool:
+    return _contains_any_phrase(
+        user_text,
+        (
+            "what is my name",
+            "what's my name",
+            "do you know my name",
+            "tell me my name",
+            "say my name",
+            "who am i",
+            "what do you know about me",
+        ),
+    )
+
+
 def _minimize_student_profile_text(student_profile_text: str, *, include_name: bool = False) -> str:
     lines = [line.strip() for line in (student_profile_text or "").splitlines() if line.strip()]
     filtered: list[str] = []
@@ -679,10 +694,11 @@ def _build_context_inclusion_flags(
     pipeline_fetch_faculty: bool,
     pipeline_fetch_timetable: bool,
 ) -> dict[str, bool]:
+    include_name = _needs_name_context(user_text)
     include_timetable = pipeline_fetch_timetable and _needs_timetable_context(user_text)
     include_faculty = pipeline_fetch_faculty and _needs_faculty_context(user_text)
     include_summaries = _needs_session_memory(user_text, messages)
-    include_profile = _needs_profile_context(
+    include_profile = include_name or _needs_profile_context(
         user_text,
         study_mode=study_mode,
         context_quality=context_quality,
@@ -691,6 +707,7 @@ def _build_context_inclusion_flags(
     )
     return {
         "include_profile": include_profile,
+        "include_name": include_name,
         "include_summaries": include_summaries,
         "include_faculty": include_faculty,
         "include_timetable": include_timetable,
@@ -1498,7 +1515,10 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
             )
             async for planner_event in stream_pipeline_plan(
                 user_text=request.text,
-                student_profile_text=_minimize_student_profile_text(student_profile_text),
+                student_profile_text=_minimize_student_profile_text(
+                    student_profile_text,
+                    include_name=bool(_needs_name_context(request.text)),
+                ),
                 llm_engine_instance=llm_engine,
             ):
                 if "thinking_update" in planner_event:
@@ -1805,7 +1825,10 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
         )
         final_system_prompt = _build_final_system_prompt(
             system_prompt=system_prompt,
-            student_profile_text=_minimize_student_profile_text(student_profile_text),
+            student_profile_text=_minimize_student_profile_text(
+                student_profile_text,
+                include_name=bool(context_flags["include_name"]),
+            ),
             current_time_str=current_time_str,
             tomorrow_str=tomorrow_str,
             recent_summaries=recent_summaries,
@@ -2670,7 +2693,10 @@ async def edit_message(
 
             final_system_prompt = _build_final_system_prompt(
                 system_prompt=system_prompt,
-                student_profile_text=_minimize_student_profile_text(student_profile_text),
+                student_profile_text=_minimize_student_profile_text(
+                    student_profile_text,
+                    include_name=bool(context_flags["include_name"]),
+                ),
                 current_time_str=current_time_str,
                 tomorrow_str=tomorrow_str,
                 recent_summaries=recent_summaries,
@@ -3153,7 +3179,10 @@ async def regenerate_response(
             )
             final_system_prompt = _build_final_system_prompt(
                 system_prompt=system_prompt,
-                student_profile_text=_minimize_student_profile_text(student_profile_text),
+                student_profile_text=_minimize_student_profile_text(
+                    student_profile_text,
+                    include_name=bool(context_flags["include_name"]),
+                ),
                 current_time_str=current_time_str,
                 tomorrow_str=tomorrow_str,
                 recent_summaries=recent_summaries,

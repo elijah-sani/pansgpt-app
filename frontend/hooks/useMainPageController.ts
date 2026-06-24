@@ -798,10 +798,17 @@ export function useMainPageController() {
           }
         }
 
+        const sanitizedHistory = updatedHistory
+          .filter((message) => message.role !== 'system')
+          .map((message) => ({
+            role: message.role,
+            content: message.content,
+          }));
+
         const payload = {
           text,
           mode: 'chat',
-          messages: updatedHistory,
+          messages: sanitizedHistory,
           images: attachments.map((base64Data) => base64Data),
           session_id: currentSessionId,
           is_retry: isRetry,

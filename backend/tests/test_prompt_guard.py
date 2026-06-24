@@ -178,6 +178,7 @@ def test_context_inclusion_flags_only_enable_relevant_context():
 
     assert flags == {
         "include_profile": False,
+        "include_name": False,
         "include_summaries": False,
         "include_faculty": False,
         "include_timetable": False,
@@ -195,6 +196,21 @@ def test_context_inclusion_flags_only_enable_relevant_context():
     assert follow_up_flags["include_summaries"] is True
     assert follow_up_flags["include_timetable"] is True
     assert follow_up_flags["include_profile"] is True
+    assert follow_up_flags["include_name"] is False
+
+
+def test_identity_questions_enable_name_context():
+    flags = _build_context_inclusion_flags(
+        user_text="What is my name?",
+        messages=None,
+        study_mode=False,
+        context_quality="none",
+        pipeline_fetch_faculty=False,
+        pipeline_fetch_timetable=False,
+    )
+
+    assert flags["include_profile"] is True
+    assert flags["include_name"] is True
 
 
 def test_minimized_student_profile_omits_name_by_default():
@@ -204,6 +220,13 @@ def test_minimized_student_profile_omits_name_by_default():
     assert "Name:" not in minimized
     assert "Level: 400" in minimized
     assert "University: University of Jos" in minimized
+
+
+def test_minimized_student_profile_includes_name_for_identity_prompts():
+    profile = "Name: Anita Dangwam\nLevel: 400\nUniversity: University of Jos"
+    minimized = _minimize_student_profile_text(profile, include_name=True)
+
+    assert "Name: Anita Dangwam" in minimized
 
 
 def test_evidence_context_is_sanitized_and_capped():

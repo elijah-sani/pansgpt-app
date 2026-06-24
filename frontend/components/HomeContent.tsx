@@ -723,7 +723,7 @@ export default function HomeContent() {
                                     value={searchQuery}
                                     onChange={(e) => setSearchQuery(e.target.value)}
                                     placeholder="Search documents or courses..."
-                                    className="w-full rounded-full bg-surface-secondary border-none py-2.5 px-4 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-0 focus:border-none"
+                                    className="w-full rounded-full bg-surface-secondary border-none py-2.5 px-4 text-base text-foreground placeholder:text-muted-foreground outline-none focus:ring-0 focus:border-none"
                                 />
                             </div>
                         </div>
