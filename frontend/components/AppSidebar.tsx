@@ -172,6 +172,7 @@ export default function AppSidebar({
   const pathname = usePathname();
   const router = useRouter();
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [isToggleHovered, setIsToggleHovered] = useState(false);
   const [isDateGroupingEnabled, setIsDateGroupingEnabled] = useState(false);
   const [isMobileChatHistoryOpen, setIsMobileChatHistoryOpen] = useState(true);
   const [sidebarNotes, setSidebarNotes] = useState<SidebarNoteItem[]>([]);
@@ -803,11 +804,21 @@ export default function AppSidebar({
               ) : null}
               <button
                 onClick={onClose}
+                onMouseEnter={() => setIsToggleHovered(true)}
+                onMouseLeave={() => setIsToggleHovered(false)}
                 title={isIconOnly ? "Expand sidebar" : "Collapse sidebar"}
-                className="p-2 text-foreground hover:bg-accent active:bg-accent/80 active:scale-95 rounded-lg transition-colors"
+                className="p-2 text-foreground hover:bg-accent active:bg-accent/80 active:scale-95 rounded-lg transition-colors flex items-center justify-center"
                 style={{ WebkitTapHighlightColor: 'transparent' }}
               >
-                <PanelLeft size={20} />
+                {isOnReader && isIconOnly ? (
+                  isToggleHovered ? (
+                    <PanelLeft size={20} />
+                  ) : (
+                    <Logo className="h-5 w-5" />
+                  )
+                ) : (
+                  <PanelLeft size={20} />
+                )}
               </button>
             </div>
           </div>
