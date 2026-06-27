@@ -1268,6 +1268,7 @@ function MobileDocumentDetailsModal({ doc, onClose }: { doc: Document; onClose: 
 
 function UploadModal({ onClose, userEmail, isSuperAdmin, onSuccess }: { isOpen: boolean, onClose: () => void, userEmail: string, isSuperAdmin: boolean, onSuccess: () => void }) {
     const [isLoading, setIsLoading] = useState(false);
+    const [loadingStage, setLoadingStage] = useState<'converting' | 'uploading'>('uploading');
     const [isTraining, setIsTraining] = useState(false); // New State for AI Training
     const [trainingProgress, setTrainingProgress] = useState(0);
     const [isSuccess, setIsSuccess] = useState(false);
@@ -1331,6 +1332,16 @@ function UploadModal({ onClose, userEmail, isSuperAdmin, onSuccess }: { isOpen: 
         }
     };
 
+    const detectSelectedFileType = (file: File): 'pdf' | 'doc' | 'docx' | 'ppt' | 'pptx' | 'unsupported' => {
+        const lowerName = file.name.toLowerCase();
+        if (lowerName.endsWith('.pdf') || file.type === 'application/pdf') return 'pdf';
+        if (lowerName.endsWith('.doc')) return 'doc';
+        if (lowerName.endsWith('.docx')) return 'docx';
+        if (lowerName.endsWith('.ppt')) return 'ppt';
+        if (lowerName.endsWith('.pptx')) return 'pptx';
+        return 'unsupported';
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setIsLoading(true);
@@ -1338,7 +1349,13 @@ function UploadModal({ onClose, userEmail, isSuperAdmin, onSuccess }: { isOpen: 
 
         const file = fileInputRef.current?.files?.[0];
         if (!file) {
-            setError('Please select a PDF file.');
+            setError('Please select a PDF, DOC, DOCX, PPT, or PPTX file.');
+            setIsLoading(false);
+            return;
+        }
+        const selectedType = detectSelectedFileType(file);
+        if (selectedType === 'unsupported') {
+            setError('Only PDF, DOC, DOCX, PPT, and PPTX files are supported.');
             setIsLoading(false);
             return;
         }
@@ -1350,6 +1367,13 @@ function UploadModal({ onClose, userEmail, isSuperAdmin, onSuccess }: { isOpen: 
         }
 
         try {
+            const requiresConversion = selectedType !== 'pdf';
+            setLoadingStage(requiresConversion ? 'converting' : 'uploading');
+            if (requiresConversion) {
+                await new Promise((resolve) => window.setTimeout(resolve, 700));
+                setLoadingStage('uploading');
+            }
+
             const data = new FormData();
             data.append('file', file);
             data.append('title', formData.title);
@@ -1483,6 +1507,7 @@ function UploadModal({ onClose, userEmail, isSuperAdmin, onSuccess }: { isOpen: 
                     material_status: 'active',
                 });
                 setFileName('');
+                setLoadingStage('uploading');
                 setTrainingProgress(0);
                 setSelectedLevels([]);
             }, 300);
@@ -1575,7 +1600,7 @@ function UploadModal({ onClose, userEmail, isSuperAdmin, onSuccess }: { isOpen: 
                             <div className="relative group cursor-pointer">
                                 <input
                                     type="file"
-                                    accept=".pdf,application/pdf"
+                                    accept=".pdf,.doc,.docx,.ppt,.pptx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
                                     ref={fileInputRef}
                                     onChange={handleFileChange}
                                     className="absolute inset-0 w-full h-full opacity-0 z-10 cursor-pointer"
@@ -1587,9 +1612,9 @@ function UploadModal({ onClose, userEmail, isSuperAdmin, onSuccess }: { isOpen: 
                                         <UploadCloud className={`w-6 h-6 ${fileName ? 'text-primary' : 'text-muted-foreground'}`} />
                                     </div>
                                     <p className="text-sm font-medium text-foreground">
-                                        {fileName || "Drag & drop PDF here or browse"}
+                                        {fileName || "Drag & drop PDF, DOC, DOCX, PPT, or PPTX here"}
                                     </p>
-                                    {!fileName && <p className="text-xs text-muted-foreground mt-1">Maximum file size 50MB</p>}
+                                    {!fileName && <p className="text-xs text-muted-foreground mt-1">Office files will be converted to PDF before upload. Maximum file size 50MB.</p>}
                                 </div>
                             </div>
 
@@ -1623,8 +1648,14 @@ function UploadModal({ onClose, userEmail, isSuperAdmin, onSuccess }: { isOpen: 
                                 <div className="absolute inset-0 border-4 border-primary rounded-full border-t-transparent animate-spin"></div>
                                 <UploadCloud className="absolute inset-0 m-auto w-8 h-8 text-primary animate-pulse" />
                             </div>
-                            <h4 className="text-xl font-bold text-foreground mb-2">Uploading Document...</h4>
-                            <p className="text-muted-foreground text-sm">Saving securely to cloud storage.</p>
+                            <h4 className="text-xl font-bold text-foreground mb-2">
+                                {loadingStage === 'converting' ? 'Converting to PDF...' : 'Uploading Document...'}
+                            </h4>
+                            <p className="text-muted-foreground text-sm">
+                                {loadingStage === 'converting'
+                                    ? 'Preparing a PDF version before upload.'
+                                    : 'Saving securely to cloud storage.'}
+                            </p>
                         </motion.div>
                     )}
 

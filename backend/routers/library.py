@@ -33,6 +33,9 @@ import fitz  # PyMuPDF
 from PIL import Image
 # from groq import Groq  <-- Removed
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from services.pdf_conversion import convert_office_file_to_pdf, detect_admin_upload_file_type
+from services.policy_guard import contains_prompt_leak
+from services.security_logging import log_security_event
 from utils.thinking_token_utils import strip_thinking_tokens
 from .shared import get_current_academic_context
 
@@ -1146,7 +1149,8 @@ async def admin_upload_document(
     current_user: User = Depends(get_current_admin),
 ):
     """
-    Admin Endpoint: Upload PDF to Drive, save metadata to Supabase, and trigger RAG ingestion.
+    Admin Endpoint: Upload PDF or supported Office files, save metadata to Supabase, and trigger RAG ingestion.
+    Office files are converted to PDF before Drive upload and ingestion.
     """
     logger.debug(f"[DEBUG] DEBUG: Received Upload Request for '{title}' (Course: {course_code})")
     logger.info(f"[INFO] Upload Request: {title} by {uploaded_by}")
@@ -1167,42 +1171,66 @@ async def admin_upload_document(
     default_semester = academic_context.get("current_semester") if academic_context else None
     normalized_semester = normalize_semester(semester) or default_semester
 
-    # 1. Prepare File for Streaming (Don't read into memory yet)
-    try:
-        # Get file size safely
-        file.file.seek(0, 2)
-        file_size = file.file.tell()
-        file.file.seek(0)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail="Unable to process the file. Please try again.")
+    original_file_name = (file.filename or "").strip()
+    if not original_file_name:
+        raise HTTPException(status_code=400, detail="A file is required.")
 
-    # 2. Upload to Google Drive (Streaming Mode)
+    detected_file_type, normalized_mime_type, is_supported_file, requires_conversion = detect_admin_upload_file_type(
+        original_file_name,
+        file.content_type,
+    )
+    if not is_supported_file:
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF, DOC, DOCX, PPT, and PPTX files are supported.",
+        )
+
+    # 1. Read the source file once so the same bytes can be reused for conversion, upload, and ingestion.
     try:
-        # Generate unique filename to prevent collisions
-        file_ext = os.path.splitext(file.filename)[1]
+        source_content = await file.read()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Unable to process the file. Please try again.")
+    if not source_content:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+
+    effective_file_name = original_file_name
+    effective_content_type = normalized_mime_type or file.content_type or "application/octet-stream"
+    effective_content = source_content
+
+    if requires_conversion:
+        try:
+            effective_file_name, effective_content = await asyncio.to_thread(
+                convert_office_file_to_pdf,
+                source_bytes=source_content,
+                source_file_name=original_file_name,
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("Admin library conversion failed for %s: %s", original_file_name, exc)
+            raise HTTPException(status_code=500, detail="Unable to convert the file to PDF. Please try again.")
+        effective_content_type = "application/pdf"
+
+    file_size = len(effective_content)
+
+    # 2. Upload the final PDF asset to Google Drive.
+    try:
+        file_ext = os.path.splitext(effective_file_name)[1]
         if not file_ext:
             file_ext = ".pdf"
         unique_filename = f"{uuid4()}{file_ext}"
 
-        # Stream directly from the TempFile (disk-backed if large)
         drive_file_id = drive_service.upload_file(
-            file_name=unique_filename, # Use UUID name for storage
-            file_obj=file.file,        # Pass file object, NOT content bytes
-            mime_type=file.content_type,
+            file_name=unique_filename,
+            file_obj=io.BytesIO(effective_content),
+            mime_type=effective_content_type,
             folder_id=GOOGLE_DRIVE_FOLDER_ID,
-            file_size=file_size
+            file_size=file_size,
         )
-    except Exception as e:
-        if "scope" in str(e).lower():
+    except Exception as exc:
+        if "scope" in str(exc).lower():
             raise HTTPException(status_code=500, detail="Unable to upload file. Please contact support.")
         raise HTTPException(status_code=500, detail="File upload failed. Please try again.")
-
-    # 3. Read Content for background processing.
-    try:
-        file.file.seek(0)
-        content = await file.read()
-    except Exception as e:
-        raise HTTPException(status_code=400, detail="Unable to read the file. Please try again.")
 
     # 4. Parse target_levels from JSON string
     levels_list = []
@@ -1224,7 +1252,7 @@ async def admin_upload_document(
             "lecturer_name": lecturer,
             "topic": topic,
             "drive_file_id": drive_file_id,
-            "file_name": file.filename, # Store ORIGINAL name for display
+            "file_name": effective_file_name,
             "file_size": file_size,
             "university_id": scoped_university_id,
             "uploaded_by_email": uploaded_by,
@@ -1281,11 +1309,11 @@ async def admin_upload_document(
         ingestion_worker_id = str(uuid4())
         background_tasks.add_task(
             process_document_background,
-            content,
+            effective_content,
             document_id,
             ingestion_run_id,
             ingestion_worker_id,
-            file.filename,
+            effective_file_name,
             uploaded_by,
         )
         logger.info(f"[INFO] Background processing queued for document {document_id}")

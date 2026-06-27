@@ -1,10 +1,13 @@
 from fastapi import BackgroundTasks, Query
 from uuid import uuid4
-import shutil
-import subprocess
 
 from . import shared
 from . import library as library_router
+from services.pdf_conversion import (
+    PDF_CONVERSION_UNAVAILABLE_MESSAGE,
+    SUPPORTED_CONVERSION_INPUT_TYPES,
+    convert_office_file_to_pdf,
+)
 from .shared import (
     APIRouter,
     BaseModel,
@@ -99,10 +102,6 @@ class AcademicContextRolloverRequest(BaseModel):
     new_semester: str
     archive_previous_active_materials: bool = True
     dry_run: bool = False
-
-
-SUPPORTED_CONVERSION_INPUT_TYPES = {"doc", "docx", "ppt", "pptx"}
-PDF_CONVERSION_UNAVAILABLE_MESSAGE = "PDF conversion is not available on this server yet."
 
 
 MATERIAL_SUBMISSION_SELECT = (
@@ -685,80 +684,6 @@ async def _insert_admin_material_audit_log(
         )
     except Exception as exc:
         logger.warning("Admin material audit log failed for submission %s: %s", submission_row.get("id"), exc)
-
-
-def _find_soffice_binary() -> Optional[str]:
-    candidates = [
-        shutil.which("soffice"),
-        shutil.which("soffice.exe"),
-        r"C:\Program Files\LibreOffice\program\soffice.exe",
-        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
-    ]
-    for candidate in candidates:
-        if candidate and os.path.exists(candidate):
-            return candidate
-    return None
-
-
-def _convert_submission_file_to_pdf(*, source_bytes: bytes, source_file_name: str) -> tuple[str, bytes]:
-    soffice_binary = _find_soffice_binary()
-    if not soffice_binary:
-        raise HTTPException(status_code=500, detail=PDF_CONVERSION_UNAVAILABLE_MESSAGE)
-
-    source_name = (source_file_name or "").strip()
-    base_name, ext = os.path.splitext(source_name)
-    normalized_ext = ext.lstrip(".").lower()
-    if normalized_ext not in SUPPORTED_CONVERSION_INPUT_TYPES:
-        raise HTTPException(status_code=400, detail="Only DOC, DOCX, PPT, and PPTX files can be converted to PDF.")
-
-    safe_base_name = (base_name or "lecturer-material").strip() or "lecturer-material"
-    output_name = f"{safe_base_name}.pdf"
-
-    with tempfile.TemporaryDirectory(prefix="material-convert-") as temp_dir:
-        input_path = os.path.join(temp_dir, source_name or f"source.{normalized_ext}")
-        with open(input_path, "wb") as source_file:
-            source_file.write(source_bytes)
-
-        command = [
-            soffice_binary,
-            "--headless",
-            "--convert-to",
-            "pdf",
-            "--outdir",
-            temp_dir,
-            input_path,
-        ]
-
-        try:
-            completed = subprocess.run(
-                command,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-        except FileNotFoundError:
-            raise HTTPException(status_code=500, detail=PDF_CONVERSION_UNAVAILABLE_MESSAGE)
-        except subprocess.TimeoutExpired:
-            logger.error("LibreOffice conversion timed out for %s", source_file_name)
-            raise HTTPException(status_code=500, detail=PDF_CONVERSION_UNAVAILABLE_MESSAGE)
-        except Exception as exc:
-            logger.error("LibreOffice conversion failed to start for %s: %s", source_file_name, exc)
-            raise HTTPException(status_code=500, detail=PDF_CONVERSION_UNAVAILABLE_MESSAGE)
-
-        output_path = os.path.join(temp_dir, output_name)
-        if completed.returncode != 0 or not os.path.exists(output_path):
-            logger.error(
-                "LibreOffice conversion failed for %s: returncode=%s stdout=%s stderr=%s",
-                source_file_name,
-                completed.returncode,
-                (completed.stdout or "").strip(),
-                (completed.stderr or "").strip(),
-            )
-            raise HTTPException(status_code=500, detail=PDF_CONVERSION_UNAVAILABLE_MESSAGE)
-
-        with open(output_path, "rb") as output_file:
-            return output_name, output_file.read()
 
 
 async def _update_lecturer_status(
@@ -1617,7 +1542,7 @@ async def convert_material_submission_to_pdf(
             raise HTTPException(status_code=500, detail="Unable to download material from storage. Please try again.")
 
         converted_file_name, converted_pdf_bytes = await asyncio.to_thread(
-            _convert_submission_file_to_pdf,
+            convert_office_file_to_pdf,
             source_bytes=source_bytes,
             source_file_name=submission_payload.get("file_name") or f"submission.{original_file_type}",
         )
