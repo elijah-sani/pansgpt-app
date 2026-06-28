@@ -564,8 +564,6 @@ create table if not exists public.pans_library (
   target_levels text[] not null default '{}',
   academic_session text,
   semester text,
-  department text,
-  faculty text,
   material_status text not null default 'active' check (material_status in ('active', 'archived')),
   visibility text default 'visible',
   source_type text default 'admin',

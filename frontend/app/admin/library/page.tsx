@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 
@@ -6,14 +6,15 @@ import {
     Search, Filter, Plus, FileText, Trash2, Pencil, Square,
     AlertCircle, Loader2,
     UploadCloud, HardDrive, BookOpen, X,
-    Sparkles, Clock, MoreVertical, Archive
+    Sparkles, Clock, MoreVertical, Archive, ArrowLeft,
+    ChevronDown, ChevronRight, Library, RefreshCw
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '@/lib/supabase';
 import { SystemStatusBadge } from '../../../components/SystemStatusBadge';
 import { api } from '@/lib/api';
-import { getAdminWorkspaceUniversityId } from '@/lib/admin-workspace';
+import { getAdminWorkspaceUniversityId, subscribeToAdminWorkspaceChanges } from '@/lib/admin-workspace';
 import { fetchBootstrap } from '@/lib/bootstrap-cache';
 
 // --- Types ---
@@ -40,8 +41,6 @@ interface Document {
     target_levels?: string[];
     academic_session?: string;
     semester?: string;
-    department?: string;
-    faculty?: string;
     material_status?: MaterialStatus;
     source_type?: string;
     version_label?: string;
@@ -91,7 +90,7 @@ interface FormSelectProps {
 
 const MATERIAL_STATUS_OPTIONS = [
     { value: 'active', label: 'Active' },
-    { value: 'archived', label: 'Archived' }
+    { value: 'archived', label: 'Past Materials' }
 ];
 
 const SEMESTER_OPTIONS = [
@@ -119,6 +118,18 @@ function formatSemester(value?: string | null): string {
     return '';
 }
 
+function buildUploadFormData(context?: { current_academic_session?: string | null; current_semester?: string | null } | null) {
+    return {
+        title: '',
+        course_code: '',
+        lecturer: '',
+        topic: '',
+        academic_session: context?.current_academic_session || '',
+        semester: normalizeSemester(context?.current_semester),
+        material_status: 'active' as MaterialStatus,
+    };
+}
+
 function MaterialStatusBadge({ status }: { status?: MaterialStatus | string | null }) {
     const normalized = normalizeMaterialStatus(status);
     const isArchived = normalized === 'archived';
@@ -129,9 +140,9 @@ function MaterialStatusBadge({ status }: { status?: MaterialStatus | string | nu
                     ? 'border-slate-500/20 bg-slate-500/10 text-slate-500'
                     : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-500'
             }`}
-            title={isArchived ? 'Archived' : 'Active'}
+            title={isArchived ? 'Past Material' : 'Active'}
         >
-            {isArchived ? 'Archived' : 'Active'}
+            {isArchived ? 'Past Material' : 'Active'}
         </span>
     );
 }
@@ -141,15 +152,13 @@ export default function LibraryPage() {
     const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
     const [editingDoc, setEditingDoc] = useState<Document | null>(null);
     const [mobileDetailsDoc, setMobileDetailsDoc] = useState<Document | null>(null);
-    const [mobileMenuDocId, setMobileMenuDocId] = useState<string | null>(null);
-    const [desktopMenuDocId, setDesktopMenuDocId] = useState<string | null>(null);
     const [deleteTarget, setDeleteTarget] = useState<Document | null>(null); // Store full doc object
     const [cancellingIds, setCancellingIds] = useState<Set<string>>(new Set());
     const [reembeddingIds, setReembeddingIds] = useState<Set<string>>(new Set());
     const [documents, setDocuments] = useState<Document[]>([]);
     const [isLoadingData, setIsLoadingData] = useState(true);
 
-    // Filters
+    // Filters & Scope
     const [filterLevel, setFilterLevel] = useState('All');
     const [filterSort, setFilterSort] = useState('Newest');
     const [filterStatus, setFilterStatus] = useState<'All' | MaterialStatus>('All');
@@ -162,35 +171,56 @@ export default function LibraryPage() {
     const [pendingFilterSemester, setPendingFilterSemester] = useState<'All' | 'first' | 'second'>('All');
     const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false);
     const [currentAcademicContext, setCurrentAcademicContext] = useState<{ current_academic_session?: string | null; current_semester?: string | null } | null>(null);
+    const [workspaceScopeVersion, setWorkspaceScopeVersion] = useState(0);
     const advancedFiltersRef = useRef<HTMLDivElement | null>(null);
     const statusMenuRef = useRef<HTMLDivElement | null>(null);
 
-    const LEVEL_OPTIONS = ['All', '100', '200', '300', '400', '500'];
+    // Dynamic states for Left Sidebar collapsible groups & active Course Folder selection
+    const [activeCourse, setActiveCourse] = useState<string | null>(null);
+    const [expandedLevels, setExpandedLevels] = useState<Record<string, boolean>>({
+        '100': true,
+        '200': true,
+        '300': true,
+        '400': true,
+        '500': true,
+        '600': true,
+        'Other': false,
+    });
+
+    // Active document selection state for Right Details Sidebar on desktop
+    const [selectedDoc, setSelectedDoc] = useState<Document | null>(null);
+
+    // Mobile tabs state
+    const [activeMobileTab, setActiveMobileTab] = useState<'materials' | 'courses'>('materials');
+
+    const LEVEL_OPTIONS = ['All', '100', '200', '300', '400', '500', '600'];
     const SORT_OPTIONS = ['Newest', 'Oldest'];
     const STATUS_FILTER_OPTIONS: Array<{ value: 'All' | MaterialStatus; label: string }> = [
         { value: 'All', label: 'All Status' },
         { value: 'active', label: 'Active' },
-        { value: 'archived', label: 'Archived' },
+        { value: 'archived', label: 'Past Materials' },
     ];
+
     const sessionOptions = useMemo(
         () => ['All', ...Array.from(new Set(documents.map((doc) => doc.academic_session).filter((value): value is string => Boolean(value && value.trim())))).sort().reverse()],
         [documents]
     );
+
     const activeFilterChips = useMemo(() => {
         const chips: Array<{ key: string; label: string; onClear: () => void }> = [];
-        if (filterStatus !== 'All') chips.push({ key: 'status', label: `Status: ${filterStatus === 'active' ? 'Active' : 'Archived'}`, onClear: () => setFilterStatus('All') });
+        if (filterStatus !== 'All') chips.push({ key: 'status', label: `Status: ${filterStatus === 'active' ? 'Active' : 'Past Materials'}`, onClear: () => setFilterStatus('All') });
         if (filterLevel !== 'All') chips.push({ key: 'level', label: `Level: ${filterLevel}`, onClear: () => setFilterLevel('All') });
         if (filterSession !== 'All') chips.push({ key: 'session', label: `Session: ${filterSession}`, onClear: () => setFilterSession('All') });
         if (filterSemester !== 'All') chips.push({ key: 'semester', label: `Semester: ${filterSemester === 'first' ? 'First' : 'Second'}`, onClear: () => setFilterSemester('All') });
         if (filterSort !== 'Newest') chips.push({ key: 'sort', label: `Sort: ${filterSort}`, onClear: () => setFilterSort('Newest') });
+        if (activeCourse !== null) chips.push({ key: 'course', label: `Course: ${activeCourse}`, onClear: () => setActiveCourse(null) });
         return chips;
-    }, [filterStatus, filterLevel, filterSession, filterSemester, filterSort]);
+    }, [filterStatus, filterLevel, filterSession, filterSemester, filterSort, activeCourse]);
 
-    // We can get user from session here if needed for upload attribution, 
-    // or pass it down via context. For now, let's fetch session quickly to get email.
     const [userEmail, setUserEmail] = useState<string | null>(null);
     const [canUploadMaterials, setCanUploadMaterials] = useState(false);
     const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+    const [adminLevel, setAdminLevel] = useState('');
 
     useEffect(() => {
         const getSession = async () => {
@@ -201,9 +231,14 @@ export default function LibraryPage() {
             const bootstrap = await fetchBootstrap();
             setIsSuperAdmin(Boolean(bootstrap?.is_super_admin));
             setCanUploadMaterials(Boolean(bootstrap?.is_super_admin || bootstrap?.is_university_admin));
+            setAdminLevel((bootstrap?.profile?.level || '').trim());
         };
         getSession();
     }, []);
+
+    useEffect(() => subscribeToAdminWorkspaceChanges(() => {
+        setWorkspaceScopeVersion((prev) => prev + 1);
+    }), []);
 
     // --- Data Fetching ---
     const fetchDocuments = useCallback(async (isSilent = false) => {
@@ -238,8 +273,6 @@ export default function LibraryPage() {
                 target_levels?: string[];
                 academic_session?: string;
                 semester?: string;
-                department?: string;
-                faculty?: string;
                 material_status?: string;
                 source_type?: string;
                 version_label?: string;
@@ -252,7 +285,7 @@ export default function LibraryPage() {
                     course_code: row.course_code,
                     title: row.title,
                     topic: row.topic,
-                    lecturer: row.lecturer_name, // Map DB column
+                    lecturer: row.lecturer_name,
                     date: new Date(row.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
                     file_size: row.file_size || 0,
                     uploaded_by: {
@@ -267,8 +300,6 @@ export default function LibraryPage() {
                     target_levels: row.target_levels || [],
                     academic_session: row.academic_session || '',
                     semester: normalizeSemester(row.semester),
-                    department: row.department || '',
-                    faculty: row.faculty || '',
                     material_status: normalizeMaterialStatus(row.material_status),
                     source_type: row.source_type || 'admin',
                     version_label: row.version_label || ''
@@ -281,35 +312,47 @@ export default function LibraryPage() {
         } finally {
             if (!isSilent) setIsLoadingData(false);
         }
-    }, [userEmail, isSuperAdmin]);
+    }, [userEmail, isSuperAdmin, workspaceScopeVersion]);
 
     useEffect(() => {
         if (userEmail) fetchDocuments();
     }, [userEmail, fetchDocuments]);
 
     useEffect(() => {
-        if (!userEmail) return;
-        if (isSuperAdmin && !getAdminWorkspaceUniversityId()) return;
+        if (!userEmail) {
+            setCurrentAcademicContext(null);
+            return;
+        }
+        if (isSuperAdmin && !getAdminWorkspaceUniversityId()) {
+            setCurrentAcademicContext(null);
+            setFilterSession('All');
+            setFilterSemester('All');
+            setPendingFilterSession('All');
+            setPendingFilterSemester('All');
+            return;
+        }
         let cancelled = false;
         api.get('/admin/academic-context')
             .then(async (response) => {
                 if (!response.ok || cancelled) return;
                 const payload = await response.json();
                 const context = payload?.context || null;
+                const nextSession = context?.current_academic_session || 'All';
+                const nextSemester = normalizeSemester(context?.current_semester) || 'All';
                 setCurrentAcademicContext(context);
-                if (context?.current_academic_session) {
-                    setFilterSession(context.current_academic_session);
-                }
-                const normalizedSemester = normalizeSemester(context?.current_semester);
-                if (normalizedSemester) {
-                    setFilterSemester(normalizedSemester);
-                }
+                setFilterSession(nextSession);
+                setFilterSemester(nextSemester);
+                setPendingFilterSession(nextSession);
+                setPendingFilterSemester(nextSemester);
             })
-            .catch(() => {});
+            .catch(() => {
+                if (cancelled) return;
+                setCurrentAcademicContext(null);
+            });
         return () => {
             cancelled = true;
         };
-    }, [userEmail, isSuperAdmin]);
+    }, [userEmail, isSuperAdmin, workspaceScopeVersion]);
 
     useEffect(() => {
         if (!isAdvancedFiltersOpen && !isStatusMenuOpen) return;
@@ -338,45 +381,120 @@ export default function LibraryPage() {
 
         const intervalId = setInterval(() => {
             fetchDocuments(true);
-        }, 3000); // Check every 3 seconds for smoother updates
+        }, 3000);
 
         return () => clearInterval(intervalId);
     }, [documents, fetchDocuments]);
 
-    // --- Computed Stats ---
+    // --- Stats & Space Calculations ---
     const totalDocs = documents.length;
     const activeCourses = new Set(documents.map(d => d.course_code)).size;
     const totalStorageBytes = documents.reduce((acc, d) => acc + d.file_size, 0);
     const storageUsedGB = (totalStorageBytes / (1024 * 1024 * 1024)).toFixed(2);
-    const storagePercentage = Math.min(100, (totalStorageBytes / (1024 * 1024 * 1024 * 15)) * 100); // 15GB limit
+    const storagePercentage = Math.min(100, (totalStorageBytes / (1024 * 1024 * 1024 * 15)) * 100);
     let storageColor = "bg-cyan-500";
     if (storagePercentage > 90) storageColor = "bg-red-500";
     else if (storagePercentage > 75) storageColor = "bg-amber-500";
 
-    // --- Actions ---
-    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-    // Filtered Docs for Select All
-    const filteredDocs = documents
-        .filter(doc => {
-            const matchesSearch =
-                doc.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                doc.course_code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                doc.topic.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                doc.lecturer.toLowerCase().includes(searchQuery.toLowerCase());
-
-            const matchesLevel = filterLevel === 'All' ||
-                (doc.course_code && doc.course_code.match(/\d+/)?.[0]?.startsWith(filterLevel.charAt(0)));
-            const matchesStatus = filterStatus === 'All' || normalizeMaterialStatus(doc.material_status) === filterStatus;
-            const matchesSession = filterSession === 'All' || doc.academic_session === filterSession;
-            const matchesSemester = filterSemester === 'All' || normalizeSemester(doc.semester) === filterSemester;
-
-            return matchesSearch && matchesLevel && matchesStatus && matchesSession && matchesSemester;
-        })
-        .sort((a, b) => {
-            const dateA = new Date(a.date).getTime();
-            const dateB = new Date(b.date).getTime();
-            return filterSort === 'Newest' ? dateB - dateA : dateA - dateB;
+    // --- Course stats and collapsible level tree ---
+    const courseStats = useMemo(() => {
+        const stats: Record<string, number> = {};
+        documents.forEach(doc => {
+            const docStatus = normalizeMaterialStatus(doc.material_status);
+            if (filterStatus !== 'All' && docStatus !== filterStatus) {
+                return;
+            }
+            if (doc.course_code) {
+                stats[doc.course_code] = (stats[doc.course_code] || 0) + 1;
+            }
         });
+        return stats;
+    }, [documents, filterStatus]);
+
+    const getCourseLevel = (courseCode: string): string => {
+        const match = courseCode.match(/\d+/);
+        if (match) {
+            const firstDigit = match[0].charAt(0);
+            if (['1', '2', '3', '4', '5'].includes(firstDigit)) {
+                return `${firstDigit}00`;
+            }
+        }
+        return 'Other';
+    };
+
+    const coursesByLevel = useMemo(() => {
+        const grouped: Record<string, string[]> = {
+            '100': [],
+            '200': [],
+            '300': [],
+            '400': [],
+            '500': [],
+            '600': [],
+            'Other': []
+        };
+        
+        const uniqueCourses = Array.from(new Set(
+            documents
+                .filter(doc => {
+                    if (filterStatus === 'All') return true;
+                    return normalizeMaterialStatus(doc.material_status) === filterStatus;
+                })
+                .map(doc => doc.course_code)
+                .filter(Boolean)
+        )).sort();
+
+        uniqueCourses.forEach(courseCode => {
+            const lvl = getCourseLevel(courseCode);
+            if (grouped[lvl]) {
+                grouped[lvl].push(courseCode);
+            } else {
+                grouped['Other'].push(courseCode);
+            }
+        });
+
+        return grouped;
+    }, [documents, filterStatus]);
+
+    const levelStats = useMemo(() => {
+        const stats: Record<string, number> = {
+            '100': 0, '200': 0, '300': 0, '400': 0, '500': 0, '600': 0, 'Other': 0
+        };
+        Object.entries(coursesByLevel).forEach(([level, courseCodes]) => {
+            courseCodes.forEach(code => {
+                stats[level] += (courseStats[code] || 0);
+            });
+        });
+        return stats;
+    }, [coursesByLevel, courseStats]);
+
+    // --- Actions & Filters ---
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+    const filteredDocs = useMemo(() => {
+        return documents
+            .filter(doc => {
+                const matchesSearch =
+                    doc.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    doc.course_code.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    doc.topic.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    doc.lecturer.toLowerCase().includes(searchQuery.toLowerCase());
+
+                const matchesStatus = filterStatus === 'All' || normalizeMaterialStatus(doc.material_status) === filterStatus;
+                const matchesCourse = !activeCourse || doc.course_code === activeCourse;
+
+                const matchesLevel = filterLevel === 'All' ||
+                    (doc.course_code && doc.course_code.match(/\d+/)?.[0]?.startsWith(filterLevel.charAt(0)));
+                const matchesSession = filterSession === 'All' || doc.academic_session === filterSession;
+                const matchesSemester = filterSemester === 'All' || normalizeSemester(doc.semester) === filterSemester;
+
+                return matchesSearch && matchesStatus && matchesCourse && matchesLevel && matchesSession && matchesSemester;
+            })
+            .sort((a, b) => {
+                const dateA = new Date(a.date).getTime();
+                const dateB = new Date(b.date).getTime();
+                return filterSort === 'Newest' ? dateB - dateA : dateA - dateB;
+            });
+    }, [documents, searchQuery, filterStatus, activeCourse, filterLevel, filterSession, filterSemester, filterSort]);
 
     const isAllSelected = filteredDocs.length > 0 && selectedIds.size === filteredDocs.length;
 
@@ -424,15 +542,14 @@ export default function LibraryPage() {
         setFilterStatus('All');
         setFilterSession('All');
         setFilterSemester('All');
+        setActiveCourse(null);
         setIsAdvancedFiltersOpen(false);
     };
-
 
     const handleDelete = async () => {
         if (!deleteTarget) return;
 
         try {
-            // 1. Delete from Backend (which handles both Drive and DB)
             const response = await api.delete(`/admin/documents/${deleteTarget.id}`);
 
             if (!response.ok) {
@@ -440,8 +557,10 @@ export default function LibraryPage() {
                 throw new Error(errorData.detail || 'Delete failed');
             }
 
-            // 2. UI Update (Optimistic update or local state filter)
             setDocuments(prev => prev.filter(d => d.id !== deleteTarget.id));
+            if (selectedDoc?.id === deleteTarget.id) {
+                setSelectedDoc(null);
+            }
             setDeleteTarget(null);
 
         } catch (err) {
@@ -455,20 +574,18 @@ export default function LibraryPage() {
         const confirmDelete = window.confirm(`Are you sure you want to delete ${selectedIds.size} documents? This cannot be undone.`);
         if (!confirmDelete) return;
 
-        setIsLoadingData(true); // Re-use loading state for UI feedback
+        setIsLoadingData(true);
         try {
-            // Execute all deletes in parallel
             await Promise.all(Array.from(selectedIds).map(async (id) => {
                 const response = await api.delete(`/admin/documents/${id}`);
                 if (!response.ok) {
                     console.error(`Failed to delete ${id}`);
-                    // We continue even if one fails, to delete as many as possible
                 }
             }));
 
-            // Refresh data
             await fetchDocuments();
             setSelectedIds(new Set());
+            setSelectedDoc(null);
 
         } catch (err) {
             console.error("Bulk Delete failed:", err);
@@ -484,10 +601,19 @@ export default function LibraryPage() {
         try {
             const response = await api.fetch(`/admin/documents/${doc.id}/cancel`, { method: 'POST' });
             if (response.ok) {
-                setDocuments(prev => prev.map(d => d.id === doc.id
-                    ? { ...d, embedding_status: 'failed', embedding_error: 'Cancelled by admin.' }
-                    : d
-                ));
+                const updateStatus = (target: Partial<Document>) => {
+                    setDocuments(prev => prev.map(d => d.id === doc.id ? { ...d, ...target } : d));
+                    if (selectedDoc?.id === doc.id) {
+                        setSelectedDoc(prev => prev ? { ...prev, ...target } : null);
+                    }
+                    if (mobileDetailsDoc?.id === doc.id) {
+                        setMobileDetailsDoc(prev => prev ? { ...prev, ...target } : null);
+                    }
+                };
+                updateStatus({
+                    embedding_status: 'failed',
+                    embedding_error: 'Cancelled by admin.'
+                });
             }
         } catch (err) {
             console.error('Cancel ingestion failed:', err);
@@ -499,7 +625,19 @@ export default function LibraryPage() {
     const handleToggleMaterialStatus = async (doc: Document) => {
         const nextStatus: MaterialStatus = normalizeMaterialStatus(doc.material_status) === 'archived' ? 'active' : 'archived';
         const previousStatus = normalizeMaterialStatus(doc.material_status);
-        setDocuments(prev => prev.map(d => d.id === doc.id ? { ...d, material_status: nextStatus } : d));
+        
+        const updateStatus = (status: MaterialStatus) => {
+            setDocuments(prev => prev.map(d => d.id === doc.id ? { ...d, material_status: status } : d));
+            if (selectedDoc?.id === doc.id) {
+                setSelectedDoc(prev => prev ? { ...prev, material_status: status } : null);
+            }
+            if (mobileDetailsDoc?.id === doc.id) {
+                setMobileDetailsDoc(prev => prev ? { ...prev, material_status: status } : null);
+            }
+        };
+
+        updateStatus(nextStatus);
+
         try {
             const response = await api.patch(`/admin/documents/${doc.id}`, { material_status: nextStatus });
             if (!response.ok) {
@@ -508,7 +646,7 @@ export default function LibraryPage() {
             }
         } catch (err) {
             console.error('Status update failed:', err);
-            setDocuments(prev => prev.map(d => d.id === doc.id ? { ...d, material_status: previousStatus } : d));
+            updateStatus(previousStatus);
             alert('Failed to update material status. Please try again.');
         }
     };
@@ -538,7 +676,7 @@ export default function LibraryPage() {
 
     const getReembedActionLabel = (doc: Document) => {
         if (doc.embedding_status === 'processing' && isStaleProcessingDocument(doc)) return 'Retry stale processing';
-        if (doc.embedding_status === 'processing') return 'Processing…';
+        if (doc.embedding_status === 'processing') return 'Processingâ€¦';
         if (reembeddingIds.has(doc.id)) return 'Restarting ingestion...';
         if (doc.embedding_status === 'completed') return 'Re-process';
         return 'Retry Processing';
@@ -554,12 +692,23 @@ export default function LibraryPage() {
         if (!confirmed) return;
 
         setReembeddingIds(prev => new Set(prev).add(doc.id));
-        setDocuments(prev => prev.map(d => d.id === doc.id ? {
-            ...d,
+        
+        const updateDocState = (updated: Partial<Document>) => {
+            setDocuments(prev => prev.map(d => d.id === doc.id ? { ...d, ...updated } : d));
+            if (selectedDoc?.id === doc.id) {
+                setSelectedDoc(prev => prev ? { ...prev, ...updated } : null);
+            }
+            if (mobileDetailsDoc?.id === doc.id) {
+                setMobileDetailsDoc(prev => prev ? { ...prev, ...updated } : null);
+            }
+        };
+
+        updateDocState({
             embedding_status: 'processing',
             embedding_progress: 0,
             embedding_error: undefined,
-        } : d));
+        });
+
         try {
             const retryUrl = isStaleRetry
                 ? `/admin/documents/${doc.id}/reembed?allow_stale_processing_retry=true`
@@ -572,12 +721,11 @@ export default function LibraryPage() {
         } catch (err) {
             console.error('Re-embed failed:', err);
             const message = err instanceof Error ? err.message : 'Failed to restart ingestion. Please try again.';
-            setDocuments(prev => prev.map(d => d.id === doc.id ? {
-                ...d,
+            updateDocState({
                 embedding_status: doc.embedding_status,
                 embedding_progress: doc.embedding_progress,
                 embedding_error: doc.embedding_error,
-            } : d));
+            });
             alert(message);
         } finally {
             setReembeddingIds(prev => {
@@ -587,464 +735,662 @@ export default function LibraryPage() {
             });
         }
     };
-
-    if (!userEmail) return null; // Wait for session fetch
-
     return (
-        <div className="w-full min-h-screen space-y-8 overflow-x-hidden pb-24 md:px-6 md:pt-6 animate-in fade-in duration-500">
-            {/* Header */}
-            <header className="mb-8 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                <div>
-                    <div className="flex items-center gap-3 mb-1">
-                        <h2 className="text-2xl font-bold text-foreground">Library Management</h2>
+        <div className="w-full flex flex-1 min-h-0 flex-col overflow-hidden animate-in fade-in duration-500 lg:h-screen lg:min-h-0 lg:overflow-hidden lg:pb-0">
+            {/* Desktop Panel Workspace */}
+            <div className="hidden lg:flex flex-row flex-1 items-stretch overflow-hidden bg-background h-screen border-t border-border/20">
+                {/* COLUMN 1: LEFT SUB-SIDEBAR (Full height) */}
+                <aside className="w-64 shrink-0 border-r border-border/60 bg-card/35 backdrop-blur-md flex flex-col h-full overflow-hidden select-none">
+                    {/* Library Header */}
+                    <div className="px-6 py-5 border-b border-border/40 flex items-center gap-3 shrink-0">
+                        <Library className="h-6 w-6 text-primary" />
+                        <span className="text-lg font-bold tracking-wide font-outfit text-foreground">Library</span>
                     </div>
-                    <p className="text-muted-foreground">
-                        {currentAcademicContext
-                            ? `Organize course materials for ${currentAcademicContext.current_academic_session || 'current session'} • ${formatSemester(currentAcademicContext.current_semester) || 'current semester'}.`
-                            : 'Organize course materials, track storage, and manage document access permissions.'}
-                    </p>
-                </div>
-                <div className="hidden items-center gap-4 md:flex">
-                    <SystemStatusBadge />
-                </div>
-            </header>
 
-            {/* Stats Ribbon (Real Data) */}
-            <div className="mb-8 hidden grid-cols-1 gap-4 sm:grid-cols-2 md:grid md:grid-cols-3 md:gap-6">
-                <StatsCard icon={FileText} label="Total Documents" value={totalDocs.toLocaleString()} trend="+--" color="bg-blue-500" />
-                <StatsCard icon={BookOpen} label="Active Courses" value={activeCourses.toLocaleString()} sub="Unique Codes" color="bg-purple-500" />
-                <StatsCard icon={HardDrive} label="Storage Used" value={`${storageUsedGB} GB`} sub="of 15 GB Plan" color={storageColor} progress={storagePercentage} />
-            </div>
-            <div className="grid grid-cols-2 gap-3 md:hidden">
-                <MobileQuickStatCard icon={FileText} label="Documents" value={totalDocs.toLocaleString()} color="text-blue-500" bg="bg-blue-500/10" />
-                <MobileQuickStatCard icon={BookOpen} label="Courses" value={activeCourses.toLocaleString()} color="text-purple-500" bg="bg-purple-500/10" />
-                <MobileQuickStatCard icon={HardDrive} label="Storage" value={`${storageUsedGB} GB`} color="text-cyan-500" bg="bg-cyan-500/10" />
-                <MobileQuickStatCard icon={Sparkles} label="Processed" value={`${documents.filter((doc) => doc.embedding_status === 'completed').length}`} color="text-emerald-500" bg="bg-emerald-500/10" />
-            </div>
-
-            {/* Toolbar */}
-            <div className="mb-6 flex flex-col gap-4">
-                <div className="flex items-center gap-2">
-                    <div className="flex min-w-0 flex-1 items-center gap-2 bg-card border border-border rounded-xl px-4 py-2.5 focus-within:border-primary/50 transition-colors">
-                        <Search className="w-4 h-4 text-muted-foreground" />
-                        <input type="text" placeholder="Search documents..." className="bg-transparent border-none outline-none text-sm w-full placeholder:text-muted-foreground/70 text-foreground" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
-                    </div>
-                    <div className="relative shrink-0" ref={statusMenuRef}>
-                        <button
-                            type="button"
-                            onClick={() => setIsStatusMenuOpen((prev) => !prev)}
-                            className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-border bg-card text-muted-foreground transition-colors hover:bg-muted"
-                            aria-expanded={isStatusMenuOpen}
-                            aria-label="Filter by material status"
-                            title="Status filter"
-                        >
-                            <Archive className="h-4 w-4" />
-                        </button>
-                        {isStatusMenuOpen && (
-                            <div className="absolute right-0 top-12 z-40 w-44 rounded-xl border border-border bg-card p-2 shadow-2xl ring-1 ring-black/10">
-                                {STATUS_FILTER_OPTIONS.map((opt) => (
-                                    <button
-                                        key={opt.value}
-                                        type="button"
-                                        onClick={() => {
-                                            setFilterStatus(opt.value);
-                                            setIsStatusMenuOpen(false);
-                                        }}
-                                        className={`w-full rounded-lg px-3 py-2 text-left text-sm transition-colors ${
-                                            filterStatus === opt.value ? 'bg-primary/10 text-primary' : 'text-foreground hover:bg-muted'
-                                        }`}
-                                    >
-                                        {opt.label}
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                    <div className="relative shrink-0" ref={advancedFiltersRef}>
-                        <button type="button" onClick={() => isAdvancedFiltersOpen ? setIsAdvancedFiltersOpen(false) : openAdvancedFilters()} className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-border bg-card text-foreground transition-colors hover:bg-muted" aria-expanded={isAdvancedFiltersOpen} aria-label="Open advanced filters" title="Advanced filters">
-                            <Filter className="h-4 w-4 text-muted-foreground" />
-                        </button>
-                        {isAdvancedFiltersOpen && (
-                            <div className="absolute right-0 top-12 z-40 w-72 rounded-xl border border-border bg-card p-3 shadow-2xl ring-1 ring-black/10">
-                                <div className="space-y-3">
-                                    <div>
-                                        <label className="mb-1 block text-xs text-muted-foreground">Level</label>
-                                        <select value={pendingFilterLevel} onChange={(e) => setPendingFilterLevel(e.target.value)} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
-                                            {LEVEL_OPTIONS.map(opt => <option key={opt} value={opt}>{opt === 'All' ? 'All Levels' : `${opt} Level`}</option>)}
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label className="mb-1 block text-xs text-muted-foreground">Session</label>
-                                        <select value={pendingFilterSession} onChange={(e) => setPendingFilterSession(e.target.value)} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
-                                            {sessionOptions.map(opt => <option key={opt} value={opt}>{opt === 'All' ? 'All Sessions' : opt}</option>)}
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label className="mb-1 block text-xs text-muted-foreground">Semester</label>
-                                        <select value={pendingFilterSemester} onChange={(e) => setPendingFilterSemester(e.target.value as 'All' | 'first' | 'second')} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
-                                            <option value="All">All Semesters</option>
-                                            <option value="first">First Semester</option>
-                                            <option value="second">Second Semester</option>
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label className="mb-1 block text-xs text-muted-foreground">Sort</label>
-                                        <select value={pendingFilterSort} onChange={(e) => setPendingFilterSort(e.target.value)} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
-                                            {SORT_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                                        </select>
-                                    </div>
-                                </div>
-                                <div className="mt-3 flex items-center justify-between gap-2">
-                                    <button type="button" onClick={clearAllFilters} className="rounded-lg px-3 py-2 text-sm text-muted-foreground hover:bg-muted">Clear all</button>
-                                    <button type="button" onClick={applyAdvancedFilters} className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground">Apply</button>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                    {canUploadMaterials ? (
-                    <div className="shrink-0">
-                        <button onClick={() => setIsUploadModalOpen(true)} className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-lg shadow-primary/20 transition-all hover:scale-[1.02] hover:bg-primary/90 active:scale-[0.98]" aria-label="Upload material" title="Upload material">
-                            <Plus className="w-4 h-4" />
-                        </button>
-                    </div>
-                    ) : null}
-                </div>
-                {activeFilterChips.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-2">
-                        {activeFilterChips.map((chip) => (
-                            <button key={chip.key} onClick={chip.onClear} className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-3 py-1 text-xs text-foreground hover:bg-muted">
-                                <span>{chip.label}</span>
-                                <X className="h-3 w-3" />
-                            </button>
-                        ))}
-                        <button onClick={clearAllFilters} className="text-xs text-muted-foreground underline-offset-2 hover:underline">Clear all filters</button>
-                    </div>
-                )}
-            </div>
-
-            {/* Data Table */}
-            <div className="space-y-4 md:hidden">
-                {isLoadingData ? (
-                    <div className="rounded-2xl border border-border bg-card px-6 py-14 text-center text-muted-foreground">
-                        <Loader2 className="mx-auto mb-4 h-8 w-8 animate-spin text-primary" />
-                        Loading library data...
-                    </div>
-                ) : filteredDocs.length === 0 ? (
-                    <div className="rounded-2xl border border-border bg-card px-6 py-14 text-center text-muted-foreground">
-                        No documents found.
-                    </div>
-                ) : (
-                    filteredDocs.map((doc) => (
-                        <article key={doc.id} className="relative rounded-2xl border border-border bg-card p-4 shadow-sm">
-                            <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                    <div className="flex items-center gap-2">
-                                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">{doc.course_code}</p>
-                                        <AIBadge
-                                            status={doc.embedding_status}
-                                            progress={doc.embedding_progress}
-                                            error={doc.embedding_error}
-                                            compact
-                                        />
-                                    </div>
-                                    <h3 className="mt-1 min-w-0 break-words text-base font-semibold text-foreground">{doc.title}</h3>
-                                    <p className="mt-1 break-words text-sm text-muted-foreground">{doc.lecturer}</p>
-                                </div>
+                    {/* Scrollable Sidebar Content */}
+                    <div className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
+                        {/* View Scopes */}
+                        <div className="space-y-2">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/60 pl-2">
+                                View Scope
+                            </span>
+                            <div className="flex flex-col gap-1">
                                 <button
-                                    onClick={() => setMobileMenuDocId((prev) => (prev === doc.id ? null : doc.id))}
-                                    className="rounded-lg border border-border p-2 text-muted-foreground"
-                                    aria-label="Open actions"
+                                    type="button"
+                                    onClick={() => setFilterStatus('All')}
+                                    className={`w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold transition-all flex items-center justify-between ${
+                                        filterStatus === 'All'
+                                            ? 'bg-primary/10 text-primary shadow-sm'
+                                            : 'text-muted-foreground hover:bg-accent/40 hover:text-foreground'
+                                    }`}
                                 >
-                                    <MoreVertical className="h-4 w-4" />
+                                    <span>All Materials</span>
+                                    <span className="text-[10px] bg-muted/80 text-muted-foreground px-2 py-0.5 rounded-full font-bold">
+                                        {documents.length}
+                                    </span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setFilterStatus('active')}
+                                    className={`w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold transition-all flex items-center justify-between ${
+                                        filterStatus === 'active'
+                                            ? 'bg-primary/10 text-primary shadow-sm'
+                                            : 'text-muted-foreground hover:bg-accent/40 hover:text-foreground'
+                                    }`}
+                                >
+                                    <span>Active</span>
+                                    <span className="text-[10px] bg-muted/80 text-muted-foreground px-2 py-0.5 rounded-full font-bold">
+                                        {documents.filter(d => normalizeMaterialStatus(d.material_status) === 'active').length}
+                                    </span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setFilterStatus('archived')}
+                                    className={`w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold transition-all flex items-center justify-between ${
+                                        filterStatus === 'archived'
+                                            ? 'bg-primary/10 text-primary shadow-sm'
+                                            : 'text-muted-foreground hover:bg-accent/40 hover:text-foreground'
+                                    }`}
+                                >
+                                    <span>Past Materials</span>
+                                    <span className="text-[10px] bg-muted/80 text-muted-foreground px-2 py-0.5 rounded-full font-bold">
+                                        {documents.filter(d => normalizeMaterialStatus(d.material_status) === 'archived').length}
+                                    </span>
                                 </button>
                             </div>
+                        </div>
 
-                            <div className="hidden">
-                                <span className="rounded-full border border-secondary/30 bg-secondary/20 px-3 py-1 text-xs font-medium text-secondary-foreground">
-                                    {doc.topic}
-                                </span>
-                                <AIBadge
-                                    status={doc.embedding_status}
-                                    progress={doc.embedding_progress}
-                                    error={doc.embedding_error}
+                        {/* Course Directory (Collapsible Level Folders) */}
+                        <div className="space-y-2">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/60 pl-2">
+                                Course Directory
+                            </span>
+                            <div className="space-y-1">
+                                {Object.entries(coursesByLevel).map(([level, courseCodes]) => {
+                                    const isExpanded = !!expandedLevels[level];
+                                    const totalCount = levelStats[level] || 0;
+
+                                    return (
+                                        <div key={level} className="space-y-1">
+                                            <button
+                                                type="button"
+                                                onClick={() => setExpandedLevels(prev => ({ ...prev, [level]: !prev[level] }))}
+                                                className="w-full flex items-center justify-between px-2 py-2 rounded-xl text-[11px] font-extrabold text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors"
+                                            >
+                                                <div className="flex items-center gap-1.5">
+                                                    {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                                                    <span>{level === 'Other' ? 'Other Levels' : `${level} Level`}</span>
+                                                </div>
+                                                <span className="bg-muted text-[10px] px-2 py-0.5 rounded-full font-bold">
+                                                    {totalCount}
+                                                </span>
+                                            </button>
+                                            
+                                            {isExpanded && (
+                                                <div className="pl-3.5 space-y-0.5 border-l border-border/50 ml-3.5 mt-0.5">
+                                                    {courseCodes.length > 0 ? (
+                                                        courseCodes.map(code => {
+                                                            const count = courseStats[code] || 0;
+                                                            return (
+                                                                <button
+                                                                    key={code}
+                                                                    type="button"
+                                                                    onClick={() => setActiveCourse(activeCourse === code ? null : code)}
+                                                                    className={`w-full text-left px-3 py-2 rounded-xl text-xs font-semibold transition-all flex items-center justify-between ${
+                                                                        activeCourse === code
+                                                                            ? 'bg-primary/10 text-primary shadow-sm font-bold'
+                                                                            : 'text-muted-foreground hover:bg-accent/40 hover:text-foreground'
+                                                                    }`}
+                                                                >
+                                                                    <div className="flex items-center gap-2">
+                                                                        <BookOpen className="h-3.5 w-3.5" />
+                                                                        <span className="truncate max-w-[100px]">{code}</span>
+                                                                    </div>
+                                                                    <span className="text-[9px] bg-muted/65 text-muted-foreground px-1.5 py-0.5 rounded-full">
+                                                                        {count}
+                                                                    </span>
+                                                                </button>
+                                                            );
+                                                        })
+                                                    ) : (
+                                                        <span className="block px-2.5 py-1 text-[10px] text-muted-foreground/60 italic">
+                                                            No courses
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                    </div>
+
+                    {/* Storage Meter */}
+                    <div className="p-4 shrink-0">
+                        <div className="bg-accent/20 border border-border/40 rounded-xl p-3.5 flex flex-col gap-2.5">
+                            <div className="flex items-center gap-1.5 text-[11px] font-semibold text-foreground/80">
+                                <span>{storageUsedGB} GB / 15 GB</span>
+                                <button
+                                    type="button"
+                                    onClick={() => void fetchDocuments()}
+                                    className="p-0.5 hover:bg-accent rounded text-muted-foreground/60 hover:text-foreground transition-colors"
+                                    title="Refresh storage"
+                                >
+                                    <RefreshCw className="h-3 w-3" />
+                                </button>
+                            </div>
+                            <div className="h-1.5 w-full bg-secondary/60 rounded-full overflow-hidden">
+                                <div 
+                                    className="h-full bg-blue-500 rounded-full transition-all duration-500" 
+                                    style={{ width: `${storagePercentage}%` }} 
+                                />
+                            </div>
+                        </div>
+                    </div>
+                </aside>
+
+                {/* COLUMN 2: CENTER WORKSPACE (Full height) */}
+                <div className="flex-1 min-w-0 flex flex-col h-full bg-background/25">
+                    {/* Center Workspace Toolbar */}
+                    <div className="flex flex-col gap-4 px-6 py-5 border-b border-border/40 bg-card/20 shrink-0 select-none">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2.5">
+                                <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl font-outfit">
+                                    {activeCourse 
+                                        ? `${filterStatus === 'active' ? 'Active' : filterStatus === 'archived' ? 'Past Materials' : 'All Materials'} · ${activeCourse}`
+                                        : filterStatus === 'active' 
+                                            ? 'Active Materials' 
+                                            : filterStatus === 'archived' 
+                                                ? 'Past Materials' 
+                                                : 'All Materials'
+                                    }
+                                </h1>
+                                <button
+                                    onClick={() => void fetchDocuments()}
+                                    className="p-1.5 hover:bg-accent rounded-lg text-muted-foreground hover:text-foreground transition-colors"
+                                    title="Reload Documents"
+                                >
+                                    <RefreshCw className="h-4.5 w-4.5" />
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="relative flex-grow max-w-md">
+                                <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                                <input
+                                    type="text"
+                                    placeholder="Search library documents..."
+                                    className="w-full rounded-xl bg-background border border-border/80 py-2 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground outline-none transition-all focus:ring-2 focus:ring-primary/20"
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
                                 />
                             </div>
 
-                            <div className="hidden">
-                                <div>
-                                    <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Date</p>
-                                    <p className="mt-1 text-foreground">{doc.date}</p>
-                                </div>
-                                <div>
-                                    <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Levels</p>
-                                    <p className="mt-1 break-words text-foreground">{doc.target_levels?.join(', ') || 'All'}</p>
-                                </div>
-                            </div>
+                            <div className="flex items-center gap-2">
+                                <select
+                                    value={filterSession}
+                                    onChange={(e) => setFilterSession(e.target.value)}
+                                    className="h-10 rounded-xl border border-border/80 bg-background py-2 px-3 text-xs font-semibold text-foreground outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+                                >
+                                    {sessionOptions.map((session) => (
+                                        <option key={session} value={session}>{session === 'All' ? 'All Sessions' : session}</option>
+                                    ))}
+                                </select>
+                                <select
+                                    value={filterSemester}
+                                    onChange={(e) => setFilterSemester(e.target.value as 'All' | 'first' | 'second')}
+                                    className="h-10 rounded-xl border border-border/80 bg-background py-2 px-3 text-xs font-semibold text-foreground outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+                                >
+                                    <option value="All">All Semesters</option>
+                                    <option value="first">First Semester</option>
+                                    <option value="second">Second Semester</option>
+                                </select>
 
-                            <div className="hidden">
-                                <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Academic Meta</p>
-                                <p className="mt-1 break-words text-sm text-foreground">
-                                    {[doc.academic_session, formatSemester(doc.semester), doc.department, doc.faculty].filter(Boolean).join(' • ') || 'Not set'}
-                                </p>
+                                {canUploadMaterials && (
+                                    <button
+                                        onClick={() => setIsUploadModalOpen(true)}
+                                        className="h-10 px-4 rounded-xl bg-primary text-primary-foreground text-xs font-bold shadow-md shadow-primary/20 transition-all hover:bg-primary/95 flex items-center gap-1.5"
+                                    >
+                                        <Plus className="w-3.5 h-3.5" />
+                                        <span>Upload</span>
+                                    </button>
+                                )}
                             </div>
+                        </div>
+                    </div>
 
-                            <div className="hidden">
-                                <MaterialStatusBadge status={doc.material_status} />
+                    {/* Table Column Headers - exactly matching HomeContent list style columns */}
+                    <div className="grid grid-cols-[40px_1.5fr_1.2fr_1.2fr_1fr_0.8fr] gap-4 px-6 py-3 border-b border-border/40 text-xs font-bold text-muted-foreground uppercase bg-muted/10 shrink-0 select-none">
+                        <div className="flex items-center justify-center">
+                            <input
+                                type="checkbox"
+                                checked={isAllSelected}
+                                onChange={toggleSelectAll}
+                                className="w-4.5 h-4.5 rounded border-border text-primary cursor-pointer animate-in fade-in"
+                            />
+                        </div>
+                        <span>Name</span>
+                        <span>Lecturer</span>
+                        <span>Date Uploaded</span>
+                        <span>Status</span>
+                        <span className="text-right font-semibold">Size</span>
+                    </div>
+
+                    {/* Document List Feed */}
+                    <div className="flex-1 overflow-y-auto divide-y divide-border/10">
+                        {isLoadingData ? (
+                            <div className="p-16 text-center text-muted-foreground">
+                                <Loader2 className="mx-auto mb-3 h-7 w-7 animate-spin text-primary" />
+                                <span className="text-xs font-semibold">Loading documents...</span>
                             </div>
-
-                            <div className="mt-3 flex items-center justify-between gap-3">
-                                <span className="truncate text-xs text-muted-foreground">{doc.topic}</span>
+                        ) : filteredDocs.length === 0 ? (
+                            <div className="p-16 text-center text-muted-foreground flex flex-col items-center justify-center">
+                                <FileText className="mx-auto mb-3 h-8 w-8 opacity-30 text-muted-foreground" />
+                                <p className="font-bold text-foreground/85 text-sm">No materials found</p>
+                                <p className="text-xs text-muted-foreground/60 mt-1 max-w-[200px] leading-relaxed">Try updating your filters or search query.</p>
                             </div>
-                            {mobileMenuDocId === doc.id ? (
-                                <div className="absolute right-3 top-12 z-20 min-w-36 rounded-xl border border-border bg-background p-1.5 shadow-lg">
-                                    <button
-                                        onClick={() => {
-                                            setMobileDetailsDoc(doc);
-                                            setMobileMenuDocId(null);
-                                        }}
-                                        className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-foreground hover:bg-muted"
-                                    >
-                                        View details
-                                    </button>
-                                    <button
-                                        onClick={() => {
-                                            setEditingDoc(doc);
-                                            setMobileMenuDocId(null);
-                                        }}
-                                        className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-foreground hover:bg-muted"
-                                    >
-                                        Edit
-                                    </button>
-                                    {canShowReembedAction(doc) && (
-                                        <button
-                                            onClick={() => {
-                                                void handleReembedDocument(doc);
-                                                setMobileMenuDocId(null);
-                                            }}
-                                            disabled={!canRunReembedDocument(doc)}
-                                            className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-foreground hover:bg-muted disabled:opacity-50"
-                                        >
-                                            {getReembedActionLabel(doc)}
-                                        </button>
-                                    )}
-                                    <button
-                                        onClick={() => {
-                                            void handleToggleMaterialStatus(doc);
-                                            setMobileMenuDocId(null);
-                                        }}
-                                        className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-foreground hover:bg-muted"
-                                    >
-                                        {normalizeMaterialStatus(doc.material_status) === 'archived' ? 'Restore to Active' : 'Archive'}
-                                    </button>
-                                    <button
-                                        onClick={() => {
-                                            setDeleteTarget(doc);
-                                            setMobileMenuDocId(null);
-                                        }}
-                                        className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-destructive hover:bg-destructive/10"
-                                    >
-                                        Delete
-                                    </button>
-                                </div>
-                            ) : null}
-                        </article>
-                    ))
-                )}
-            </div>
+                        ) : (
+                            filteredDocs.map((doc, idx) => {
+                                const isSelected = selectedDoc?.id === doc.id;
+                                const isChecked = selectedIds.has(doc.id);
 
-            <div className="hidden min-h-[400px] overflow-hidden rounded-2xl border border-border bg-card backdrop-blur-sm md:block">
-                <div className="overflow-x-auto">
-                    <table className="w-full min-w-[860px] table-fixed text-left text-sm">
-                        <thead className="bg-muted/50 border-b border-border text-muted-foreground uppercase tracking-wider text-xs font-semibold">
-                            <tr>
-                                <th className="px-6 py-4 whitespace-nowrap w-4">
-                                    <div className="flex items-center">
-                                        <input
-                                            type="checkbox"
-                                            className="w-4 h-4 rounded border-border text-primary focus:ring-primary/50 bg-card cursor-pointer"
-                                            checked={isAllSelected}
-                                            onChange={toggleSelectAll}
-                                        />
-                                    </div>
-                                </th>
-                                <th className="w-[30%] px-4 py-4 whitespace-nowrap">Material</th>
-                                <th className="w-[14%] px-4 py-4 whitespace-nowrap">Lecturer</th>
-                                <th className="w-[14%] px-4 py-4 whitespace-nowrap">AI Status</th>
-                                <th className="w-[18%] px-4 py-4 whitespace-nowrap">Access</th>
-                                <th className="w-[12%] px-4 py-4 whitespace-nowrap">Uploaded</th>
-                                <th className="w-[12%] px-4 py-4 text-right whitespace-nowrap">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-border">
-                            {isLoadingData ? (
-                                <tr>
-                                    <td colSpan={7} className="px-6 py-20 text-center text-muted-foreground">
-                                        <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-primary" />
-                                        Loading library data...
-                                    </td>
-                                </tr>
-                            ) : filteredDocs.length === 0 ? (
-                                <tr>
-                                    <td colSpan={7} className="px-6 py-20 text-center text-slate-500">
-                                        No documents found.
-                                    </td>
-                                </tr>
-                            ) : (
-                                filteredDocs.map((doc, index) => (
-                                    <motion.tr
+                                return (
+                                    <div
                                         key={doc.id}
-                                        initial={{ opacity: 0, y: 10 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        transition={{ delay: index * 0.05 }}
-                                        className={`hover:bg-muted/50 transition-colors group ${selectedIds.has(doc.id) ? 'bg-primary/5' : ''}`}
+                                        onClick={() => setSelectedDoc(doc)}
+                                        className={`grid grid-cols-[40px_1.5fr_1.2fr_1.2fr_1fr_0.8fr] gap-4 px-6 py-3.5 items-center cursor-pointer transition-all duration-150 border-b border-border/10 hover:bg-accent/40 group ${
+                                            isSelected ? 'bg-primary/5 border-l-4 border-primary pl-5' : ''
+                                        }`}
                                     >
-                                        <td className="px-6 py-4">
+                                        {/* Checkbox column */}
+                                        <div onClick={(e) => e.stopPropagation()} className="flex items-center justify-center">
                                             <input
                                                 type="checkbox"
-                                                className="w-4 h-4 rounded border-border text-primary focus:ring-primary/50 bg-card cursor-pointer"
-                                                checked={selectedIds.has(doc.id)}
+                                                checked={isChecked}
                                                 onChange={() => toggleSelect(doc.id)}
+                                                className={`w-4 h-4 rounded border-border text-primary cursor-pointer transition-opacity ${
+                                                    isChecked ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'
+                                                }`}
                                             />
-                                        </td>
-                                        <td className="px-4 py-4">
-                                            <div className="min-w-0">
-                                                <div className="flex min-w-0 items-center gap-2">
-                                                    <span className="shrink-0 rounded-md bg-primary/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-primary">
-                                                        {doc.course_code}
-                                                    </span>
-                                                    <span className="truncate text-xs text-muted-foreground" title={doc.topic}>
-                                                        {doc.topic || 'No topic'}
-                                                    </span>
-                                                </div>
-                                                <div className="mt-1 truncate text-sm font-semibold text-foreground" title={doc.title}>
-                                                    {doc.title}
-                                                </div>
-                                            </div>
-                                        </td>
-                                        <td className="px-4 py-4 text-muted-foreground">
-                                            <div className="truncate" title={doc.lecturer}>{doc.lecturer}</div>
-                                        </td>
+                                        </div>
 
-                                        <td className="px-4 py-4">
-                                            <div className="flex min-w-0 items-center gap-2">
-                                                <AIBadge
-                                                    status={doc.embedding_status}
-                                                    progress={doc.embedding_progress}
-                                                    error={doc.embedding_error}
-                                                />
-                                                <span className="truncate text-[11px] text-muted-foreground">
-                                                    {doc.embedding_status === 'completed'
-                                                        ? `${doc.total_chunks.toLocaleString()} chunks`
-                                                        : doc.embedding_status === 'processing'
-                                                            ? `${Math.round(doc.embedding_progress || 0)}%`
-                                                            : doc.embedding_status}
-                                                </span>
-                                            </div>
-                                        </td>
-                                        <td className="px-4 py-4">
-                                            <div className="flex min-w-0 flex-wrap gap-1">
-                                                <MaterialStatusBadge status={doc.material_status} />
-                                            </div>
-                                            <div className="mt-1 truncate text-[11px] text-muted-foreground">
-                                                {[doc.source_type, doc.version_label].filter(Boolean).join(' • ')}
-                                            </div>
-                                            <div className="mt-1 truncate text-[11px] text-muted-foreground">
-                                                {[doc.academic_session, formatSemester(doc.semester)].filter(Boolean).join(' • ') || 'No session set'}
-                                            </div>
-                                        </td>
-                                        <td className="px-4 py-4 text-muted-foreground">
-                                            <div className="truncate" title={doc.date}>{doc.date}</div>
-                                            <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px]">
-                                                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-[9px] font-bold" title={doc.uploaded_by.email}>
-                                                    {doc.uploaded_by.name}
-                                                </span>
-                                                <span className="truncate" title={doc.uploaded_by.email}>{doc.uploaded_by.email}</span>
-                                            </div>
-                                        </td>
-                                        <td className="px-4 py-4 text-right">
-                                            <div className="relative flex items-center justify-end">
-                                                <button
-                                                    onClick={() => setDesktopMenuDocId((prev) => (prev === doc.id ? null : doc.id))}
-                                                    className="rounded-lg border border-border p-2 text-muted-foreground transition-colors hover:bg-muted"
-                                                    title="Open actions"
-                                                    aria-label="Open actions"
-                                                >
-                                                    <MoreVertical className="h-4 w-4" />
-                                                </button>
-                                                {desktopMenuDocId === doc.id && (
-                                                    <div className="absolute right-0 top-11 z-30 min-w-44 rounded-xl border border-border bg-background p-1.5 text-left shadow-lg">
-                                                        <button
-                                                            onClick={() => {
-                                                                setMobileDetailsDoc(doc);
-                                                                setDesktopMenuDocId(null);
-                                                            }}
-                                                            className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-foreground hover:bg-muted"
-                                                        >
-                                                            View details
-                                                        </button>
-                                                        {doc.embedding_status === 'processing' && (
-                                                            <button
-                                                                onClick={() => {
-                                                                    void handleCancelIngestion(doc);
-                                                                    setDesktopMenuDocId(null);
-                                                                }}
-                                                                disabled={cancellingIds.has(doc.id)}
-                                                                className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-foreground hover:bg-muted disabled:opacity-50"
-                                                            >
-                                                                {cancellingIds.has(doc.id) ? 'Cancelling...' : 'Cancel ingestion'}
-                                                            </button>
-                                                        )}
-                                                        <button
-                                                            onClick={() => {
-                                                                setEditingDoc(doc);
-                                                                setDesktopMenuDocId(null);
-                                                            }}
-                                                            className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-foreground hover:bg-muted"
-                                                        >
-                                                            Edit
-                                                        </button>
-                                                        {canShowReembedAction(doc) && (
-                                                            <button
-                                                                onClick={() => {
-                                                                    void handleReembedDocument(doc);
-                                                                    setDesktopMenuDocId(null);
-                                                                }}
-                                                                disabled={!canRunReembedDocument(doc)}
-                                                                className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-foreground hover:bg-muted disabled:opacity-50"
-                                                            >
-                                                                {getReembedActionLabel(doc)}
-                                                            </button>
-                                                        )}
-                                                        <button
-                                                            onClick={() => {
-                                                                void handleToggleMaterialStatus(doc);
-                                                                setDesktopMenuDocId(null);
-                                                            }}
-                                                            className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-foreground hover:bg-muted"
-                                                        >
-                                                            {normalizeMaterialStatus(doc.material_status) === 'archived' ? 'Restore to Active' : 'Archive'}
-                                                        </button>
-                                                        <button
-                                                            onClick={() => {
-                                                                setDeleteTarget(doc);
-                                                                setDesktopMenuDocId(null);
-                                                            }}
-                                                            className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-destructive hover:bg-destructive/10"
-                                                        >
-                                                            Delete
-                                                        </button>
-                                                    </div>
+                                        {/* Name column: Icon + Title/Topic + Course Badge + AI status */}
+                                        <div className="flex items-center gap-3.5 min-w-0">
+                                            <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border border-primary/20 bg-primary/10 text-primary shadow-sm select-none">
+                                                {cancellingIds.has(doc.id) || reembeddingIds.has(doc.id) ? (
+                                                    <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                                                ) : (
+                                                    <FileText className="h-5 w-5" />
                                                 )}
                                             </div>
-                                        </td>
-                                    </motion.tr>
-                                ))
-                            )}
-                        </tbody>
-                    </table>
+                                            <div className="min-w-0 flex flex-col gap-0.5">
+                                                <h4 className="text-sm font-semibold truncate group-hover:text-primary transition-colors pr-2" title={doc.topic || doc.title}>
+                                                    {doc.topic || doc.title}
+                                                </h4>
+                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase shrink-0">
+                                                        {doc.course_code}
+                                                    </span>
+                                                    <AIBadge
+                                                        status={doc.embedding_status}
+                                                        progress={doc.embedding_progress}
+                                                        error={doc.embedding_error}
+                                                        compact
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Lecturer column */}
+                                        <div className="flex items-center text-xs md:text-sm text-muted-foreground min-w-0">
+                                            <span className="truncate">{doc.lecturer}</span>
+                                        </div>
+
+                                        {/* Date column */}
+                                        <div className="text-xs md:text-sm text-muted-foreground">
+                                            {doc.date}
+                                        </div>
+
+                                        {/* Status column */}
+                                        <div className="flex items-center">
+                                            <MaterialStatusBadge status={doc.material_status} />
+                                        </div>
+
+                                        {/* Size column */}
+                                        <div className="text-xs md:text-sm text-muted-foreground text-right font-medium">
+                                            {doc.file_size ? `${(doc.file_size / (1024 * 1024)).toFixed(2)} MB` : 'â€”'}
+                                        </div>
+                                    </div>
+                                );
+                            })
+                        )}
+                    </div>
                 </div>
+
+                {/* COLUMN 3: RIGHT DETAILS SIDEBAR (Full height) */}
+                <aside className="w-80 shrink-0 border-l border-border/60 bg-card/35 backdrop-blur-md flex flex-col h-full p-5 overflow-y-auto overflow-x-hidden">
+                    {selectedDoc ? (
+                        <div className="flex flex-col h-full flex-1 min-w-0">
+                            {/* Header */}
+                            <div className="flex items-center justify-between pb-3 border-b border-border/50 mb-4 shrink-0">
+                                <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80">
+                                    Material Details
+                                </h3>
+                                <button
+                                    onClick={() => setSelectedDoc(null)}
+                                    className="p-1 hover:bg-muted rounded-lg text-muted-foreground hover:text-foreground transition-colors"
+                                >
+                                    <X className="h-4.5 w-4.5" />
+                                </button>
+                            </div>
+
+                            {/* Document Mockup Preview */}
+                            <div className="w-full aspect-[4/3] rounded-xl overflow-hidden shadow-sm border border-border/40 bg-muted/20 mb-5 flex items-center justify-center shrink-0">
+                                <DocumentThumbnail doc={selectedDoc} />
+                            </div>
+
+                            {/* Info Table */}
+                            <div className="space-y-4 flex-1 min-w-0">
+                                <div className="min-w-0">
+                                    <h4 className="text-sm font-extrabold text-foreground leading-tight tracking-tight truncate" title={selectedDoc.topic || 'No Topic'}>
+                                        {selectedDoc.topic || 'No Topic'}
+                                    </h4>
+                                    <p className="text-xs text-muted-foreground mt-1 truncate" title={selectedDoc.title}>
+                                        {selectedDoc.title}
+                                    </p>
+                                </div>
+
+                                <hr className="border-border/40" />
+
+                                <div className="space-y-2.5 text-xs text-foreground min-w-0">
+                                    <div className="flex justify-between items-center gap-2 min-w-0">
+                                        <span className="text-muted-foreground shrink-0">Course Code</span>
+                                        <span className="font-bold truncate">{selectedDoc.course_code}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center gap-2 min-w-0">
+                                        <span className="text-muted-foreground shrink-0">Lecturer</span>
+                                        <span className="font-semibold truncate">{selectedDoc.lecturer}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center gap-2 min-w-0">
+                                        <span className="text-muted-foreground shrink-0">File Size</span>
+                                        <span className="font-semibold truncate">{selectedDoc.file_size ? `${(selectedDoc.file_size / (1024 * 1024)).toFixed(2)} MB` : 'â€”'}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center gap-2 min-w-0">
+                                        <span className="text-muted-foreground shrink-0">Academic Session</span>
+                                        <span className="font-semibold truncate">{selectedDoc.academic_session || 'â€”'}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center gap-2 min-w-0">
+                                        <span className="text-muted-foreground shrink-0">Semester</span>
+                                        <span className="font-semibold truncate">{formatSemester(selectedDoc.semester) || 'â€”'}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center gap-2 min-w-0">
+                                        <span className="text-muted-foreground shrink-0">Upload Date</span>
+                                        <span className="font-semibold truncate">{selectedDoc.date}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center gap-2 min-w-0">
+                                        <span className="text-muted-foreground shrink-0">AI Index Status</span>
+                                        <AIBadge
+                                            status={selectedDoc.embedding_status}
+                                            progress={selectedDoc.embedding_progress}
+                                            error={selectedDoc.embedding_error}
+                                        />
+                                    </div>
+                                    {selectedDoc.embedding_status === 'completed' && (
+                                        <div className="flex justify-between items-center gap-2 min-w-0">
+                                            <span className="text-muted-foreground shrink-0">Processed Chunks</span>
+                                            <span className="font-mono font-bold text-primary truncate">{selectedDoc.total_chunks} chunks</span>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {selectedDoc.embedding_error && (
+                                    <div className="bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl p-3 text-xs leading-relaxed space-y-1 mt-2 min-w-0">
+                                        <p className="font-bold flex items-center gap-1.5 shrink-0"><AlertCircle className="w-3.5 h-3.5 text-red-500" /> AI Ingestion Failed</p>
+                                        <p className="font-mono text-[10px] break-words">{selectedDoc.embedding_error}</p>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Administration Controls */}
+                            <div className="border-t border-border/60 pt-4 mt-6 space-y-2 shrink-0">
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setEditingDoc(selectedDoc)}
+                                        className="py-2.5 rounded-xl border border-border/80 bg-background hover:bg-muted text-xs font-bold text-foreground transition-all flex items-center justify-center gap-1.5"
+                                    >
+                                        <Pencil className="w-3.5 h-3.5" />
+                                        <span>Edit</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => void handleToggleMaterialStatus(selectedDoc)}
+                                        className="py-2.5 rounded-xl border border-border/80 bg-background hover:bg-muted text-xs font-bold text-foreground transition-all flex items-center justify-center gap-1.5"
+                                    >
+                                        <Archive className="w-3.5 h-3.5" />
+                                        <span>{normalizeMaterialStatus(selectedDoc.material_status) === 'archived' ? 'Restore' : 'Archive'}</span>
+                                    </button>
+                                </div>
+
+                                {canShowReembedAction(selectedDoc) && (
+                                    <button
+                                        type="button"
+                                        onClick={() => void handleReembedDocument(selectedDoc)}
+                                        disabled={!canRunReembedDocument(selectedDoc)}
+                                        className="w-full py-2.5 rounded-xl border border-border/80 bg-background hover:bg-muted text-xs font-bold text-foreground transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+                                    >
+                                        <Sparkles className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+                                        <span>{getReembedActionLabel(selectedDoc)}</span>
+                                    </button>
+                                )}
+
+                                <button
+                                    type="button"
+                                    onClick={() => setDeleteTarget(selectedDoc)}
+                                    className="w-full py-2.5 rounded-xl bg-destructive/10 text-destructive border border-destructive/20 hover:bg-destructive/20 text-xs font-bold transition-all flex items-center justify-center gap-1.5"
+                                >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    <span>Delete Material</span>
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="flex flex-col items-center justify-center flex-1 text-center text-muted-foreground/80 py-20">
+                            <FileText className="h-10 w-10 mb-3 opacity-30 text-muted-foreground" />
+                            <p className="font-bold text-sm text-foreground/85">No selection</p>
+                            <p className="text-[11px] mt-1 max-w-[200px] leading-relaxed">
+                                Select a document from the center list feed to inspect metadata and access control.
+                            </p>
+                        </div>
+                    )}
+                </aside>
             </div>
 
+            {/* Mobile View Layout */}
+            <div className="lg:hidden flex flex-1 min-h-0 flex-col overflow-hidden">
+                <div className="shrink-0 space-y-3 px-4 pb-3">
+                    <div className="grid grid-cols-3 gap-2">
+                        <MobileQuickStatCard icon={FileText} label="Documents" value={totalDocs.toLocaleString()} color="text-blue-500" bg="bg-blue-500/10" />
+                        <MobileQuickStatCard icon={BookOpen} label="Courses" value={activeCourses.toLocaleString()} color="text-purple-500" bg="bg-purple-500/10" />
+                        <MobileQuickStatCard icon={HardDrive} label="Storage" value={`${storageUsedGB} GB`} color="text-cyan-500" bg="bg-cyan-500/10" />
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                        <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-border bg-card px-3 py-2">
+                            <Search className="h-3.5 w-3.5 text-muted-foreground" />
+                            <input
+                                type="text"
+                                placeholder="Search materials..."
+                                className="w-full border-none bg-transparent text-xs text-foreground outline-none"
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                            />
+                        </div>
+                        {canUploadMaterials ? (
+                            <button
+                                onClick={() => setIsUploadModalOpen(true)}
+                                className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm"
+                                title="Upload material"
+                            >
+                                <Plus className="h-4 w-4" />
+                            </button>
+                        ) : null}
+                    </div>
+                </div>
+
+                <div className="mt-1 flex flex-1 min-h-0 flex-col overflow-hidden rounded-t-[28px] border-t border-border/40 bg-surface-primary">
+                    <div className="flex gap-8 px-6 pt-5 pb-3 shrink-0">
+                        <button onClick={() => setActiveMobileTab('materials')} className="relative pb-2">
+                            <span className={`text-base transition-all ${activeMobileTab === 'materials' ? 'font-bold text-foreground' : 'font-normal text-muted-foreground'}`}>Materials</span>
+                            {activeMobileTab === 'materials' ? <div className="absolute bottom-0 left-1/2 h-[3px] w-4 -translate-x-1/2 rounded-full bg-primary" /> : null}
+                        </button>
+                        <button onClick={() => setActiveMobileTab('courses')} className="relative pb-2">
+                            <span className={`text-base transition-all ${activeMobileTab === 'courses' ? 'font-bold text-foreground' : 'font-normal text-muted-foreground'}`}>Courses</span>
+                            {activeMobileTab === 'courses' ? <div className="absolute bottom-0 left-1/2 h-[3px] w-4 -translate-x-1/2 rounded-full bg-primary" /> : null}
+                        </button>
+                    </div>
+
+                    <div className="flex-1 min-h-0 overflow-y-auto px-4 py-2">
+                        {activeMobileTab === 'materials' ? (
+                            <div className="space-y-4 pb-6">
+                                {activeCourse ? (
+                                    <div className="flex items-center justify-between pl-1">
+                                        <button
+                                            type="button"
+                                            onClick={() => setActiveCourse(null)}
+                                            className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground transition-colors hover:text-foreground"
+                                        >
+                                            <ArrowLeft className="h-3.5 w-3.5" />
+                                            <span>All Courses</span>
+                                        </button>
+                                        <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-primary">
+                                            {activeCourse}
+                                        </span>
+                                    </div>
+                                ) : null}
+
+                                {isLoadingData ? (
+                                    <div className="rounded-2xl border border-border bg-card/25 p-8 text-center text-xs text-muted-foreground shadow-sm">
+                                        <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin text-primary" />
+                                        Loading documents...
+                                    </div>
+                                ) : filteredDocs.length === 0 ? (
+                                    <div className="rounded-2xl border border-dashed border-border/60 bg-card/25 p-8 text-center text-xs text-muted-foreground shadow-sm">
+                                        No documents found.
+                                    </div>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {filteredDocs.map((doc) => (
+                                            <div
+                                                key={doc.id}
+                                                onClick={() => setMobileDetailsDoc(doc)}
+                                                className="flex cursor-pointer items-center justify-between rounded-xl border border-border/40 bg-card/10 px-3 py-3.5 transition-all active:bg-accent/40"
+                                            >
+                                                <div className="flex min-w-0 items-center gap-3">
+                                                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-primary/20 bg-primary/10 text-primary shadow-sm select-none">
+                                                        <FileText className="h-5 w-5" />
+                                                    </div>
+                                                    <div className="min-w-0 flex flex-col gap-0.5">
+                                                        <h4 className="truncate pr-2 text-[14px] font-bold leading-tight text-foreground">
+                                                            {doc.topic || doc.title}
+                                                        </h4>
+                                                        <div className="flex flex-wrap items-center gap-2 text-[11px] font-medium text-muted-foreground/80">
+                                                            <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.06em] text-primary">
+                                                                {doc.course_code}
+                                                            </span>
+                                                            <span>{doc.date}</span>
+                                                            <span>{doc.file_size ? `${(doc.file_size / (1024 * 1024)).toFixed(2)} MB` : '—'}</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                <div className="flex shrink-0 items-center gap-2 pl-2">
+                                                    <AIBadge
+                                                        status={doc.embedding_status}
+                                                        progress={doc.embedding_progress}
+                                                        error={doc.embedding_error}
+                                                        compact
+                                                    />
+                                                    <MaterialStatusBadge status={doc.material_status} />
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        ) : (
+                            <div className="space-y-4 pb-6">
+                                <div className="flex items-center justify-between pl-1">
+                                    <span className="text-[13px] font-medium text-muted-foreground">All Courses</span>
+                                </div>
+
+                                <div className="space-y-2">
+                                    {Object.entries(coursesByLevel).map(([level, courseCodes]) => {
+                                        const isExpanded = !!expandedLevels[level];
+                                        const count = levelStats[level] || 0;
+
+                                        return (
+                                            <div key={`mob-${level}`} className="overflow-hidden rounded-xl border border-border/60 bg-card/40">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setExpandedLevels((prev) => ({ ...prev, [level]: !prev[level] }))}
+                                                    className="w-full flex items-center justify-between bg-muted/20 p-3 text-xs font-bold text-foreground"
+                                                >
+                                                    <div className="flex items-center gap-1.5">
+                                                        {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                                                        <span>{level === 'Other' ? 'Other Levels' : `${level} Level`}</span>
+                                                    </div>
+                                                    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold">
+                                                        {count}
+                                                    </span>
+                                                </button>
+
+                                                {isExpanded ? (
+                                                    <div className="grid grid-cols-2 gap-2 border-t border-border/40 bg-background p-2">
+                                                        {courseCodes.length > 0 ? (
+                                                            courseCodes.map((code) => {
+                                                                const docCount = courseStats[code] || 0;
+
+                                                                return (
+                                                                    <button
+                                                                        key={`mob-course-${code}`}
+                                                                        type="button"
+                                                                        onClick={() => {
+                                                                            setActiveCourse(activeCourse === code ? null : code);
+                                                                            setActiveMobileTab('materials');
+                                                                        }}
+                                                                        className={`flex flex-col rounded-xl border p-3 text-left transition-all ${
+                                                                            activeCourse === code
+                                                                                ? 'border-primary bg-primary/10 text-primary'
+                                                                                : 'border-border bg-card text-foreground hover:bg-muted'
+                                                                        }`}
+                                                                    >
+                                                                        <span className="text-xs font-bold">{code}</span>
+                                                                        <span className="mt-1 text-[10px] text-muted-foreground">
+                                                                            {docCount} {docCount === 1 ? 'material' : 'materials'}
+                                                                        </span>
+                                                                    </button>
+                                                                );
+                                                            })
+                                                        ) : (
+                                                            <span className="col-span-2 py-4 text-center text-[11px] italic text-muted-foreground">
+                                                                No courses found.
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                ) : null}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
             {/* Bulk Actions Floating Bar */}
             <AnimatePresence>
                 {selectedIds.size > 0 && (
@@ -1088,7 +1434,9 @@ export default function LibraryPage() {
                         onClose={() => setIsUploadModalOpen(false)}
                         userEmail={userEmail || ''}
                         isSuperAdmin={isSuperAdmin}
-                        onSuccess={() => fetchDocuments()} // Refresh data
+                        adminLevel={adminLevel}
+                        currentAcademicContext={currentAcademicContext}
+                        onSuccess={() => fetchDocuments()}
                     />
                 )}
                 {deleteTarget && (
@@ -1105,30 +1453,275 @@ export default function LibraryPage() {
                         onClose={() => setEditingDoc(null)}
                         onUpdate={(updatedDoc) => {
                             setDocuments(prev => prev.map(d => d.id === updatedDoc.id ? { ...d, ...updatedDoc } : d));
+                            if (selectedDoc?.id === updatedDoc.id) {
+                                setSelectedDoc(updatedDoc);
+                            }
+                            if (mobileDetailsDoc?.id === updatedDoc.id) {
+                                setMobileDetailsDoc(updatedDoc);
+                            }
                             setEditingDoc(null);
                         }}
                     />
                 )}
                 {mobileDetailsDoc && (
-                    <MobileDocumentDetailsModal
+                    <MobileDocumentDetailsSheet
                         doc={mobileDetailsDoc}
                         onClose={() => setMobileDetailsDoc(null)}
+                        onEdit={() => {
+                            setEditingDoc(mobileDetailsDoc);
+                            setMobileDetailsDoc(null);
+                        }}
+                        onToggleArchive={async () => {
+                            await handleToggleMaterialStatus(mobileDetailsDoc);
+                        }}
+                        onReprocess={async () => {
+                            await handleReembedDocument(mobileDetailsDoc);
+                        }}
+                        onDelete={() => {
+                            setDeleteTarget(mobileDetailsDoc);
+                            setMobileDetailsDoc(null);
+                        }}
+                        canShowReembed={canShowReembedAction(mobileDetailsDoc)}
+                        canRunReembed={canRunReembedDocument(mobileDetailsDoc)}
+                        reembedLabel={getReembedActionLabel(mobileDetailsDoc)}
                     />
                 )}
             </AnimatePresence>
-        </div >
+        </div>
+    );
+}
+
+// --- Dynamic Visual Previews and helpers ---
+function DocumentThumbnail({ doc }: { doc: Document }) {
+    const fileName = (doc.title || '').toLowerCase() + ' ' + (doc.course_code || '').toLowerCase();
+    const isPPT = fileName.includes('ppt') || fileName.includes('pptx') || fileName.includes('presentation') || fileName.includes('slide');
+    const isGreen = doc.course_code.toLowerCase().includes('pcp') || doc.id.charCodeAt(0) % 2 === 0;
+    
+    if (isPPT) {
+        const bannerColor = isGreen ? 'bg-[#7eb282]' : 'bg-[#4f81bd]';
+        const titleColor = isGreen ? 'text-primary' : 'text-[#1f497d]';
+        const slideSub = isGreen ? 'Supply Chain Management' : 'Pharmacy Operations';
+        
+        return (
+            <div className="relative w-full h-full bg-white flex overflow-hidden select-none text-left">
+                <div className={`w-[24%] h-full shrink-0 flex flex-col justify-end p-2 ${bannerColor}`}>
+                    <div className="w-full h-0.5 bg-white/50 rounded-sm mb-0.5" />
+                    <div className="w-2/3 h-0.5 bg-white/50 rounded-sm" />
+                </div>
+                
+                <div className="flex-1 flex flex-col justify-between p-2.5 bg-white">
+                    <div className="text-[7.5px] font-extrabold text-[#777]">
+                        {doc.course_code}
+                    </div>
+                    
+                    <div className="flex-1 flex flex-col justify-center items-center text-center">
+                        <span className={`text-[9px] font-extrabold leading-tight line-clamp-3 px-1 tracking-tight ${titleColor}`}>
+                            {doc.topic || doc.title}
+                        </span>
+                    </div>
+                    
+                    <div className="text-[6px] text-right font-bold text-zinc-400 truncate mt-auto">
+                        {slideSub}
+                    </div>
+                </div>
+            </div>
+        );
+    }
+    
+    const bulletColor = doc.course_code.toLowerCase().includes('pcl') ? 'bg-[#5c8bc4]' : 'bg-primary';
+    return (
+        <div className="relative w-full h-full bg-white flex flex-col p-2.5 select-none text-left">
+            <div className="flex items-center gap-1 border-b border-zinc-200 pb-1 shrink-0">
+                <div className={`w-1.5 h-1.5 rounded-full ${bulletColor}`} />
+                <span className="text-[6.5px] font-extrabold text-zinc-500 truncate">{doc.course_code}</span>
+            </div>
+            <div className="flex-1 flex gap-2 pt-1.5 min-h-0">
+                <div className="flex-1 flex flex-col gap-1.5">
+                    <span className="text-[9px] font-extrabold text-zinc-800 line-clamp-3 leading-snug tracking-tight">
+                        {doc.topic || doc.title}
+                    </span>
+                    <div className="w-full h-0.5 bg-zinc-200 rounded-sm" />
+                    <div className="w-5/6 h-0.5 bg-zinc-200 rounded-sm" />
+                </div>
+                <div className="w-[45%] flex flex-col gap-1 border-l border-zinc-100 pl-1.5 shrink-0">
+                    <div className="w-full h-1 bg-zinc-200 rounded-sm" />
+                    <div className="w-full h-0.5 bg-zinc-200 rounded-sm" />
+                    <div className="w-full h-0.5 bg-zinc-200 rounded-sm" />
+                    <div className="w-2/3 h-0.5 bg-zinc-200 rounded-sm" />
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function MobileQuickStatCard({ icon: Icon, label, value, color, bg }: MobileQuickStatCardProps) {
+    return (
+        <div className="rounded-2xl border border-border bg-card p-3 text-center">
+            <div className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border ${bg} ${color} mx-auto mb-1.5`}>
+                <Icon className="h-3.5 w-3.5" />
+            </div>
+            <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">{label}</p>
+            <p className="text-sm font-extrabold text-foreground mt-0.5">{value}</p>
+        </div>
+    );
+}
+
+function MobileDocumentDetailsSheet({
+    doc,
+    onClose,
+    onEdit,
+    onToggleArchive,
+    onReprocess,
+    onDelete,
+    canShowReembed,
+    canRunReembed,
+    reembedLabel,
+}: {
+    doc: Document;
+    onClose: () => void;
+    onEdit: () => void;
+    onToggleArchive: () => Promise<void>;
+    onReprocess: () => Promise<void>;
+    onDelete: () => void;
+    canShowReembed: boolean;
+    canRunReembed: boolean;
+    reembedLabel: string;
+}) {
+    const isArchived = normalizeMaterialStatus(doc.material_status) === 'archived';
+    
+    return (
+        <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[65] bg-black/60 flex items-end justify-center"
+            onClick={onClose}
+        >
+            <motion.div
+                initial={{ y: "100%" }}
+                animate={{ y: 0 }}
+                exit={{ y: "100%" }}
+                transition={{ type: "spring", damping: 25, stiffness: 220 }}
+                className="w-full h-[calc(100dvh-2rem)] max-h-[calc(100dvh-2rem)] overflow-x-hidden overflow-y-auto bg-background border-t border-border rounded-t-2xl p-5 space-y-5 pb-[calc(env(safe-area-inset-bottom)+1.25rem)]"
+                onClick={(e) => e.stopPropagation()}
+            >
+                {/* Header handle drag bar */}
+                <div className="mx-auto w-12 h-1 bg-muted rounded-full shrink-0" onClick={onClose} />
+
+                <div className="flex justify-between items-start pt-2">
+                    <div className="min-w-0">
+                        <span className="shrink-0 rounded bg-primary/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.06em] text-primary border border-primary/20">
+                            {doc.course_code}
+                        </span>
+                        <h3 className="text-base font-extrabold text-foreground mt-2 break-words leading-tight">{doc.topic || 'No topic'}</h3>
+                        <p className="text-xs text-muted-foreground truncate mt-1">{doc.title}</p>
+                    </div>
+                    <button onClick={onClose} className="p-1 text-muted-foreground hover:text-foreground">
+                        <X className="h-5 w-5" />
+                    </button>
+                </div>
+
+                {/* Thumbnail */}
+                <div className="w-full aspect-[4/3] rounded-xl overflow-hidden shadow-sm border border-border/40 bg-muted/20 shrink-0">
+                    <DocumentThumbnail doc={doc} />
+                </div>
+
+                {/* Metadata details */}
+                <div className="space-y-3.5 text-xs">
+                    <div className="flex justify-between">
+                        <span className="text-muted-foreground">Lecturer</span>
+                        <span className="font-semibold">{doc.lecturer}</span>
+                    </div>
+                    <div className="flex justify-between">
+                        <span className="text-muted-foreground">File Size</span>
+                        <span className="font-semibold">{doc.file_size ? `${(doc.file_size / (1024 * 1024)).toFixed(2)} MB` : 'â€”'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                        <span className="text-muted-foreground">Academic Session</span>
+                        <span className="font-semibold">{doc.academic_session || 'â€”'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                        <span className="text-muted-foreground">Semester</span>
+                        <span className="font-semibold">{formatSemester(doc.semester) || 'â€”'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                        <span className="text-muted-foreground">Upload Date</span>
+                        <span className="font-semibold">{doc.date}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">AI Index Status</span>
+                        <AIBadge
+                            status={doc.embedding_status}
+                            progress={doc.embedding_progress}
+                            error={doc.embedding_error}
+                        />
+                    </div>
+                    {doc.embedding_error && (
+                        <div className="bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl p-3 text-xs leading-relaxed space-y-1">
+                            <p className="font-bold flex items-center gap-1.5"><AlertCircle className="w-3.5 h-3.5" /> AI Ingestion Failed</p>
+                            <p className="font-mono text-[9px] break-words">{doc.embedding_error}</p>
+                        </div>
+                    )}
+                </div>
+
+                {/* Actions */}
+                <div className="pt-4 border-t border-border/60 space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                        <button
+                            type="button"
+                            onClick={onEdit}
+                            className="py-3 rounded-xl border border-border/80 bg-card hover:bg-muted text-xs font-bold text-foreground transition-all flex items-center justify-center gap-1.5"
+                        >
+                            <Pencil className="w-3.5 h-3.5" />
+                            <span>Edit</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                void onToggleArchive();
+                            }}
+                            className="py-3 rounded-xl border border-border/80 bg-card hover:bg-muted text-xs font-bold text-foreground transition-all flex items-center justify-center gap-1.5"
+                        >
+                            <Archive className="w-3.5 h-3.5" />
+                            <span>{isArchived ? 'Restore' : 'Archive'}</span>
+                        </button>
+                    </div>
+
+                    {canShowReembed && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                void onReprocess();
+                            }}
+                            disabled={!canRunReembed}
+                            className="w-full py-3 rounded-xl border border-border/80 bg-card hover:bg-muted text-xs font-bold text-foreground transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+                        >
+                            <Sparkles className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+                            <span>{reembedLabel}</span>
+                        </button>
+                    )}
+
+                    <button
+                        type="button"
+                        onClick={onDelete}
+                        className="w-full py-3 rounded-xl bg-destructive/10 text-destructive border border-destructive/20 hover:bg-destructive/20 text-xs font-bold transition-all flex items-center justify-center gap-1.5"
+                    >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete Material</span>
+                    </button>
+                </div>
+            </motion.div>
+        </motion.div>
     );
 }
 
 // --- Sub-Components ---
 function AIBadge({ status, progress, error, compact = false }: { status: string, progress: number, error?: string; compact?: boolean }) {
-    // 1. Determine State
     let state = status;
     if (status === 'completed' && error) {
         state = 'completed_with_errors';
     }
 
-    // 2. Render Check
     if (state === 'pending') {
         return (
             <div className={`flex items-center gap-1 bg-gray-50 text-gray-500 border border-gray-200 rounded-full ${compact ? 'px-1.5 py-0.5' : 'px-2 py-0.5'}`} title="Queued for AI Training">
@@ -1147,7 +1740,6 @@ function AIBadge({ status, progress, error, compact = false }: { status: string,
         );
     }
 
-    // 3. Static States
     const configs: Record<string, AIBadgeConfig> = {
         'completed': {
             style: 'bg-amber-100 text-amber-700 border-amber-300',
@@ -1157,13 +1749,13 @@ function AIBadge({ status, progress, error, compact = false }: { status: string,
         },
         'completed_with_errors': {
             style: 'bg-orange-100 text-orange-700 border-orange-300',
-            icon: AlertCircle, // Warning Triangle replacement
+            icon: AlertCircle,
             text: 'Partial',
             tooltip: 'Some chunks failed to process. Check content.'
         },
         'failed': {
             style: 'bg-red-100 text-red-700 border-red-300',
-            icon: X, // X Circle replacement
+            icon: X,
             text: 'Failed',
             tooltip: 'AI Training Failed. ' + (error || '')
         }
@@ -1176,9 +1768,7 @@ function AIBadge({ status, progress, error, compact = false }: { status: string,
         <div className="group/badge relative flex items-center justify-center">
             <div className={`flex items-center gap-1 border rounded-full shadow-sm cursor-help ${compact ? 'px-1.5 py-0.5' : 'px-2 py-0.5'} ${config.style}`}>
                 <Icon className={compact ? 'w-2.5 h-2.5' : 'w-3 h-3'} />
-                {/* Optional text if space permits, user asked for icon mostly but style implies pill */}
             </div>
-            {/* Tooltip */}
             <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-black/90 text-white text-[10px] rounded opacity-0 group-hover/badge:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                 {config.tooltip}
                 {state === 'completed_with_errors' && error && (
@@ -1189,84 +1779,24 @@ function AIBadge({ status, progress, error, compact = false }: { status: string,
     );
 }
 
-// SidebarItem moved to layout.tsx
-function StatsCard({ icon: Icon, label, value, trend, sub, color, progress }: StatsCardProps) {
-    return (
-        <div className="rounded-2xl border border-border bg-background/90 p-4 transition-colors hover:border-primary/30 hover:bg-muted/40 relative overflow-hidden group">
-            <div className="flex justify-between items-start mb-2">
-                <div className={`inline-flex h-10 w-10 items-center justify-center rounded-2xl border ${color.replace('bg-', 'border-')}/20 ${color.replace('bg-', 'bg-')}/10 ${color.replace('bg-', 'text-')}`}>
-                    <Icon className="w-5 h-5" />
-                </div>
-                {trend && <span className="text-[10px] font-bold bg-primary/10 text-primary px-2 py-1 rounded-full">{trend}</span>}
-            </div>
-            <div>
-                <p className="mt-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
-                <div className="flex items-baseline gap-2 mt-1">
-                    <span className="text-lg font-bold text-foreground">{value}</span>
-                </div>
-                {sub && <p className="text-xs text-muted-foreground font-medium mt-1">{sub}</p>}
-
-                {progress && (
-                    <div className="mt-3 h-1.5 w-full bg-secondary/50 rounded-full overflow-hidden">
-                        <div className={`h-full ${color} rounded-full transition-all duration-500`} style={{ width: `${progress}%` }} />
-                    </div>
-                )}
-            </div>
-        </div>
-    );
-}
-
-function MobileQuickStatCard({ icon: Icon, label, value, color, bg }: MobileQuickStatCardProps) {
-    return (
-        <div className="rounded-2xl border border-border bg-background/90 p-4">
-            <div className={`inline-flex h-10 w-10 items-center justify-center rounded-2xl border ${bg} ${color}`}>
-                <Icon className="h-4 w-4" />
-            </div>
-            <p className="mt-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
-            <p className="mt-1 text-lg font-bold text-foreground">{value}</p>
-        </div>
-    );
-}
-
-function MobileDocumentDetailsModal({ doc, onClose }: { doc: Document; onClose: () => void }) {
-    return (
-        <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[65] bg-black/60 p-4"
-            onClick={onClose}
-        >
-            <motion.div
-                initial={{ y: 16, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                exit={{ y: 16, opacity: 0 }}
-                className="mx-auto mt-16 w-full max-w-md rounded-2xl border border-border bg-background p-5 md:max-w-2xl"
-                onClick={(event) => event.stopPropagation()}
-            >
-                <h3 className="text-base font-bold text-foreground">{doc.title}</h3>
-                <p className="mt-1 text-sm text-muted-foreground">{doc.course_code} - {doc.lecturer}</p>
-                <div className="mt-4 space-y-2 text-sm">
-                    <p><span className="text-muted-foreground">Topic:</span> {doc.topic}</p>
-                    <p><span className="text-muted-foreground">Date:</span> {doc.date}</p>
-                    <p><span className="text-muted-foreground">Levels:</span> {doc.target_levels?.join(', ') || 'All'}</p>
-                    <p><span className="text-muted-foreground">Academic:</span> {[doc.academic_session, formatSemester(doc.semester), doc.department, doc.faculty].filter(Boolean).join(' - ') || 'Not set'}</p>
-                    <p><span className="text-muted-foreground">Status:</span> {normalizeMaterialStatus(doc.material_status) === 'archived' ? 'Archived' : 'Active'}</p>
-                    <p><span className="text-muted-foreground">Source:</span> {[doc.source_type, doc.version_label].filter(Boolean).join(' - ') || 'Not set'}</p>
-                    <p><span className="text-muted-foreground">AI:</span> {doc.embedding_status}{doc.embedding_status === 'completed' ? ` - ${doc.total_chunks.toLocaleString()} chunks` : ''}</p>
-                    {doc.embedding_error ? <p><span className="text-muted-foreground">AI error:</span> {doc.embedding_error}</p> : null}
-                    <p><span className="text-muted-foreground">Uploaded by:</span> {doc.uploaded_by.email}</p>
-                </div>
-                <button onClick={onClose} className="mt-5 w-full rounded-xl border border-border py-2 text-sm font-semibold text-foreground">
-                    Close
-                </button>
-            </motion.div>
-        </motion.div>
-    );
-}
 
 
-function UploadModal({ onClose, userEmail, isSuperAdmin, onSuccess }: { isOpen: boolean, onClose: () => void, userEmail: string, isSuperAdmin: boolean, onSuccess: () => void }) {
+function UploadModal({
+    onClose,
+    userEmail,
+    isSuperAdmin,
+    adminLevel,
+    onSuccess,
+    currentAcademicContext,
+}: {
+    isOpen: boolean,
+    onClose: () => void,
+    userEmail: string,
+    isSuperAdmin: boolean,
+    adminLevel?: string,
+    onSuccess: () => void,
+    currentAcademicContext?: { current_academic_session?: string | null; current_semester?: string | null } | null,
+}) {
     const [isLoading, setIsLoading] = useState(false);
     const [loadingStage, setLoadingStage] = useState<'converting' | 'uploading'>('uploading');
     const [isTraining, setIsTraining] = useState(false); // New State for AI Training
@@ -1274,62 +1804,57 @@ function UploadModal({ onClose, userEmail, isSuperAdmin, onSuccess }: { isOpen: 
     const [isSuccess, setIsSuccess] = useState(false);
     const [error, setError] = useState('');
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const [fileName, setFileName] = useState('');
+    const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const workspaceUniversityId = isSuperAdmin ? getAdminWorkspaceUniversityId() : '';
-    const [formData, setFormData] = useState({
-        title: '',
-        course_code: '',
-        lecturer: '',
-        topic: '',
-        academic_session: '',
-        semester: '',
-        department: '',
-        faculty: '',
-        material_status: 'active',
-    });
-    const [selectedLevels, setSelectedLevels] = useState<string[]>([]);
+    const [formData, setFormData] = useState(() => buildUploadFormData(currentAcademicContext));
+    const [selectedLevel, setSelectedLevel] = useState('');
+    const [isLevelMenuOpen, setIsLevelMenuOpen] = useState(false);
     const LEVEL_CHOICES = ['100lvl', '200lvl', '300lvl', '400lvl', '500lvl', '600lvl'];
 
     useEffect(() => {
-        let cancelled = false;
-        if (isSuperAdmin && !workspaceUniversityId) {
-            return () => {
-                cancelled = true;
-            };
-        }
-        api.get('/admin/academic-context')
-            .then(async (response) => {
-                if (!response.ok || cancelled) return;
-                const payload = await response.json();
-                const context = payload?.context;
-                if (!context) return;
-                setFormData(prev => ({
-                    ...prev,
-                    academic_session: prev.academic_session || context.current_academic_session || '',
-                    semester: prev.semester || normalizeSemester(context.current_semester),
-                }));
-            })
-            .catch(() => {});
-        return () => {
-            cancelled = true;
-        };
-    }, [isSuperAdmin, workspaceUniversityId]);
+        if (isSuperAdmin && !workspaceUniversityId) return;
+        setFormData(prev => ({
+            ...prev,
+            academic_session: prev.academic_session || currentAcademicContext?.current_academic_session || '',
+            semester: prev.semester || normalizeSemester(currentAcademicContext?.current_semester),
+        }));
+    }, [currentAcademicContext, isSuperAdmin, workspaceUniversityId]);
 
-    const toggleLevel = (level: string) => {
-        setSelectedLevels(prev =>
-            prev.includes(level) ? prev.filter(l => l !== level) : [...prev, level]
-        );
-    };
+    useEffect(() => {
+        const nextLevel = getDefaultLevelFromAdmin();
+        if (nextLevel) {
+            setSelectedLevel((prev) => prev || nextLevel);
+        }
+    }, [adminLevel]);
 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         setFormData({ ...formData, [e.target.name]: e.target.value });
     };
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files?.[0]) {
-            setFileName(e.target.files[0].name);
-            setError('');
-        }
+        const file = e.target.files?.[0] || null;
+        setSelectedFile(file);
+        if (file) setError('');
+    };
+
+    const clearSelectedFile = () => {
+        setSelectedFile(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+    };
+
+    const formatFileSize = (size: number) => {
+        if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+        if (size >= 1024) return `${Math.round(size / 1024)} KB`;
+        return `${size} B`;
+    };
+
+    const getDefaultLevelFromAdmin = () => {
+        if (!adminLevel) return '';
+        const normalized = adminLevel.toLowerCase().replace(/\s+/g, '');
+        const digits = normalized.replace(/\D/g, '');
+        if (!digits) return '';
+        const nextLevel = `${digits}lvl`;
+        return LEVEL_CHOICES.includes(nextLevel) ? nextLevel : '';
     };
 
     const detectSelectedFileType = (file: File): 'pdf' | 'doc' | 'docx' | 'ppt' | 'pptx' | 'unsupported' => {
@@ -1347,7 +1872,7 @@ function UploadModal({ onClose, userEmail, isSuperAdmin, onSuccess }: { isOpen: 
         setIsLoading(true);
         setError('');
 
-        const file = fileInputRef.current?.files?.[0];
+        const file = selectedFile;
         if (!file) {
             setError('Please select a PDF, DOC, DOCX, PPT, or PPTX file.');
             setIsLoading(false);
@@ -1382,12 +1907,10 @@ function UploadModal({ onClose, userEmail, isSuperAdmin, onSuccess }: { isOpen: 
             data.append('topic', formData.topic);
             if (formData.academic_session) data.append('academic_session', formData.academic_session);
             if (formData.semester) data.append('semester', formData.semester);
-            if (formData.department) data.append('department', formData.department);
-            if (formData.faculty) data.append('faculty', formData.faculty);
             data.append('material_status', formData.material_status);
             if (userEmail) data.append('uploaded_by', userEmail);
             if (isSuperAdmin) data.append('university_id', selectedWorkspaceUniversityId);
-            if (selectedLevels.length > 0) data.append('target_levels', JSON.stringify(selectedLevels));
+            if (selectedLevel) data.append('target_levels', JSON.stringify([selectedLevel]));
 
             // Step 1: Upload File
             const response = await api.post('/admin/upload', data);
@@ -1495,34 +2018,31 @@ function UploadModal({ onClose, userEmail, isSuperAdmin, onSuccess }: { isOpen: 
             // Reset states after close
             setTimeout(() => {
                 setIsSuccess(false);
-                setFormData({
-                    title: '',
-                    course_code: '',
-                    lecturer: '',
-                    topic: '',
-                    academic_session: '',
-                    semester: '',
-                    department: '',
-                    faculty: '',
-                    material_status: 'active',
-                });
-                setFileName('');
+                setFormData(buildUploadFormData(currentAcademicContext));
+                setSelectedFile(null);
+                setIsLevelMenuOpen(false);
                 setLoadingStage('uploading');
                 setTrainingProgress(0);
-                setSelectedLevels([]);
+                setSelectedLevel(getDefaultLevelFromAdmin());
+                if (fileInputRef.current) fileInputRef.current.value = '';
             }, 300);
         }, 1500);
     };
 
+    const levelSummary = selectedLevel ? `${selectedLevel.replace('lvl', '')} Level` : 'Select level';
+
     return (
         <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+            className="fixed inset-0 z-[65] flex items-end justify-center bg-black/60 backdrop-blur-sm md:items-center md:p-4"
         >
             <motion.div
-                initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
-                className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-background shadow-2xl md:max-h-none max-h-[84vh]"
+                initial={{ y: '100%', opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: '100%', opacity: 0 }}
+                transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+                className="relative w-full h-[calc(100dvh-2rem)] max-h-[calc(100dvh-2rem)] overflow-hidden rounded-t-[26px] border-t border-border bg-card shadow-2xl md:h-auto md:max-h-none md:max-w-[680px] md:rounded-3xl md:border md:border-border/70"
+                style={{ transformOrigin: 'bottom center' }}
             >
+                <div className="mx-auto mt-3 h-1 w-12 rounded-full bg-muted md:hidden" />
                 {isTraining && (
                     <button
                         type="button"
@@ -1540,9 +2060,14 @@ function UploadModal({ onClose, userEmail, isSuperAdmin, onSuccess }: { isOpen: 
 
                 {/* Header - Only hide if success/training to focus properly */}
                 {!isSuccess && !isTraining && (
-                    <div className="flex justify-between items-center px-5 py-4 border-b border-border bg-muted/30">
-                        <h3 className="text-base font-bold text-foreground tracking-wide">UPLOAD NEW MATERIAL</h3>
-                        <button onClick={onClose} disabled={isLoading} className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50">
+                    <div className="flex items-center justify-between border-b border-border/80 bg-card px-4 py-3.5 md:px-6 md:py-4.5">
+                        <div className="min-w-0">
+                            <h3 className="text-base font-semibold tracking-tight text-foreground md:text-lg">Upload Material</h3>
+                            <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                                {(formData.academic_session || 'No session') + ' • ' + (formatSemester(formData.semester) || 'No semester')}
+                            </p>
+                        </div>
+                        <button onClick={onClose} disabled={isLoading} className="rounded-full border border-border/70 p-2 text-muted-foreground transition-colors hover:border-border hover:bg-muted/60 hover:text-foreground disabled:opacity-50">
                             <X className="w-5 h-5" />
                         </button>
                     </div>
@@ -1555,83 +2080,218 @@ function UploadModal({ onClose, userEmail, isSuperAdmin, onSuccess }: { isOpen: 
                             key="form"
                             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, y: -20 }}
                             onSubmit={handleSubmit}
-                            className="space-y-4 overflow-y-auto p-4 md:p-5"
+                            className="flex h-[calc(100%-61px)] flex-col overflow-hidden md:h-auto"
                         >
-                            {isSuperAdmin ? (
-                                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs font-medium text-amber-700 dark:text-amber-300">
-                                    You are uploading as Super Admin into the active university workspace.
-                                </div>
-                            ) : null}
-
-                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
-                                <FormInput label="Course Code" name="course_code" placeholder="e.g. CS101" value={formData.course_code} required onChange={handleInputChange} />
-                                <FormInput label="Course Title" name="title" placeholder="e.g. Intro to AI" value={formData.title} required onChange={handleInputChange} />
-                                <FormInput label="Lecturer" name="lecturer" placeholder="e.g. Dr. Vance" value={formData.lecturer} required onChange={handleInputChange} />
-                                <FormInput label="Topic" name="topic" placeholder="e.g. Neural Nets" value={formData.topic} required onChange={handleInputChange} />
-                                <FormInput label="Academic Session" name="academic_session" placeholder="e.g. 2024/2025" value={formData.academic_session} onChange={handleInputChange} />
-                                <FormSelect label="Semester" name="semester" value={formData.semester} options={SEMESTER_OPTIONS} onChange={(e) => setFormData({ ...formData, semester: normalizeSemester(e.target.value) })} />
-                                <FormInput label="Department" name="department" placeholder="e.g. Computer Science" value={formData.department} onChange={handleInputChange} />
-                                <FormInput label="Faculty" name="faculty" placeholder="e.g. Science" value={formData.faculty} onChange={handleInputChange} />
-                                <FormSelect label="Material Status" name="material_status" value={formData.material_status} options={MATERIAL_STATUS_OPTIONS} onChange={(e) => setFormData({ ...formData, material_status: normalizeMaterialStatus(e.target.value) })} />
-                            </div>
-
-                            {/* Target Level Selector */}
-                            <div>
-                                <label className="block text-xs font-bold text-muted-foreground mb-2 uppercase tracking-wider">Target Academic Levels</label>
-                                <p className="text-[10px] text-muted-foreground/70 mb-2">Leave all unchecked for universal access</p>
-                                <div className="flex flex-wrap gap-2">
-                                    {LEVEL_CHOICES.map(level => (
-                                        <button
-                                            key={level}
-                                            type="button"
-                                            onClick={() => toggleLevel(level)}
-                                            className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${selectedLevels.includes(level)
-                                                ? 'bg-primary text-primary-foreground border-primary shadow-md shadow-primary/20'
-                                                : 'bg-card text-muted-foreground border-border hover:border-primary/40 hover:text-foreground'
-                                                }`}
-                                        >
-                                            {level}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-
-                            {/* Drop Zone */}
-                            <div className="relative group cursor-pointer">
-                                <input
-                                    type="file"
-                                    accept=".pdf,.doc,.docx,.ppt,.pptx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                                    ref={fileInputRef}
-                                    onChange={handleFileChange}
-                                    className="absolute inset-0 w-full h-full opacity-0 z-10 cursor-pointer"
-                                />
-                                <div className={`h-28 border-2 border-dashed rounded-xl flex flex-col items-center justify-center transition-all duration-300
-                                    ${fileName ? 'border-primary/50 bg-primary/5' : 'border-border bg-muted/30 group-hover:border-primary/30 group-hover:bg-muted/50'}
-                                `}>
-                                    <div className="p-3 rounded-full bg-background mb-2 group-hover:-translate-y-1 transition-transform duration-300 shadow-sm border border-border">
-                                        <UploadCloud className={`w-6 h-6 ${fileName ? 'text-primary' : 'text-muted-foreground'}`} />
+                            <div className="flex-1 overflow-y-auto bg-card px-4 py-3 md:overflow-visible md:px-6 md:py-5">
+                                {isSuperAdmin ? (
+                                    <div className="mb-3 text-[11px] text-muted-foreground">
+                                        Active workspace upload. University scope will be inherited automatically.
                                     </div>
-                                    <p className="text-sm font-medium text-foreground">
-                                        {fileName || "Drag & drop PDF, DOC, DOCX, PPT, or PPTX here"}
-                                    </p>
-                                    {!fileName && <p className="text-xs text-muted-foreground mt-1">Office files will be converted to PDF before upload. Maximum file size 50MB.</p>}
+                                ) : null}
+
+                                <div className="space-y-3.5 md:grid md:grid-cols-[232px_minmax(0,1fr)] md:gap-5 md:space-y-0">
+                                    <div className="space-y-2.5">
+                                        <div className="space-y-1">
+                                            <p className="text-[11px] font-medium text-muted-foreground">File</p>
+                                            {!selectedFile ? (
+                                                <label className="block cursor-pointer rounded-2xl border border-dashed border-border/80 bg-muted/[0.16] px-4 py-4 transition-colors hover:border-primary/35 hover:bg-muted/[0.24] md:py-4">
+                                                    <input
+                                                        type="file"
+                                                        accept=".pdf,.doc,.docx,.ppt,.pptx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                                                        ref={fileInputRef}
+                                                        onChange={handleFileChange}
+                                                        className="hidden"
+                                                    />
+                                                    <div className="flex flex-col items-center text-center md:items-start md:text-left">
+                                                        <div className="mb-2 rounded-full border border-border bg-background p-2 text-primary">
+                                                            <UploadCloud className="h-[18px] w-[18px]" />
+                                                        </div>
+                                                        <p className="text-[13px] font-semibold text-foreground">Choose file</p>
+                                                        <p className="mt-1 max-w-xs text-[11px] leading-4.5 text-muted-foreground">
+                                                            PDF, DOC, DOCX, PPT, PPTX • max 50MB
+                                                        </p>
+                                                    </div>
+                                                </label>
+                                            ) : (
+                                                <div className="rounded-2xl border border-border/80 bg-muted/[0.14] px-3 py-3">
+                                                    <div className="flex items-start gap-3">
+                                                        <div className="rounded-lg border border-border bg-background p-2 text-primary">
+                                                            <FileText className="h-4 w-4" />
+                                                        </div>
+                                                        <div className="min-w-0 flex-1">
+                                                            <p className="truncate text-[13px] font-semibold text-foreground">{selectedFile.name}</p>
+                                                            <p className="mt-0.5 text-[11px] text-muted-foreground">{formatFileSize(selectedFile.size)} • Ready to upload</p>
+                                                        </div>
+                                                        <div className="flex items-center gap-3">
+                                                            <label className="cursor-pointer text-[11px] font-semibold text-primary hover:text-primary/80">
+                                                                Replace
+                                                                <input
+                                                                    type="file"
+                                                                    accept=".pdf,.doc,.docx,.ppt,.pptx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                                                                    onChange={handleFileChange}
+                                                                    className="hidden"
+                                                                />
+                                                            </label>
+                                                            <button
+                                                                type="button"
+                                                                onClick={clearSelectedFile}
+                                                                className="text-[11px] font-medium text-muted-foreground hover:text-foreground"
+                                                            >
+                                                                Remove
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="hidden md:block">
+                                            <p className="text-[11px] leading-5 text-muted-foreground">
+                                                Uploads inherit the active session and semester automatically.
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-3.5">
+                                        <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 md:gap-3">
+                                            <label className="block md:col-span-1">
+                                                <span className="mb-1.5 block text-[11px] font-medium text-muted-foreground">Course code</span>
+                                                <input
+                                                    name="course_code"
+                                                    value={formData.course_code}
+                                                    onChange={handleInputChange}
+                                                    required
+                                                    placeholder="e.g. CS101"
+                                                    className="h-10 w-full rounded-xl border border-border/80 bg-background px-3.5 text-[13px] text-foreground outline-none transition-colors placeholder:text-muted-foreground/65 focus:border-primary"
+                                                />
+                                            </label>
+                                            <label className="block md:col-span-1">
+                                                <span className="mb-1.5 block text-[11px] font-medium text-muted-foreground">Course title</span>
+                                                <input
+                                                    name="title"
+                                                    value={formData.title}
+                                                    onChange={handleInputChange}
+                                                    required
+                                                    placeholder="e.g. Intro to AI"
+                                                    className="h-10 w-full rounded-xl border border-border/80 bg-background px-3.5 text-[13px] text-foreground outline-none transition-colors placeholder:text-muted-foreground/65 focus:border-primary"
+                                                />
+                                            </label>
+                                            <label className="block md:col-span-1">
+                                                <span className="mb-1.5 block text-[11px] font-medium text-muted-foreground">Lecturer</span>
+                                                <input
+                                                    name="lecturer"
+                                                    value={formData.lecturer}
+                                                    onChange={handleInputChange}
+                                                    required
+                                                    placeholder="e.g. Dr. Vance"
+                                                    className="h-10 w-full rounded-xl border border-border/80 bg-background px-3.5 text-[13px] text-foreground outline-none transition-colors placeholder:text-muted-foreground/65 focus:border-primary"
+                                                />
+                                            </label>
+                                            <label className="block md:col-span-1">
+                                                <span className="mb-1.5 block text-[11px] font-medium text-muted-foreground">Topic</span>
+                                                <input
+                                                    name="topic"
+                                                    value={formData.topic}
+                                                    onChange={handleInputChange}
+                                                    required
+                                                    placeholder="e.g. Neural Nets"
+                                                    className="h-10 w-full rounded-xl border border-border/80 bg-background px-3.5 text-[13px] text-foreground outline-none transition-colors placeholder:text-muted-foreground/65 focus:border-primary"
+                                                />
+                                            </label>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:items-start">
+                                            <div className="space-y-2">
+                                                <p className="text-[11px] font-medium text-muted-foreground">Level</p>
+                                                <div className="relative">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setIsLevelMenuOpen((prev) => !prev)}
+                                                        className="flex h-10 w-full items-center justify-between rounded-xl border border-border/80 bg-background px-3.5 text-[13px] text-foreground transition-colors hover:border-primary/35"
+                                                    >
+                                                        <span className={selectedLevel ? 'text-foreground' : 'text-muted-foreground'}>
+                                                            {levelSummary}
+                                                        </span>
+                                                        <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${isLevelMenuOpen ? 'rotate-180' : ''}`} />
+                                                    </button>
+                                                    {isLevelMenuOpen && (
+                                                        <div className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-20 rounded-xl border border-border/80 bg-background p-1.5 shadow-xl md:bottom-auto md:top-[calc(100%+0.5rem)]">
+                                                            <div className="grid grid-cols-3 gap-2">
+                                                                {LEVEL_CHOICES.map((level) => {
+                                                                    const selected = selectedLevel === level;
+                                                                    return (
+                                                                        <button
+                                                                            key={level}
+                                                                            type="button"
+                                                                            onClick={() => {
+                                                                                setSelectedLevel(level);
+                                                                                setIsLevelMenuOpen(false);
+                                                                            }}
+                                                                            className={`rounded-lg border px-3 py-1.5 text-[11px] font-semibold transition-colors ${selected ? 'border-primary bg-primary text-primary-foreground' : 'border-border/80 bg-background text-muted-foreground hover:border-primary/35 hover:text-foreground'}`}
+                                                                        >
+                                                                            {level.replace('lvl', '')}
+                                                                        </button>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <p className="text-[11px] leading-4.5 text-muted-foreground">Defaults to your admin level.</p>
+                                            </div>
+
+                                            <div className="space-y-2">
+                                                <p className="text-[11px] font-medium text-muted-foreground">Visibility</p>
+                                                <div className="inline-flex rounded-full border border-border/80 bg-muted/[0.18] p-0.5">
+                                                    {MATERIAL_STATUS_OPTIONS.map((option) => {
+                                                        const active = formData.material_status === option.value;
+                                                        return (
+                                                            <button
+                                                                key={option.value}
+                                                                type="button"
+                                                                onClick={() => setFormData({ ...formData, material_status: normalizeMaterialStatus(option.value) })}
+                                                                className={`rounded-full px-4 py-2 text-[11px] font-semibold transition-colors ${
+                                                                    active
+                                                                        ? option.value === 'active'
+                                                                            ? 'bg-primary text-primary-foreground shadow-sm shadow-primary/20'
+                                                                            : 'bg-background text-foreground shadow-sm'
+                                                                        : 'text-muted-foreground hover:text-foreground'
+                                                                }`}
+                                                            >
+                                                                {option.value === 'active' ? 'Current' : 'Past'}
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
+
+                                {error && (
+                                    <div className="mt-4 flex items-center gap-2 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2.5 text-xs text-red-500">
+                                        <AlertCircle className="h-4 w-4 shrink-0" />
+                                        <span>{error}</span>
+                                    </div>
+                                )}
                             </div>
 
-                            {error && (
-                                <div className="flex items-center gap-2 text-sm text-red-500 bg-red-500/10 p-3 rounded-lg border border-red-500/20">
-                                    <AlertCircle className="w-4 h-4" />
-                                    {error}
+                            <div className="shrink-0 border-t border-border/80 bg-background px-4 py-3.5 pb-[calc(env(safe-area-inset-bottom)+2.5rem)] md:px-6 md:py-4 md:pb-5">
+                                <div className="flex gap-3 md:justify-end">
+                                    <button
+                                        type="button"
+                                        onClick={onClose}
+                                        className="flex-1 rounded-xl border border-border/80 bg-background px-4 py-2.5 text-[13px] font-semibold text-foreground transition-colors hover:bg-muted md:w-[112px] md:flex-none"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        className="flex-1 rounded-xl bg-primary px-4 py-2.5 text-[13px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90 md:w-[168px] md:flex-none"
+                                    >
+                                        Upload Material
+                                    </button>
                                 </div>
-                            )}
-
-                            <div className="flex justify-end gap-2 pt-1">
-                                <button type="button" onClick={onClose} className="rounded-xl px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
-                                    Cancel
-                                </button>
-                                <button type="submit" className="rounded-xl bg-primary px-5 py-2 text-sm font-bold text-primary-foreground shadow-lg shadow-primary/20 transition-all hover:bg-primary/90 active:scale-95">
-                                    Confirm Upload
-                                </button>
                             </div>
                         </motion.form>
                     )}
@@ -1840,8 +2500,6 @@ function EditDocumentModal({ onClose, doc, onUpdate }: { isOpen: boolean, onClos
         lecturer: doc.lecturer || '',
         academic_session: doc.academic_session || '',
         semester: normalizeSemester(doc.semester),
-        department: doc.department || '',
-        faculty: doc.faculty || '',
         material_status: doc.material_status || 'active',
         version_label: doc.version_label || ''
     });
@@ -1866,8 +2524,6 @@ function EditDocumentModal({ onClose, doc, onUpdate }: { isOpen: boolean, onClos
                 target_levels: editLevels,
                 academic_session: formData.academic_session || null,
                 semester: normalizeSemester(formData.semester) || null,
-                department: formData.department || null,
-                faculty: formData.faculty || null,
                 material_status: formData.material_status,
                 version_label: formData.version_label || null
             });
@@ -1891,8 +2547,6 @@ function EditDocumentModal({ onClose, doc, onUpdate }: { isOpen: boolean, onClos
                 target_levels: editLevels,
                 academic_session: formData.academic_session,
                 semester: normalizeSemester(formData.semester),
-                department: formData.department,
-                faculty: formData.faculty,
                 material_status: normalizeMaterialStatus(formData.material_status),
                 version_label: formData.version_label
             });
@@ -1911,19 +2565,20 @@ function EditDocumentModal({ onClose, doc, onUpdate }: { isOpen: boolean, onClos
     return (
         <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+            className="fixed inset-0 z-[65] flex items-end justify-center bg-black/60 backdrop-blur-sm md:items-center md:p-4"
         >
             <motion.div
                 initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-                className="w-full max-w-md bg-background border border-border rounded-2xl shadow-2xl overflow-hidden"
+                className="w-full h-[calc(100dvh-2rem)] max-h-[calc(100dvh-2rem)] overflow-x-hidden overflow-y-auto rounded-t-2xl border-t border-border bg-background shadow-2xl md:h-auto md:max-w-md md:overflow-hidden md:rounded-2xl md:border"
             >
+                <div className="mx-auto mt-3 h-1 w-12 rounded-full bg-muted md:hidden" />
                 <div className="flex justify-between items-center px-5 py-4 border-b border-border bg-muted/30">
                     <h3 className="text-base font-bold text-foreground">EDIT METADATA</h3>
                     <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
                         <X className="w-5 h-5" />
                     </button>
                 </div>
-                <form onSubmit={handleSubmit} className="p-5 space-y-4">
+                <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-x-hidden pb-[calc(env(safe-area-inset-bottom)+1.25rem)]">
                     <div className="space-y-4">
                         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                             <FormInput label="Course Code" name="course_code" value={formData.course_code} required onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, course_code: e.target.value })} />
@@ -1934,8 +2589,6 @@ function EditDocumentModal({ onClose, doc, onUpdate }: { isOpen: boolean, onClos
                         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                             <FormInput label="Academic Session" name="academic_session" value={formData.academic_session} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, academic_session: e.target.value })} />
                             <FormSelect label="Semester" name="semester" value={formData.semester} options={SEMESTER_OPTIONS} onChange={(e) => setFormData({ ...formData, semester: normalizeSemester(e.target.value) })} />
-                            <FormInput label="Department" name="department" value={formData.department} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, department: e.target.value })} />
-                            <FormInput label="Faculty" name="faculty" value={formData.faculty} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, faculty: e.target.value })} />
                             <FormSelect label="Material Status" name="material_status" value={formData.material_status} options={MATERIAL_STATUS_OPTIONS} onChange={(e) => setFormData({ ...formData, material_status: normalizeMaterialStatus(e.target.value) })} />
                             <FormInput label="Version Label" name="version_label" value={formData.version_label} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, version_label: e.target.value })} />
                         </div>
@@ -1971,3 +2624,5 @@ function EditDocumentModal({ onClose, doc, onUpdate }: { isOpen: boolean, onClos
         </motion.div>
     );
 }
+
+

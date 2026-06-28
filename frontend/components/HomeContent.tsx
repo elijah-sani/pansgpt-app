@@ -564,7 +564,7 @@ export default function HomeContent() {
             <aside className="hidden md:flex flex-col w-64 shrink-0 border-r border-border/60 bg-card/35 backdrop-blur-md">
                 {/* Title */}
                 <div className="px-6 py-5 border-b border-border/40 flex items-center gap-3">
-                    <Library className="h-6 w-6 text-primary animate-pulse" />
+                    <Library className="h-6 w-6 text-primary" />
                     <span className="text-lg font-bold tracking-wide font-outfit">My Library</span>
                 </div>
 

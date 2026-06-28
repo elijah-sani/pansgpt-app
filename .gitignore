@@ -126,6 +126,8 @@ frontend/public/fallback-*.js.map
 .agent/
 .codex-backups/
 private-docs/
+private-docs/qa-audit-2026-06/
+private-docs/qa-audit-2026-06/**
 
 # Local codebase diagnosis reports
 docs/CODEBASE_DIAGNOSIS_REPORT.md

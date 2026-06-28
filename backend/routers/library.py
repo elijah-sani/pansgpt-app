@@ -102,6 +102,32 @@ async def _get_document_row_for_admin(db, document_id: str, scope: Optional[str]
     _assert_document_matches_scope(row, scope)
     return row
 
+
+async def _assert_user_can_access_progress_document(db, current_user: User, document_id: str) -> None:
+    """
+    Reading-progress endpoints are user-scoped, not admin-scoped.
+    The route path lives under /admin for historical reasons, so we explicitly
+    verify document visibility before reading or writing progress.
+    `document_id` here is the Drive file id used by the reader.
+    """
+    response = await _execute_with_retry_async(
+        lambda: db.table("pans_library").select("*").eq("drive_file_id", document_id).limit(1).execute(),
+        f"Fetch document for reading-progress access {document_id}",
+    )
+    rows = response.data or []
+    row = rows[0] if rows else None
+
+    if row:
+        from api import _can_user_access_library_document
+
+        if not await _can_user_access_library_document(db, current_user, row):
+            raise HTTPException(status_code=403, detail="You do not have access to this document")
+        return
+
+    role_info = await get_current_user_role_info(current_user)
+    if not role_info.is_admin:
+        raise HTTPException(status_code=404, detail="Document not found")
+
 def _is_retryable_network_error(exc: Exception) -> bool:
     """
     Return True for transient SSL/timeout failures that should be retried.
@@ -426,8 +452,6 @@ class DocumentUpdate(BaseModel):
     target_levels: Optional[list[str]] = None
     academic_session: Optional[str] = None
     semester: Optional[str] = None
-    department: Optional[str] = None
-    faculty: Optional[str] = None
     material_status: Optional[str] = None
     version_label: Optional[str] = None
 
@@ -1671,6 +1695,7 @@ async def get_reading_progress(
         raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")
 
     try:
+        await _assert_user_can_access_progress_document(supabase_service_client, current_user, document_id)
         response = await _execute_with_retry_async(
             lambda: supabase_service_client.table("document_progress")
                 .select("current_page, total_pages")
@@ -1690,6 +1715,8 @@ async def get_reading_progress(
             "total_pages": record.get("total_pages", 0),
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"[ERROR] Failed to fetch reading progress: {e}")
         raise HTTPException(status_code=500, detail="Unable to load your reading progress. Please try again.")
@@ -1715,6 +1742,7 @@ async def upsert_reading_progress(
         raise HTTPException(status_code=422, detail="total_pages must be >= 1")
 
     try:
+        await _assert_user_can_access_progress_document(supabase_service_client, current_user, document_id)
         await _execute_with_retry_async(
             lambda: supabase_service_client.table("document_progress")
                 .upsert(
@@ -1731,6 +1759,8 @@ async def upsert_reading_progress(
         )
         return {"ok": True}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"[ERROR] Failed to upsert reading progress: {e}")
         raise HTTPException(status_code=500, detail="Unable to save your reading progress. Please try again.")

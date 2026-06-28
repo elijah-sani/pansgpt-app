@@ -14,6 +14,7 @@ import {
     Menu,
     Search,
     ShieldAlert,
+    User,
     UserCheck,
     Users,
     X,
@@ -84,6 +85,7 @@ const mobileBottomNavItems: AdminNavItem[] = [
     { icon: Library, label: 'Library', href: '/admin/library' },
     { icon: FileCheck2, label: 'Materials', href: '/admin/material-submissions' },
     { icon: Users, label: 'Students', href: '/admin/students' },
+    { icon: User, label: 'Me', href: '/admin/settings' },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -94,7 +96,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     const [isSuperAdmin, setIsSuperAdmin] = useState(false);
     const [workspaceName, setWorkspaceName] = useState('');
     const [mobileOpen, setMobileOpen] = useState(false);
-    const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
     const [mobileHeaderLocked, setMobileHeaderLocked] = useState(false);
     const [isUniversitySuspended, setIsUniversitySuspended] = useState(false);
     const mobileHeaderSentinelRef = useRef<HTMLDivElement | null>(null);
@@ -212,10 +214,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         mobileHeaderLocked ? 'shadow-[0_4px_20px_rgba(0,0,0,0.35)]' : 'shadow-none',
     ].join(' ');
     const mobileDrawerWidthClass = 'translate-x-[min(19rem,86vw)]';
+    const isLibraryPage = pathname.startsWith('/admin/library');
     const mainClass = [
-        'ml-0 flex flex-1 flex-col scroll-smooth overflow-x-hidden overflow-y-visible px-4 pt-2 transition-[margin] duration-200 sm:px-5',
-        hideMobileNav ? 'pb-0' : 'pb-28',
-        'md:min-h-screen md:overflow-y-visible md:p-8 md:pb-8 md:pt-8',
+        isLibraryPage
+            ? 'ml-0 flex h-[100dvh] flex-1 flex-col scroll-smooth transition-[margin] duration-200 overflow-x-hidden overflow-y-hidden px-0 pt-2 sm:px-0 lg:h-screen lg:overflow-hidden lg:p-0'
+            : 'ml-0 flex flex-1 flex-col scroll-smooth overflow-x-hidden overflow-y-visible px-4 pt-2 transition-[margin] duration-200 sm:px-5',
+        hideMobileNav ? 'pb-0' : isLibraryPage ? 'pb-0' : 'pb-28',
+        isLibraryPage
+            ? 'lg:h-screen lg:overflow-hidden lg:p-0'
+            : 'md:min-h-screen md:overflow-y-visible md:p-8 md:pb-8 md:pt-8',
         sidebarCollapsed ? 'md:ml-20' : 'md:ml-64',
     ].join(' ');
 
@@ -254,7 +261,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 </aside>
             </div>
 
-            <main className={`${mainClass} transition-transform duration-300 ease-out md:translate-x-0 ${mobileOpen ? mobileDrawerWidthClass : 'translate-x-0'}`}>
+            <main className={`${mainClass} transition-transform duration-300 ease-out ${mobileOpen ? mobileDrawerWidthClass : ''}`}>
                 {isSuperAdmin ? (
                     <div className="mb-4 hidden rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200 md:flex md:items-center md:justify-between">
                         <span>Viewing {workspaceName || 'selected university'} as Super Admin</span>
@@ -297,35 +304,17 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             </main>
 
             {hideMobileNav ? null : (
-                <>
-                    <div className={`pointer-events-none fixed inset-x-0 bottom-0 z-30 h-20 bg-gradient-to-t from-background/95 via-background/60 to-transparent backdrop-blur-[4px] [mask-image:linear-gradient(to_top,black_0%,black_50%,transparent_100%)] transition-transform duration-300 md:hidden ${mobileOpen ? 'translate-y-24' : 'translate-y-0'}`} />
-                    <nav className={`fixed bottom-0 left-1/2 z-40 w-[calc(100%-2rem)] max-w-[30rem] -translate-x-1/2 pb-[calc(env(safe-area-inset-bottom)+0.85rem)] pt-2 transition-transform duration-300 md:hidden ${mobileOpen ? 'translate-y-28' : 'translate-y-0'}`}>
-                    <div className="mx-auto flex items-center justify-center gap-3.5">
-                        <div className="flex items-center gap-1.5 rounded-[2rem] border border-border/40 bg-background/95 px-2.5 py-2 backdrop-blur-xl">
-                            {mobileBottomNavItems.map((item) => (
-                                <AdminMobileNavItem
-                                    key={item.href}
-                                    href={item.href}
-                                    label={item.label}
-                                    icon={item.icon}
-                                    active={isActivePath(pathname, item.href)}
-                                />
-                            ))}
-                        </div>
-                        <Link
-                            href="/admin/search"
-                            aria-label="Search"
-                            className={`flex h-[3.6rem] w-[3.6rem] shrink-0 items-center justify-center rounded-full border border-border/40 backdrop-blur-xl transition-all active:scale-95 ${
-                                isActivePath(pathname, '/admin/search')
-                                    ? 'bg-card text-foreground'
-                                    : 'bg-background/95 text-muted-foreground hover:text-foreground'
-                            }`}
-                        >
-                            <Search className="h-[1.15rem] w-[1.15rem]" />
-                        </Link>
-                    </div>
-                    </nav>
-                </>
+                <nav className={`fixed bottom-0 left-0 right-0 z-40 border-t border-border/40 bg-card/95 backdrop-blur-xl flex items-center justify-around px-4 pb-[calc(env(safe-area-inset-bottom)+0.625rem)] pt-1.5 transition-transform duration-300 md:hidden ${mobileOpen ? 'translate-y-20' : 'translate-y-0'}`}>
+                    {mobileBottomNavItems.map((item) => (
+                        <AdminMobileNavItem
+                            key={item.href}
+                            href={item.href}
+                            label={item.label}
+                            icon={item.icon}
+                            active={isActivePath(pathname, item.href)}
+                        />
+                    ))}
+                </nav>
             )}
         </div>
     );
@@ -466,27 +455,16 @@ function AdminMobileNavItem({
     icon: LucideIcon;
     active?: boolean;
 }) {
-    if (active) {
-        return (
-            <Link
-                href={href}
-                aria-current="page"
-                className="flex min-w-[5rem] flex-col items-center justify-center rounded-full bg-card px-3 py-[0.65rem] text-foreground transition-transform active:scale-95"
-            >
-                <Icon className="h-[1.2rem] w-[1.2rem] shrink-0" />
-                <span className="mt-1 truncate text-[0.6rem] font-medium leading-none tracking-[0.04em] text-zinc-200">{label}</span>
-            </Link>
-        );
-    }
-
     return (
         <Link
             href={href}
-            aria-label={label}
-            className="flex h-[3rem] w-[3.2rem] shrink-0 items-center justify-center rounded-full text-muted-foreground transition-all hover:text-foreground active:scale-90"
+            aria-current={active ? "page" : undefined}
+            className={`flex flex-col items-center justify-center flex-1 h-full py-1.5 transition-all duration-200 active:scale-95 ${
+                active ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
+            }`}
         >
-            <Icon className="h-[1.2rem] w-[1.2rem]" />
-            <span className="sr-only">{label}</span>
+            <Icon className="h-5 w-5 shrink-0" />
+            <span className="mt-1 truncate text-[10px] font-bold tracking-wide">{label}</span>
         </Link>
     );
 }
