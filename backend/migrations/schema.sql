@@ -423,6 +423,7 @@ create table if not exists public.lecturer_material_submissions (
   drive_file_id text,
   original_drive_file_id text,
   converted_drive_file_id text,
+  resubmitted_from_id uuid references public.lecturer_material_submissions(id) on delete restrict,
   created_at timestamp with time zone not null default timezone('utc'::text, now()),
   updated_at timestamp with time zone not null default timezone('utc'::text, now()),
   constraint lecturer_material_submissions_lecturer_university_fk
@@ -448,6 +449,13 @@ on public.lecturer_material_submissions (original_drive_file_id);
 
 create index if not exists lecturer_material_submissions_converted_drive_file_id_idx
 on public.lecturer_material_submissions (converted_drive_file_id);
+
+create index if not exists lecturer_material_submissions_resubmitted_from_id_idx
+on public.lecturer_material_submissions (resubmitted_from_id);
+
+create unique index if not exists lecturer_material_submissions_one_resubmission_per_rejection_idx
+on public.lecturer_material_submissions (resubmitted_from_id)
+where resubmitted_from_id is not null;
 
 drop trigger if exists set_lecturer_material_submissions_updated_at on public.lecturer_material_submissions;
 create trigger set_lecturer_material_submissions_updated_at

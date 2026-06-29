@@ -108,7 +108,7 @@ MATERIAL_SUBMISSION_SELECT = (
     "id,university_id,lecturer_id,course_code,course_title,level,material_type,title,"
     "description,file_name,file_url,storage_provider,file_type,mime_type,is_supported_file,"
     "status,reviewed_by,reviewed_at,review_note,pans_library_id,cancelled_at,cancelled_by,"
-    "cancellation_reason,drive_file_id,original_drive_file_id,converted_drive_file_id,created_at,updated_at,"
+    "cancellation_reason,drive_file_id,original_drive_file_id,converted_drive_file_id,resubmitted_from_id,created_at,updated_at,"
     "lecturer:lecturer_profiles!lecturer_material_submissions_lecturer_id_fkey(id,user_id,university_id,title,full_name,email,status),"
     "university:universities(id,name,status)"
 )
@@ -224,6 +224,9 @@ def _material_submission_to_response(row: dict) -> dict:
         "drive_file_id": row.get("drive_file_id"),
         "original_drive_file_id": row.get("original_drive_file_id"),
         "converted_drive_file_id": row.get("converted_drive_file_id"),
+        "resubmitted_from_id": row.get("resubmitted_from_id"),
+        "has_resubmission": bool(row.get("has_resubmission")),
+        "latest_resubmission_id": row.get("latest_resubmission_id"),
         "library_embedding_status": None,
         "library_embedding_progress": None,
         "library_embedding_error": None,
@@ -265,6 +268,54 @@ async def _enrich_material_submissions_with_library_state(sb, rows: list[dict]) 
             payload["library_embedding_error"] = linked.get("embedding_error")
         enriched_rows.append(payload)
     return enriched_rows
+
+
+async def _enrich_material_submissions_with_resubmission_state(sb, rows: list[dict]) -> list[dict]:
+    submission_ids = [str(row.get("id")) for row in rows if row.get("id")]
+    if not submission_ids:
+        return rows
+
+    try:
+        child_res = await _execute_with_retry(
+            lambda: sb.table("lecturer_material_submissions")
+            .select("id,resubmitted_from_id")
+            .in_("resubmitted_from_id", submission_ids)
+            .execute(),
+            "Fetch material submission resubmission state",
+        )
+    except Exception as exc:
+        logger.warning("Material submission resubmission state lookup failed: %s", exc)
+        return rows
+
+    latest_by_parent: dict[str, str] = {}
+    for child_row in (child_res.data or []):
+        parent_id = str(child_row.get("resubmitted_from_id") or "").strip()
+        child_id = str(child_row.get("id") or "").strip()
+        if parent_id and child_id:
+            latest_by_parent[parent_id] = child_id
+
+    enriched_rows = []
+    for row in rows:
+        payload = dict(row)
+        row_id = str(row.get("id") or "").strip()
+        payload["latest_resubmission_id"] = latest_by_parent.get(row_id)
+        payload["has_resubmission"] = bool(payload["latest_resubmission_id"])
+        enriched_rows.append(payload)
+    return enriched_rows
+
+
+async def _serialize_material_submission_rows(sb, rows: list[dict]) -> list[dict]:
+    payload_rows = [_material_submission_to_response(row) for row in rows]
+    payload_rows = await _enrich_material_submissions_with_library_state(sb, payload_rows)
+    payload_rows = await _enrich_material_submissions_with_resubmission_state(sb, payload_rows)
+    return payload_rows
+
+
+async def _serialize_material_submission_row(sb, row: Optional[dict]) -> Optional[dict]:
+    if not row:
+        return None
+    rows = await _serialize_material_submission_rows(sb, [row])
+    return rows[0] if rows else None
 
 
 async def _get_material_submission_row(sb, submission_id: str, *, admin_scope: Optional[str] = None) -> dict:
@@ -1335,8 +1386,7 @@ async def list_admin_material_submissions(
             lambda: query.order("created_at", desc=True).execute(),
             "List material submissions",
         )
-        rows = [_material_submission_to_response(row) for row in (res.data or [])]
-        rows = await _enrich_material_submissions_with_library_state(sb, rows)
+        rows = await _serialize_material_submission_rows(sb, res.data or [])
 
         normalized_search = (search or "").strip().lower()
         if normalized_search:
@@ -1465,7 +1515,7 @@ async def approve_material_submission(
             reason=f"pans_library_id={library_document_id}; queued={should_queue_ingestion}; already_approved={already_approved}",
         )
 
-        return {"data": _material_submission_to_response(updated_row)}
+        return {"data": await _serialize_material_submission_row(sb, updated_row)}
     except HTTPException:
         raise
     except Exception as exc:
@@ -1645,7 +1695,7 @@ async def convert_material_submission_to_pdf(
             },
         )
 
-        return {"data": _material_submission_to_response(updated_row)}
+        return {"data": await _serialize_material_submission_row(sb, updated_row)}
     except HTTPException:
         raise
     except Exception as exc:
@@ -1674,7 +1724,7 @@ async def reject_material_submission(
             raise HTTPException(status_code=400, detail="Approved submissions cannot be rejected")
         if previous_status == "rejected":
             updated_row = await _get_material_submission_row(sb, submission_id, admin_scope=scoped_university_id)
-            return {"data": _material_submission_to_response(updated_row)}
+            return {"data": await _serialize_material_submission_row(sb, updated_row)}
         if previous_status != "pending_review":
             raise HTTPException(status_code=400, detail="Only pending submissions can be rejected")
 
@@ -1706,7 +1756,7 @@ async def reject_material_submission(
             reason=reason,
         )
 
-        return {"data": _material_submission_to_response(updated_row)}
+        return {"data": await _serialize_material_submission_row(sb, updated_row)}
     except HTTPException:
         raise
     except Exception as exc:

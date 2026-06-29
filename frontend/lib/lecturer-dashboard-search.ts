@@ -12,6 +12,10 @@ export type LecturerSearchMaterial = {
   title: string;
   course_code: string | null;
   status: 'pending_review' | 'approved' | 'rejected' | 'cancelled';
+  review_note?: string | null;
+  resubmitted_from_id?: string | null;
+  has_resubmission?: boolean;
+  latest_resubmission_id?: string | null;
   pans_library_id?: string | null;
   library_embedding_status?: 'pending' | 'processing' | 'completed' | 'failed' | string | null;
   library_embedding_progress?: number | null;
@@ -118,7 +122,7 @@ export function buildLecturerSearchResults({
 
   const materialResults: LecturerSearchResult[] = materials
     .filter((material) =>
-      `${material.title} ${material.course_code || ''} ${material.status}`.toLowerCase().includes(normalizedQuery)
+      `${material.title} ${material.course_code || ''} ${material.status} ${material.review_note || ''} ${material.resubmitted_from_id || ''} ${material.has_resubmission ? 'resubmitted' : ''}`.toLowerCase().includes(normalizedQuery)
     )
     .slice(0, 5)
     .map((material) => ({
@@ -182,6 +186,15 @@ function getMaterialStatusDescription(material: LecturerSearchMaterial) {
     if (embedding === 'completed') return 'Completed';
     if (embedding === 'failed') return 'Failed';
     if (embedding === 'pending') return 'Pending';
+  }
+  if (material.resubmitted_from_id) {
+    return `Resubmission - ${MATERIAL_STATUS_LABELS[material.status]}`;
+  }
+  if (material.has_resubmission) {
+    return 'Resubmitted';
+  }
+  if (material.status === 'rejected' && material.review_note) {
+    return `Rejected - ${material.review_note}`;
   }
   return MATERIAL_STATUS_LABELS[material.status];
 }

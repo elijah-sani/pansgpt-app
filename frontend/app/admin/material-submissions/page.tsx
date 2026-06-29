@@ -38,6 +38,9 @@ type MaterialSubmission = {
     cancelled_at: string | null;
     cancellation_reason: string | null;
     pans_library_id: string | null;
+    resubmitted_from_id: string | null;
+    has_resubmission: boolean;
+    latest_resubmission_id: string | null;
     library_embedding_status: string | null;
     library_embedding_progress: number | null;
     library_embedding_error: string | null;
@@ -171,6 +174,11 @@ export default function AdminMaterialSubmissionsPage() {
             } as Record<'total' | MaterialStatus, number>,
         );
     }, [submissions]);
+
+    const submissionsById = useMemo(
+        () => Object.fromEntries(submissions.map((submission) => [submission.id, submission])),
+        [submissions],
+    );
 
     useEffect(() => {
         if (!actionMenu) return;
@@ -477,6 +485,7 @@ export default function AdminMaterialSubmissionsPage() {
                                                             <div className="min-w-0">
                                                                 <div className="text-[11px] font-semibold uppercase text-muted-foreground">Review</div>
                                                                 <StatusBadge status={submission.status} />
+                                                                <ChainStatus submission={submission} relatedSubmission={submission.latest_resubmission_id ? submissionsById[submission.latest_resubmission_id] : submission.resubmitted_from_id ? submissionsById[submission.resubmitted_from_id] : null} />
                                                                 {submission.pans_library_id ? (
                                                                     <div className="mt-2 truncate text-xs text-muted-foreground">
                                                                         <span className="font-semibold">Processing:</span>{' '}
@@ -522,6 +531,7 @@ export default function AdminMaterialSubmissionsPage() {
                                                             <StatusBadge status={submission.status} />
                                                             <FileTypeBadge fileType={submission.file_type} isSupported={submission.is_supported_file} />
                                                         </div>
+                                                        <ChainStatus submission={submission} relatedSubmission={submission.latest_resubmission_id ? submissionsById[submission.latest_resubmission_id] : submission.resubmitted_from_id ? submissionsById[submission.resubmitted_from_id] : null} />
                                                         {submission.pans_library_id ? (
                                                             <div className="mt-1 truncate text-xs text-muted-foreground">
                                                                 <span className="font-semibold">Processing:</span>{' '}
@@ -628,6 +638,32 @@ function StatusBadge({ status }: { status: MaterialStatus }) {
             {STATUS_LABELS[status]}
         </span>
     );
+}
+
+function ChainStatus({
+    submission,
+    relatedSubmission,
+}: {
+    submission: MaterialSubmission;
+    relatedSubmission: MaterialSubmission | null;
+}) {
+    if (submission.resubmitted_from_id) {
+        return (
+            <div className="mt-2 text-xs text-blue-700">
+                <span className="inline-flex rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-0.5 font-semibold">Resubmission</span>
+                <span className="ml-2">From {relatedSubmission?.title || 'previous rejected submission'} ({shortSubmissionId(submission.resubmitted_from_id)})</span>
+            </div>
+        );
+    }
+    if (submission.has_resubmission && submission.latest_resubmission_id) {
+        return (
+            <div className="mt-2 text-xs text-slate-700">
+                <span className="inline-flex rounded-full border border-slate-500/20 bg-slate-500/10 px-2 py-0.5 font-semibold">Resubmitted</span>
+                <span className="ml-2">Newer submission: {relatedSubmission?.title || shortSubmissionId(submission.latest_resubmission_id)}</span>
+            </div>
+        );
+    }
+    return null;
 }
 
 function FileTypeBadge({
@@ -809,6 +845,20 @@ function DetailsDialog({
                         </div>
                     ) : null}
 
+                    {submission.resubmitted_from_id ? (
+                        <div className="rounded-xl border border-blue-500/20 bg-blue-500/10 p-3 text-sm text-blue-700">
+                            <div className="font-medium text-blue-800">Resubmission chain</div>
+                            <p className="mt-1">This row is a resubmission of rejected submission {shortSubmissionId(submission.resubmitted_from_id)}.</p>
+                        </div>
+                    ) : null}
+
+                    {submission.has_resubmission && submission.latest_resubmission_id ? (
+                        <div className="rounded-xl border border-slate-500/20 bg-slate-500/10 p-3 text-sm text-slate-700">
+                            <div className="font-medium text-foreground">Resubmission chain</div>
+                            <p className="mt-1">This rejected row has already been resubmitted as {shortSubmissionId(submission.latest_resubmission_id)}.</p>
+                        </div>
+                    ) : null}
+
                     {submission.status === 'cancelled' ? (
                         <div className="rounded-xl border border-slate-500/20 bg-slate-500/10 p-3 text-sm text-slate-700">
                             <div className="font-medium text-foreground">Cancellation</div>
@@ -956,6 +1006,10 @@ function formatLibraryStatus(status: string | null, progress: number | null) {
     if (status === 'completed') return 'Ready';
     if (status === 'failed') return 'Failed';
     return status;
+}
+
+function shortSubmissionId(value: string) {
+    return value.slice(0, 8);
 }
 
 function formatFileType(fileType: string | null) {

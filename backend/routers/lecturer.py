@@ -65,7 +65,7 @@ MATERIAL_SUBMISSION_SELECT = (
     "id,university_id,lecturer_id,course_code,course_title,level,material_type,title,"
     "description,file_name,file_url,storage_provider,file_type,mime_type,is_supported_file,"
     "status,reviewed_by,reviewed_at,review_note,pans_library_id,cancelled_at,cancelled_by,"
-    "cancellation_reason,drive_file_id,original_drive_file_id,converted_drive_file_id,created_at,updated_at,"
+    "cancellation_reason,drive_file_id,original_drive_file_id,converted_drive_file_id,resubmitted_from_id,created_at,updated_at,"
     "lecturer:lecturer_profiles!lecturer_material_submissions_lecturer_id_fkey(title,full_name,email),"
     "university:universities(name)"
 )
@@ -289,6 +289,9 @@ def _material_submission_to_response(row: dict) -> dict:
         "drive_file_id": row.get("drive_file_id"),
         "original_drive_file_id": row.get("original_drive_file_id"),
         "converted_drive_file_id": row.get("converted_drive_file_id"),
+        "resubmitted_from_id": row.get("resubmitted_from_id"),
+        "has_resubmission": bool(row.get("has_resubmission")),
+        "latest_resubmission_id": row.get("latest_resubmission_id"),
         "library_embedding_status": row.get("library_embedding_status"),
         "library_embedding_progress": row.get("library_embedding_progress"),
         "library_embedding_error": row.get("library_embedding_error"),
@@ -330,6 +333,57 @@ async def _enrich_material_submissions_with_library_state(rows: list[dict]) -> l
     return enriched
 
 
+async def _enrich_material_submissions_with_resubmission_state(rows: list[dict]) -> list[dict]:
+    submission_ids = [str(row.get("id")) for row in rows if row.get("id")]
+    if not submission_ids:
+        return rows
+
+    sb = _db()
+    if not sb:
+        return rows
+
+    try:
+        child_res = await _run_db(
+            lambda: sb.table("lecturer_material_submissions")
+            .select("id,resubmitted_from_id")
+            .in_("resubmitted_from_id", submission_ids)
+            .execute()
+        )
+    except Exception as exc:
+        logger.warning("Lecturer material resubmission state lookup failed: %s", exc)
+        return rows
+
+    latest_by_parent: dict[str, str] = {}
+    for child_row in (child_res.data or []):
+        parent_id = str(child_row.get("resubmitted_from_id") or "").strip()
+        child_id = str(child_row.get("id") or "").strip()
+        if parent_id and child_id:
+            latest_by_parent[parent_id] = child_id
+
+    enriched: list[dict] = []
+    for row in rows:
+        payload = dict(row)
+        row_id = str(row.get("id") or "").strip()
+        payload["latest_resubmission_id"] = latest_by_parent.get(row_id)
+        payload["has_resubmission"] = bool(payload["latest_resubmission_id"])
+        enriched.append(payload)
+    return enriched
+
+
+async def _serialize_material_submission_rows(rows: list[dict]) -> list[dict]:
+    payload_rows = [_material_submission_to_response(row) for row in rows]
+    payload_rows = await _enrich_material_submissions_with_library_state(payload_rows)
+    payload_rows = await _enrich_material_submissions_with_resubmission_state(payload_rows)
+    return payload_rows
+
+
+async def _serialize_material_submission_row(row: Optional[dict]) -> Optional[dict]:
+    if not row:
+        return None
+    rows = await _serialize_material_submission_rows([row])
+    return rows[0] if rows else None
+
+
 async def _get_material_submission_by_id(submission_id: str) -> Optional[dict]:
     sb = _db()
     if not sb:
@@ -349,6 +403,151 @@ async def _get_material_submission_by_id(submission_id: str) -> Optional[dict]:
 
     rows = res.data or []
     return rows[0] if rows else None
+
+
+async def _get_material_submission_child_resubmission(parent_submission_id: str) -> Optional[dict]:
+    sb = _db()
+    if not sb:
+        raise HTTPException(status_code=503, detail="Database not active")
+
+    try:
+        res = await _run_db(
+            lambda: sb.table("lecturer_material_submissions")
+            .select("id,status,lecturer_id,university_id,resubmitted_from_id")
+            .eq("resubmitted_from_id", parent_submission_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("Material submission child lookup failed for %s: %s", parent_submission_id, exc)
+        raise HTTPException(status_code=500, detail="Unable to load material submission")
+
+    rows = res.data or []
+    return rows[0] if rows else None
+
+
+def _resolve_material_metadata(
+    *,
+    level: Optional[str],
+    course_code: Optional[str],
+    topic: Optional[str],
+    course_title: Optional[str],
+    fallback_row: Optional[dict] = None,
+) -> dict:
+    resolved_level = normalize_optional_text(level)
+    resolved_course_code = normalize_optional_text(course_code)
+    resolved_topic = normalize_optional_text(topic)
+    resolved_course_title = normalize_optional_text(course_title)
+
+    if fallback_row:
+        resolved_level = resolved_level or normalize_optional_text(fallback_row.get("level"))
+        resolved_course_code = resolved_course_code or normalize_optional_text(fallback_row.get("course_code"))
+        resolved_topic = resolved_topic or normalize_optional_text(fallback_row.get("title"))
+        if resolved_course_title is None:
+            resolved_course_title = normalize_optional_text(fallback_row.get("course_title"))
+
+    if not resolved_level:
+        raise HTTPException(status_code=400, detail="level is required")
+    if not resolved_course_code:
+        raise HTTPException(status_code=400, detail="course_code is required")
+    if not resolved_topic:
+        raise HTTPException(status_code=400, detail="topic is required")
+
+    return {
+        "level": resolved_level,
+        "course_code": resolved_course_code,
+        "topic": resolved_topic,
+        "course_title": resolved_course_title,
+    }
+
+
+def _read_upload_file_size(file: UploadFile) -> int:
+    try:
+        file.file.seek(0, 2)
+        file_size = file.file.tell()
+        file.file.seek(0)
+        return file_size
+    except Exception:
+        raise HTTPException(status_code=400, detail="Unable to process the file. Please try again.")
+
+
+async def _upload_material_file_to_drive(*, file: UploadFile, lecturer_profile) -> tuple[str, str, Optional[str], Optional[str], bool, int]:
+    if not drive_service:
+        raise HTTPException(status_code=503, detail="The file service is temporarily unavailable. Please try again in a moment.")
+    if not (GOOGLE_DRIVE_FOLDER_ID or "").strip():
+        raise HTTPException(status_code=503, detail="Google Drive upload folder is not configured.")
+
+    original_file_name = normalize_optional_text(file.filename)
+    if not original_file_name:
+        raise HTTPException(status_code=400, detail="file is required")
+
+    file_type, mime_type, is_supported_file = _detect_material_file_type(original_file_name, file.content_type)
+    file_size = _read_upload_file_size(file)
+
+    try:
+        file_ext = os.path.splitext(original_file_name)[1] or ".pdf"
+        unique_filename = f"lecturer-material-{uuid4()}{file_ext}"
+        logger.info(
+            "Lecturer material upload starting: lecturer_id=%s file_name=%s unique_name=%s mime_type=%s file_size=%s folder_id=%s",
+            lecturer_profile.id,
+            original_file_name,
+            unique_filename,
+            file.content_type or "application/octet-stream",
+            file_size,
+            GOOGLE_DRIVE_FOLDER_ID,
+        )
+        drive_file_id = await asyncio.to_thread(
+            drive_service.upload_file,
+            unique_filename,
+            file.file,
+            file.content_type or "application/octet-stream",
+            GOOGLE_DRIVE_FOLDER_ID,
+            file_size,
+        )
+    except Exception as exc:
+        logger.exception(
+            "Lecturer material file upload failed: lecturer_id=%s file_name=%s mime_type=%s file_size=%s folder_id=%s error_type=%s",
+            lecturer_profile.id,
+            original_file_name,
+            file.content_type or "application/octet-stream",
+            file_size,
+            GOOGLE_DRIVE_FOLDER_ID,
+            type(exc).__name__,
+        )
+        if "scope" in str(exc).lower():
+            raise HTTPException(status_code=500, detail="Unable to upload file. Please contact support.")
+        if isinstance(exc, DriveUploadTemporaryError):
+            raise HTTPException(status_code=503, detail="File upload service is temporarily unavailable. Please try again.")
+        raise HTTPException(status_code=500, detail="File upload failed. Please try again.")
+
+    file_url = f"https://drive.google.com/file/d/{drive_file_id}/view"
+    return drive_file_id, file_url, file_type, mime_type, is_supported_file, file_size
+
+
+async def _cleanup_uploaded_drive_file_after_failure(
+    *,
+    drive_file_id: str,
+    original_file_name: str,
+    current_user: User,
+    lecturer_profile,
+    action: str,
+) -> None:
+    try:
+        await asyncio.to_thread(drive_service.delete_file, drive_file_id)
+    except Exception as cleanup_exc:
+        logger.warning("Uploaded material cleanup failed after %s for %s: %s", action, drive_file_id, cleanup_exc)
+        await _insert_material_cleanup_audit_log(
+            actor_user_id=current_user.id,
+            actor_role="lecturer",
+            university_id=lecturer_profile.university_id,
+            action="material_upload_drive_cleanup_failed",
+            metadata={
+                "drive_file_id": drive_file_id,
+                "file_name": original_file_name,
+                "failed_after": action,
+                "error": str(cleanup_exc),
+            },
+        )
 
 
 async def _is_drive_file_referenced_elsewhere(drive_file_id: str, submission_id: str) -> bool:
@@ -713,78 +912,25 @@ async def submit_lecturer_material(
     sb = _db()
     if not sb:
         raise HTTPException(status_code=503, detail="Database not active")
-    if not drive_service:
-        raise HTTPException(status_code=503, detail="The file service is temporarily unavailable. Please try again in a moment.")
-    if not (GOOGLE_DRIVE_FOLDER_ID or "").strip():
-        raise HTTPException(status_code=503, detail="Google Drive upload folder is not configured.")
-
-    normalized_topic = normalize_optional_text(topic)
-    normalized_level = normalize_optional_text(level)
-    normalized_course_code = normalize_optional_text(course_code)
-
-    if not normalized_level:
-        raise HTTPException(status_code=400, detail="level is required")
-    if not normalized_course_code:
-        raise HTTPException(status_code=400, detail="course_code is required")
-    if not normalized_topic:
-        raise HTTPException(status_code=400, detail="topic is required")
-
-    original_file_name = normalize_optional_text(file.filename)
-    if not original_file_name:
-        raise HTTPException(status_code=400, detail="file is required")
-    file_type, mime_type, is_supported_file = _detect_material_file_type(original_file_name, file.content_type)
-
-    try:
-        file.file.seek(0, 2)
-        file_size = file.file.tell()
-        file.file.seek(0)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Unable to process the file. Please try again.")
-
-    try:
-        file_ext = os.path.splitext(original_file_name)[1] or ".pdf"
-        unique_filename = f"lecturer-material-{uuid4()}{file_ext}"
-        logger.info(
-            "Lecturer material upload starting: lecturer_id=%s file_name=%s unique_name=%s mime_type=%s file_size=%s folder_id=%s",
-            lecturer_profile.id,
-            original_file_name,
-            unique_filename,
-            file.content_type or "application/octet-stream",
-            file_size,
-            GOOGLE_DRIVE_FOLDER_ID,
-        )
-        drive_file_id = drive_service.upload_file(
-            file_name=unique_filename,
-            file_obj=file.file,
-            mime_type=file.content_type or "application/octet-stream",
-            folder_id=GOOGLE_DRIVE_FOLDER_ID,
-            file_size=file_size,
-        )
-    except Exception as exc:
-        logger.exception(
-            "Lecturer material file upload failed: lecturer_id=%s file_name=%s mime_type=%s file_size=%s folder_id=%s error_type=%s",
-            lecturer_profile.id,
-            original_file_name,
-            file.content_type or "application/octet-stream",
-            file_size,
-            GOOGLE_DRIVE_FOLDER_ID,
-            type(exc).__name__,
-        )
-        if "scope" in str(exc).lower():
-            raise HTTPException(status_code=500, detail="Unable to upload file. Please contact support.")
-        if isinstance(exc, DriveUploadTemporaryError):
-            raise HTTPException(status_code=503, detail="File upload service is temporarily unavailable. Please try again.")
-        raise HTTPException(status_code=500, detail="File upload failed. Please try again.")
-
-    file_url = f"https://drive.google.com/file/d/{drive_file_id}/view"
+    resolved_metadata = _resolve_material_metadata(
+        level=level,
+        course_code=course_code,
+        topic=topic,
+        course_title=course_title,
+    )
+    original_file_name = normalize_optional_text(file.filename) or ""
+    drive_file_id, file_url, file_type, mime_type, is_supported_file, _ = await _upload_material_file_to_drive(
+        file=file,
+        lecturer_profile=lecturer_profile,
+    )
 
     submission_payload = {
         "university_id": lecturer_profile.university_id,
         "lecturer_id": lecturer_profile.id,
-        "title": normalized_topic,
-        "course_code": normalized_course_code,
-        "course_title": normalize_optional_text(course_title),
-        "level": normalized_level,
+        "title": resolved_metadata["topic"],
+        "course_code": resolved_metadata["course_code"],
+        "course_title": resolved_metadata["course_title"],
+        "level": resolved_metadata["level"],
         "material_type": None,
         "description": None,
         "file_name": original_file_name,
@@ -811,46 +957,31 @@ async def submit_lecturer_material(
         )
     except Exception as exc:
         logger.error("Material submission failed for lecturer %s: %s", lecturer_profile.id, exc)
-        try:
-            await asyncio.to_thread(drive_service.delete_file, drive_file_id)
-        except Exception as cleanup_exc:
-            logger.warning("Uploaded material cleanup failed after DB insert error for %s: %s", drive_file_id, cleanup_exc)
-            await _insert_material_cleanup_audit_log(
-                actor_user_id=current_user.id,
-                actor_role="lecturer",
-                university_id=lecturer_profile.university_id,
-                action="material_upload_drive_cleanup_failed",
-                metadata={
-                    "drive_file_id": drive_file_id,
-                    "file_name": original_file_name,
-                    "error": str(cleanup_exc),
-                },
-            )
+        await _cleanup_uploaded_drive_file_after_failure(
+            drive_file_id=drive_file_id,
+            original_file_name=original_file_name,
+            current_user=current_user,
+            lecturer_profile=lecturer_profile,
+            action="db_insert_error",
+        )
         raise HTTPException(status_code=500, detail="Unable to submit material")
 
     rows = insert_res.data or []
     submission_id = rows[0].get("id") if rows and rows[0].get("id") else None
     if not submission_id:
-        try:
-            await asyncio.to_thread(drive_service.delete_file, drive_file_id)
-        except Exception as cleanup_exc:
-            logger.warning("Uploaded material cleanup failed after missing submission id for %s: %s", drive_file_id, cleanup_exc)
-            await _insert_material_cleanup_audit_log(
-                actor_user_id=current_user.id,
-                actor_role="lecturer",
-                university_id=lecturer_profile.university_id,
-                action="material_upload_drive_cleanup_failed",
-                metadata={
-                    "drive_file_id": drive_file_id,
-                    "file_name": original_file_name,
-                    "error": str(cleanup_exc),
-                },
-            )
+        await _cleanup_uploaded_drive_file_after_failure(
+            drive_file_id=drive_file_id,
+            original_file_name=original_file_name,
+            current_user=current_user,
+            lecturer_profile=lecturer_profile,
+            action="missing_submission_id",
+        )
         raise HTTPException(status_code=500, detail="Material was submitted but could not be loaded")
 
     created_row = await _get_material_submission_by_id(submission_id)
     if not created_row:
         raise HTTPException(status_code=500, detail="Material was submitted but could not be loaded")
+    created_payload = await _serialize_material_submission_row(created_row)
 
     await _insert_material_audit_log(
         actor_user_id=current_user.id,
@@ -860,7 +991,7 @@ async def submit_lecturer_material(
         action="material_submitted",
         metadata={
             "lecturer_id": lecturer_profile.id,
-            "title": normalized_topic,
+            "title": resolved_metadata["topic"],
             "course_code": submission_payload["course_code"],
             "course_title": submission_payload["course_title"],
             "level": submission_payload["level"],
@@ -873,7 +1004,178 @@ async def submit_lecturer_material(
         },
     )
 
-    return {"data": _material_submission_to_response(created_row)}
+    return {"data": created_payload}
+
+
+@router.post("/lecturer/materials/{submission_id}/resubmit", dependencies=[Depends(verify_api_key)], status_code=status.HTTP_201_CREATED)
+async def resubmit_lecturer_material(
+    submission_id: str,
+    file: UploadFile = File(...),
+    level: Optional[str] = Form(None),
+    course_code: Optional[str] = Form(None),
+    topic: Optional[str] = Form(None),
+    course_title: Optional[str] = Form(None),
+    current_user: User = Depends(get_current_user),
+    lecturer_profile=Depends(get_current_active_lecturer),
+):
+    sb = _db()
+    if not sb:
+        raise HTTPException(status_code=503, detail="Database not active")
+
+    original_row = await _get_material_submission_by_id(submission_id)
+    if not original_row:
+        raise HTTPException(status_code=404, detail="Material submission not found")
+    if str(original_row.get("lecturer_id") or "") != str(lecturer_profile.id):
+        raise HTTPException(status_code=403, detail="You can only resubmit your own rejected material submissions")
+    if str(original_row.get("university_id") or "") != str(lecturer_profile.university_id):
+        raise HTTPException(status_code=403, detail="You do not have access to this material submission")
+
+    original_status = str(original_row.get("status") or "").strip().lower()
+    if original_status == "pending_review":
+        raise HTTPException(status_code=409, detail="Pending submissions cannot be resubmitted")
+    if original_status == "approved":
+        raise HTTPException(status_code=409, detail="Approved submissions cannot be resubmitted")
+    if original_status == "cancelled":
+        raise HTTPException(status_code=409, detail="Cancelled submissions cannot be resubmitted")
+    if original_status != "rejected":
+        raise HTTPException(status_code=409, detail="Only rejected submissions can be resubmitted")
+
+    existing_child = await _get_material_submission_child_resubmission(submission_id)
+    if existing_child:
+        raise HTTPException(status_code=409, detail="This rejected submission has already been resubmitted")
+
+    resolved_metadata = _resolve_material_metadata(
+        level=level,
+        course_code=course_code,
+        topic=topic,
+        course_title=course_title,
+        fallback_row=original_row,
+    )
+    original_file_name = normalize_optional_text(file.filename) or ""
+    drive_file_id, file_url, file_type, mime_type, is_supported_file, _ = await _upload_material_file_to_drive(
+        file=file,
+        lecturer_profile=lecturer_profile,
+    )
+
+    refreshed_row = await _get_material_submission_by_id(submission_id)
+    if not refreshed_row:
+        await _cleanup_uploaded_drive_file_after_failure(
+            drive_file_id=drive_file_id,
+            original_file_name=original_file_name,
+            current_user=current_user,
+            lecturer_profile=lecturer_profile,
+            action="resubmission_source_missing",
+        )
+        raise HTTPException(status_code=404, detail="Material submission not found")
+    if str(refreshed_row.get("lecturer_id") or "") != str(lecturer_profile.id):
+        await _cleanup_uploaded_drive_file_after_failure(
+            drive_file_id=drive_file_id,
+            original_file_name=original_file_name,
+            current_user=current_user,
+            lecturer_profile=lecturer_profile,
+            action="resubmission_ownership_changed",
+        )
+        raise HTTPException(status_code=403, detail="You can only resubmit your own rejected material submissions")
+    if str(refreshed_row.get("status") or "").strip().lower() != "rejected":
+        await _cleanup_uploaded_drive_file_after_failure(
+            drive_file_id=drive_file_id,
+            original_file_name=original_file_name,
+            current_user=current_user,
+            lecturer_profile=lecturer_profile,
+            action="resubmission_source_status_changed",
+        )
+        raise HTTPException(status_code=409, detail="Submission status changed before resubmission finished. No new material was saved.")
+
+    submission_payload = {
+        "university_id": lecturer_profile.university_id,
+        "lecturer_id": lecturer_profile.id,
+        "title": resolved_metadata["topic"],
+        "course_code": resolved_metadata["course_code"],
+        "course_title": resolved_metadata["course_title"],
+        "level": resolved_metadata["level"],
+        "material_type": refreshed_row.get("material_type"),
+        "description": refreshed_row.get("description"),
+        "file_name": original_file_name,
+        "file_url": file_url,
+        "storage_provider": "google_drive",
+        "file_type": file_type,
+        "mime_type": mime_type,
+        "is_supported_file": is_supported_file,
+        "drive_file_id": drive_file_id,
+        "original_drive_file_id": drive_file_id,
+        "converted_drive_file_id": None,
+        "status": "pending_review",
+        "reviewed_by": None,
+        "reviewed_at": None,
+        "review_note": None,
+        "pans_library_id": None,
+        "cancelled_at": None,
+        "cancelled_by": None,
+        "cancellation_reason": None,
+        "resubmitted_from_id": submission_id,
+    }
+
+    try:
+        insert_res = await _run_db(
+            lambda: sb.table("lecturer_material_submissions")
+            .insert(submission_payload)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("Material resubmission failed for lecturer %s source %s: %s", lecturer_profile.id, submission_id, exc)
+        await _cleanup_uploaded_drive_file_after_failure(
+            drive_file_id=drive_file_id,
+            original_file_name=original_file_name,
+            current_user=current_user,
+            lecturer_profile=lecturer_profile,
+            action="resubmission_db_insert_error",
+        )
+        message = str(exc).lower()
+        if "lecturer_material_submissions_one_resubmission_per_rejection_idx" in message or "duplicate key value violates unique constraint" in message:
+            raise HTTPException(status_code=409, detail="This rejected submission has already been resubmitted")
+        raise HTTPException(status_code=500, detail="Unable to resubmit material")
+
+    rows = insert_res.data or []
+    new_submission_id = rows[0].get("id") if rows and rows[0].get("id") else None
+    if not new_submission_id:
+        await _cleanup_uploaded_drive_file_after_failure(
+            drive_file_id=drive_file_id,
+            original_file_name=original_file_name,
+            current_user=current_user,
+            lecturer_profile=lecturer_profile,
+            action="resubmission_missing_submission_id",
+        )
+        raise HTTPException(status_code=500, detail="Material was resubmitted but could not be loaded")
+
+    created_row = await _get_material_submission_by_id(new_submission_id)
+    if not created_row:
+        raise HTTPException(status_code=500, detail="Material was resubmitted but could not be loaded")
+    created_payload = await _serialize_material_submission_row(created_row)
+
+    await _insert_material_audit_log(
+        actor_user_id=current_user.id,
+        actor_role="lecturer",
+        university_id=lecturer_profile.university_id,
+        submission_id=new_submission_id,
+        action="lecturer_material_resubmitted",
+        metadata={
+            "previous_rejected_submission_id": submission_id,
+            "new_submission_id": new_submission_id,
+            "lecturer_id": lecturer_profile.id,
+            "university_id": lecturer_profile.university_id,
+            "course_code": submission_payload["course_code"],
+            "course_title": submission_payload["course_title"],
+            "level": submission_payload["level"],
+            "title": submission_payload["title"],
+            "file_name": original_file_name,
+            "file_type": submission_payload["file_type"],
+            "mime_type": submission_payload["mime_type"],
+            "is_supported_file": submission_payload["is_supported_file"],
+            "drive_file_id": drive_file_id,
+        },
+    )
+
+    return {"data": created_payload}
 
 
 @router.post("/lecturer/materials/{submission_id}/cancel", dependencies=[Depends(verify_api_key)])
@@ -937,6 +1239,7 @@ async def cancel_lecturer_material_submission(
     row = await _get_material_submission_by_id(submission_id)
     if not row:
         raise HTTPException(status_code=500, detail="Material was cancelled but could not be loaded")
+    row_payload = await _serialize_material_submission_row(row)
 
     await _insert_material_audit_log(
         actor_user_id=current_user.id,
@@ -950,7 +1253,7 @@ async def cancel_lecturer_material_submission(
         },
     )
 
-    return {"data": _material_submission_to_response(row), "cleanup_warnings": cleanup_warnings}
+    return {"data": row_payload, "cleanup_warnings": cleanup_warnings}
 
 
 @router.get("/lecturer/materials", dependencies=[Depends(verify_api_key)])
@@ -982,7 +1285,7 @@ async def list_lecturer_materials(lecturer_profile=Depends(get_current_active_le
             "id,university_id,lecturer_id,course_code,course_title,level,material_type,title,"
             "description,file_name,file_url,storage_provider,file_type,mime_type,is_supported_file,"
             "status,reviewed_by,reviewed_at,review_note,pans_library_id,cancelled_at,cancelled_by,"
-            "cancellation_reason,drive_file_id,original_drive_file_id,converted_drive_file_id,created_at,updated_at"
+            "cancellation_reason,drive_file_id,original_drive_file_id,converted_drive_file_id,resubmitted_from_id,created_at,updated_at"
         )
         try:
             res = await _run_db(
@@ -1000,8 +1303,7 @@ async def list_lecturer_materials(lecturer_profile=Depends(get_current_active_le
             )
             raise HTTPException(status_code=500, detail="Unable to load material submissions")
 
-    rows = [_material_submission_to_response(row) for row in (res.data or [])]
-    rows = await _enrich_material_submissions_with_library_state(rows)
+    rows = await _serialize_material_submission_rows(res.data or [])
     return {"data": rows}
 
 

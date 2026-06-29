@@ -26,6 +26,9 @@ type MaterialSubmission = {
   cancelled_at: string | null;
   cancellation_reason: string | null;
   pans_library_id: string | null;
+  resubmitted_from_id: string | null;
+  has_resubmission: boolean;
+  latest_resubmission_id: string | null;
   library_embedding_status: 'pending' | 'processing' | 'completed' | 'failed' | string | null;
   library_embedding_progress: number | null;
   library_embedding_error: string | null;
@@ -91,6 +94,12 @@ export default function LecturerMaterialsPage() {
   const [form, setForm] = useState<MaterialFormState>(initialFormState);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileInputKey, setFileInputKey] = useState(0);
+  const [resubmitTarget, setResubmitTarget] = useState<MaterialSubmission | null>(null);
+  const [resubmitForm, setResubmitForm] = useState<MaterialFormState>(initialFormState);
+  const [resubmitFile, setResubmitFile] = useState<File | null>(null);
+  const [resubmitFileInputKey, setResubmitFileInputKey] = useState(0);
+  const [resubmitError, setResubmitError] = useState<string | null>(null);
+  const [isResubmitting, setIsResubmitting] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -152,6 +161,41 @@ export default function LecturerMaterialsPage() {
   const clearSelectedFile = () => {
     setSelectedFile(null);
     setFileInputKey((key) => key + 1);
+  };
+
+  const openResubmitDialog = (material: MaterialSubmission) => {
+    setResubmitTarget(material);
+    setResubmitForm({
+      level: material.level || '',
+      course_code: material.course_code || '',
+      topic: material.title || '',
+      course_title: material.course_title || '',
+    });
+    setResubmitFile(null);
+    setResubmitFileInputKey((key) => key + 1);
+    setResubmitError(null);
+  };
+
+  const closeResubmitDialog = () => {
+    if (isResubmitting) return;
+    setResubmitTarget(null);
+    setResubmitForm(initialFormState);
+    setResubmitFile(null);
+    setResubmitFileInputKey((key) => key + 1);
+    setResubmitError(null);
+  };
+
+  const updateResubmitField = <K extends keyof MaterialFormState>(field: K, value: MaterialFormState[K]) => {
+    setResubmitForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const handleResubmitFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setResubmitFile(event.target.files?.[0] ?? null);
+  };
+
+  const clearResubmitFile = () => {
+    setResubmitFile(null);
+    setResubmitFileInputKey((key) => key + 1);
   };
 
   const submitMaterial = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -233,6 +277,57 @@ export default function LecturerMaterialsPage() {
         next.delete(material.id);
         return next;
       });
+    }
+  };
+
+  const submitResubmission = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!resubmitTarget) return;
+
+    setResubmitError(null);
+    const topic = resubmitForm.topic.trim();
+    if (!resubmitForm.level.trim()) {
+      setResubmitError('Level is required.');
+      return;
+    }
+    if (!resubmitForm.course_code.trim()) {
+      setResubmitError('Course code is required.');
+      return;
+    }
+    if (!topic) {
+      setResubmitError('Topic is required.');
+      return;
+    }
+    if (!resubmitFile) {
+      setResubmitError('Choose the corrected file to upload.');
+      return;
+    }
+
+    const confirmed = window.confirm('Submit this corrected material as a new resubmission? The rejected record will remain unchanged.');
+    if (!confirmed) return;
+
+    const data = new FormData();
+    data.append('level', resubmitForm.level.trim());
+    data.append('course_code', resubmitForm.course_code.trim());
+    data.append('topic', topic);
+    if (resubmitForm.course_title.trim()) data.append('course_title', resubmitForm.course_title.trim());
+    data.append('file', resubmitFile);
+
+    setIsResubmitting(true);
+    try {
+      const response = await api.post(`/lecturer/materials/${resubmitTarget.id}/resubmit`, data);
+      if (!response.ok) {
+        throw new Error(await readApiError(response, 'Unable to resubmit material'));
+      }
+
+      closeResubmitDialog();
+      toast.success('Corrected material submitted for review.');
+      await fetchMaterials(true);
+    } catch (error) {
+      console.error('Failed to resubmit lecturer material:', error);
+      setResubmitError(error instanceof Error ? error.message : 'Unable to resubmit material');
+    } finally {
+      setIsResubmitting(false);
     }
   };
 
@@ -391,11 +486,27 @@ export default function LecturerMaterialsPage() {
                 materials={orderedMaterials}
                 cancellingIds={cancellingIds}
                 onCancel={cancelSubmission}
+                onResubmit={openResubmitDialog}
               />
             )}
           </section>
         </div>
-      </div>
+      {resubmitTarget ? (
+        <ResubmitDialog
+          material={resubmitTarget}
+          form={resubmitForm}
+          selectedFile={resubmitFile}
+          fileInputKey={resubmitFileInputKey}
+          error={resubmitError}
+          isSubmitting={isResubmitting}
+          onClose={closeResubmitDialog}
+          onFieldChange={updateResubmitField}
+          onFileChange={handleResubmitFileChange}
+          onClearFile={clearResubmitFile}
+          onSubmit={submitResubmission}
+        />
+      ) : null}
+    </div>
   );
 }
 
@@ -423,15 +534,24 @@ function MaterialList({
   materials,
   cancellingIds,
   onCancel,
+  onResubmit,
 }: {
   materials: MaterialSubmission[];
   cancellingIds: Set<string>;
   onCancel: (material: MaterialSubmission) => void;
+  onResubmit: (material: MaterialSubmission) => void;
 }) {
+  const materialsById = useMemo(
+    () => Object.fromEntries(materials.map((material) => [material.id, material])),
+    [materials],
+  );
+
   return (
     <div className="space-y-3">
       {materials.map((material) => {
         const course = [material.course_code, material.course_title].filter(Boolean).join(' - ') || 'Course not set';
+        const previousSubmission = material.resubmitted_from_id ? materialsById[material.resubmitted_from_id] : null;
+        const nextSubmission = material.latest_resubmission_id ? materialsById[material.latest_resubmission_id] : null;
 
         return (
           <article key={material.id} className="rounded-2xl border border-border bg-background/80 p-5">
@@ -440,6 +560,8 @@ function MaterialList({
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="font-semibold text-foreground">{material.title}</h3>
                   <StatusBadge status={material.status} />
+                  {material.resubmitted_from_id ? <ChainBadge tone="blue" label="Resubmission" /> : null}
+                  {material.has_resubmission ? <ChainBadge tone="slate" label="Resubmitted" /> : null}
                 </div>
                 <p className="mt-2 text-sm text-muted-foreground">{course}</p>
                 <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-muted-foreground">
@@ -464,6 +586,16 @@ function MaterialList({
                 {material.review_note && material.status === 'rejected' ? (
                   <p className="mt-3 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm text-rose-700">
                     Note: {material.review_note}
+                  </p>
+                ) : null}
+                {material.resubmitted_from_id ? (
+                  <p className="mt-3 rounded-xl border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-sm text-blue-700">
+                    Resubmission of {previousSubmission?.title || 'previous rejected submission'} ({shortSubmissionId(material.resubmitted_from_id)}).
+                  </p>
+                ) : null}
+                {material.has_resubmission && material.latest_resubmission_id ? (
+                  <p className="mt-3 rounded-xl border border-slate-500/20 bg-slate-500/10 px-3 py-2 text-sm text-slate-700">
+                    Resubmitted as {nextSubmission?.title || 'newer submission'} ({shortSubmissionId(material.latest_resubmission_id)}).
                   </p>
                 ) : null}
                 {material.status === 'cancelled' ? (
@@ -497,6 +629,16 @@ function MaterialList({
                     Cancel Submission
                   </button>
                 ) : null}
+                {material.status === 'rejected' && !material.has_resubmission ? (
+                  <button
+                    type="button"
+                    onClick={() => onResubmit(material)}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-blue-500/30 px-3 py-2 text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-500/10"
+                  >
+                    <RefreshCcw className="h-4 w-4" />
+                    Resubmit Material
+                  </button>
+                ) : null}
               </div>
             </div>
           </article>
@@ -511,6 +653,174 @@ function StatusBadge({ status }: { status: MaterialStatus }) {
     <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${STATUS_CLASSES[status]}`}>
       {STATUS_LABELS[status]}
     </span>
+  );
+}
+
+function ChainBadge({ label, tone }: { label: string; tone: 'blue' | 'slate' }) {
+  const toneClass = tone === 'blue'
+    ? 'border-blue-500/20 bg-blue-500/10 text-blue-700'
+    : 'border-slate-500/20 bg-slate-500/10 text-slate-700';
+
+  return <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${toneClass}`}>{label}</span>;
+}
+
+function ResubmitDialog({
+  material,
+  form,
+  selectedFile,
+  fileInputKey,
+  error,
+  isSubmitting,
+  onClose,
+  onFieldChange,
+  onFileChange,
+  onClearFile,
+  onSubmit,
+}: {
+  material: MaterialSubmission;
+  form: MaterialFormState;
+  selectedFile: File | null;
+  fileInputKey: number;
+  error: string | null;
+  isSubmitting: boolean;
+  onClose: () => void;
+  onFieldChange: <K extends keyof MaterialFormState>(field: K, value: MaterialFormState[K]) => void;
+  onFileChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  onClearFile: () => void;
+  onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+}) {
+  const fileLabelClass = selectedFile
+    ? 'flex min-h-14 flex-1 cursor-pointer items-center gap-3 rounded-xl border border-blue-500/30 bg-blue-500/5 px-4 py-3 transition-colors hover:bg-muted/40'
+    : 'flex min-h-14 flex-1 cursor-pointer items-center gap-3 rounded-xl border border-dashed border-border bg-background/70 px-4 py-3 transition-colors hover:bg-muted/40';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-border bg-background p-6 shadow-xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">Resubmit material</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Upload a corrected file as a new pending submission. The rejected record will remain unchanged.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isSubmitting}
+            className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {material.review_note ? (
+          <div className="mt-5 rounded-xl border border-rose-500/20 bg-rose-500/10 p-4 text-sm text-rose-700">
+            <div className="font-semibold text-rose-800">Rejection note</div>
+            <p className="mt-1">{material.review_note}</p>
+          </div>
+        ) : null}
+
+        <form onSubmit={onSubmit} className="mt-5 space-y-5">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <Field label="Level" required>
+              <select
+                value={form.level}
+                onChange={(event) => onFieldChange('level', event.target.value)}
+                className={`${INPUT_CLASS_NAME} appearance-none`}
+              >
+                <option value="">Select level</option>
+                {LEVELS.map((level) => (
+                  <option key={level} value={`${level}L`}>
+                    {level}L
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <Field label="Course code" required>
+              <input
+                value={form.course_code}
+                onChange={(event) => onFieldChange('course_code', event.target.value)}
+                className={INPUT_CLASS_NAME}
+                placeholder="e.g. PCL 422"
+              />
+            </Field>
+
+            <Field label="Topic" required>
+              <input
+                value={form.topic}
+                onChange={(event) => onFieldChange('topic', event.target.value)}
+                className={INPUT_CLASS_NAME}
+                placeholder="e.g. Cardiovascular Pharmacology"
+              />
+            </Field>
+
+            <Field label="Course title">
+              <input
+                value={form.course_title}
+                onChange={(event) => onFieldChange('course_title', event.target.value)}
+                className={INPUT_CLASS_NAME}
+                placeholder="e.g. Clinical Pharmacy"
+              />
+            </Field>
+          </div>
+
+          {error ? <AuthMessage message={{ type: 'error', text: error }} /> : null}
+
+          <div className="space-y-1.5">
+            <span className="text-sm font-bold text-foreground">
+              Corrected file <span className="ml-1 text-rose-600">*</span>
+            </span>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <label className={fileLabelClass}>
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-background">
+                  {selectedFile ? <FileText className="h-4 w-4 text-primary" /> : <FileUp className="h-4 w-4 text-primary" />}
+                </span>
+                <span className="min-w-0 flex-1 text-left">
+                  <span className="block truncate text-sm font-semibold text-foreground">
+                    {selectedFile ? selectedFile.name : 'Choose corrected file'}
+                  </span>
+                  <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                    {selectedFile ? `${formatSelectedFileMeta(selectedFile)}. Click to change.` : 'One corrected file only'}
+                  </span>
+                </span>
+                <input key={fileInputKey} type="file" className="sr-only" onChange={onFileChange} />
+              </label>
+              {selectedFile ? (
+                <button
+                  type="button"
+                  onClick={onClearFile}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-border px-3 py-3 text-sm font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-14"
+                >
+                  <X className="h-4 w-4" />
+                  Remove
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isSubmitting}
+              className="inline-flex items-center justify-center rounded-xl border border-border px-4 py-2.5 text-sm font-semibold text-foreground transition-colors hover:bg-muted disabled:opacity-60"
+            >
+              Close
+            </button>
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-colors hover:opacity-90 disabled:opacity-60"
+            >
+              {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
+              Submit Resubmission
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 
@@ -584,6 +894,10 @@ function detectSelectedFileType(file: File) {
 function formatSelectedFileMeta(file: File) {
   const fileType = detectSelectedFileType(file);
   return [fileType ? fileType.toUpperCase() : null, formatFileSize(file.size)].filter(Boolean).join(' \u2022 ');
+}
+
+function shortSubmissionId(value: string) {
+  return value.slice(0, 8);
 }
 
 function showMaterialSubmittedToast() {
