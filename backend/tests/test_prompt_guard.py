@@ -39,8 +39,10 @@ from services.policy_guard import (  # noqa: E402
 from services.llm_engine import (  # noqa: E402
     SYSTEM_ROLE_SAFE_TEXT_MODEL_ORDER,
     SYSTEM_ROLE_SAFE_VISION_MODEL_ORDER,
+    SMALL_TERTIARY,
     TEXT_PRIMARY,
     TEXT_SECONDARY,
+    VISION_QUATERNARY,
     VISION_SECONDARY,
     VISION_TERTIARY,
 )
@@ -278,11 +280,17 @@ def test_quiz_grading_helper_blocks_leaked_output(monkeypatch: pytest.MonkeyPatc
         asyncio.run(_generate_quiz_grading_response("system", "user"))
 
 
-def test_system_role_safe_model_orders_exclude_google_only_fallbacks():
-    assert TEXT_PRIMARY not in SYSTEM_ROLE_SAFE_TEXT_MODEL_ORDER
-    assert TEXT_SECONDARY not in SYSTEM_ROLE_SAFE_TEXT_MODEL_ORDER
-    assert VISION_SECONDARY not in SYSTEM_ROLE_SAFE_VISION_MODEL_ORDER
-    assert VISION_TERTIARY not in SYSTEM_ROLE_SAFE_VISION_MODEL_ORDER
+def test_system_role_safe_model_orders_match_current_think_routing():
+    assert SYSTEM_ROLE_SAFE_TEXT_MODEL_ORDER == [
+        TEXT_PRIMARY,
+        TEXT_SECONDARY,
+        SMALL_TERTIARY,
+    ]
+    assert SYSTEM_ROLE_SAFE_VISION_MODEL_ORDER == [
+        VISION_SECONDARY,
+        VISION_TERTIARY,
+        VISION_QUATERNARY,
+    ]
 
 
 def test_quiz_generate_request_rejects_unexpected_fields_and_normalizes_enums():
