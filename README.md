@@ -1,68 +1,137 @@
 # PansGPT
 
-PansGPT is a pharmacy-focused AI study platform for students, lecturers, university admins, and super admins. It combines chat, document-aware retrieval, quiz generation, notes, PDF reading, lecturer material submission, timetable support, and university administration into one web app.
+PansGPT is a university study platform built for document-grounded learning, AI chat, quiz generation, PDF reading, notes, lecturer submissions, and university administration.
 
-The app is split into a FastAPI backend and a Next.js frontend. Supabase is the primary database/auth layer, Google Drive stores uploaded academic materials, and multiple LLM providers are used for chat, document processing, quiz generation, and failover.
+The codebase is split into:
+- a **FastAPI** backend in `backend/`
+- a **Next.js 16** frontend in `frontend/`
 
-## What This App Does
+It uses **Supabase** for auth/data, **Google Drive** for academic file storage, and multiple LLM providers for chat, retrieval, and quiz workflows.
 
-- AI chat for pharmacy students with Supabase-authenticated sessions.
-- Retrieval-augmented answers from uploaded course materials.
-- AI quiz generation, quiz history, quiz taking, results, and performance tracking.
-- PDF/document library with upload, processing, embeddings, and access control.
-- Notes and reader flows for studying uploaded materials.
-- Lecturer registration, profile approval, material submission, and material review.
-- Admin and super-admin dashboards for universities, students, lecturers, timetable, restrictions, settings, and feedback.
-- Timetable lookup and faculty/university-specific context.
-- Optional web search feature, currently disabled by default.
+## Contents
+
+- [What PansGPT Does](#what-pansgpt-does)
+- [Architecture](#architecture)
+- [Repository Layout](#repository-layout)
+- [Tech Stack](#tech-stack)
+- [Prerequisites](#prerequisites)
+- [Environment Variables](#environment-variables)
+- [Local Development](#local-development)
+- [Common Commands](#common-commands)
+- [Testing And CI](#testing-and-ci)
+- [Backend Overview](#backend-overview)
+- [Frontend Overview](#frontend-overview)
+- [Database And Migrations](#database-and-migrations)
+- [Deployment](#deployment)
+- [Operational Notes](#operational-notes)
+- [Known Product / Engineering Notes](#known-product--engineering-notes)
+
+## What PansGPT Does
+
+- AI chat for students with authenticated sessions
+- retrieval-augmented answers from uploaded academic materials
+- document library with upload, processing, ingestion progress, and access control
+- PDF reading with saved progress, notes, export, and study tools
+- quiz generation, quiz jobs, quiz history, attempts, and result tracking
+- lecturer registration, approval, and material submission workflows
+- university admin flows for students, lecturers, restrictions, timetable, and academic context
+- super-admin flows for cross-university administration
+- optional web search support, currently feature-gated off by default
+
+## Architecture
+
+```text
+Frontend (Next.js App Router)
+    |
+    |  x-api-key + Supabase bearer token
+    v
+Backend (FastAPI)
+    |
+    +--> Supabase (Auth, Postgres, RPCs, role/scope logic)
+    +--> Google Drive (material storage)
+    +--> LLM providers (chat, retrieval, quiz, failover)
+```
+
+### Main runtime flow
+
+1. The frontend authenticates users with Supabase.
+2. API requests go to FastAPI with:
+   - a public `x-api-key`
+   - a Supabase bearer token where required
+3. The backend resolves user identity and role/scope server-side.
+4. Documents are stored in Google Drive and tracked in Supabase.
+5. Chat, retrieval, and quiz generation use configured LLM providers.
 
 ## Repository Layout
 
 ```text
 .
-|-- backend/                 FastAPI backend
-|   |-- api.py               Main app entry point
-|   |-- routers/             API modules: chat, quiz, library, admin, lecturer, notes, etc.
-|   |-- services/            LLM, chat history, email, web search services
-|   |-- migrations/          Database schema/migration SQL
-|   |-- tests/               Backend tests
-|   `-- requirements.txt     Python dependencies
-|-- frontend/                Next.js app
-|   |-- app/                 App Router pages
-|   |-- components/          UI components
-|   |-- hooks/               Client-side controllers and hooks
-|   |-- lib/                 Supabase/API/client utilities
-|   `-- package.json         Frontend scripts and dependencies
-|-- docs/                    Architecture audits and operational notes
-|-- .github/workflows/       CI and Vercel deployment workflows
-|-- Makefile                 Backend dev/test shortcuts
-`-- package.json             Root workspace scripts
+|-- backend/
+|   |-- api.py                  FastAPI entry point
+|   |-- dependencies.py        Auth, role, and scope helpers
+|   |-- google_drive.py        Google Drive integration
+|   |-- routers/               API route modules
+|   |-- services/              LLM, email, and web search services
+|   |-- migrations/            Schema and migration SQL
+|   |-- tests/                 Backend test suite
+|   `-- requirements.txt       Python dependencies
+|-- frontend/
+|   |-- app/                   Next.js App Router pages
+|   |-- components/            UI components
+|   |-- hooks/                 Client hooks/controllers
+|   |-- lib/                   API, Supabase, cache, and workspace helpers
+|   |-- public/                Static assets and generated PWA artifacts
+|   `-- package.json           Frontend package metadata
+|-- .github/workflows/         CI and deployment workflows
+|-- Makefile                   Backend dev/test shortcuts
+|-- package.json               Root workspace scripts
+`-- README.md
 ```
 
 ## Tech Stack
 
-- Frontend: Next.js 16, React 19, TypeScript, Tailwind CSS, PWA support.
-- Backend: FastAPI, Pydantic v2, Uvicorn, SlowAPI rate limiting.
-- Database/Auth: Supabase Postgres and Supabase Auth.
-- Storage: Google Drive for uploaded academic files.
-- AI Providers: Google Gemini-compatible API, Groq, OpenRouter.
-- Retrieval: Supabase RPC/vector matching plus document chunking.
-- Web Search: Tavily, currently feature-gated off.
-- Monitoring: optional Sentry for backend.
+### Frontend
+
+- Next.js 16
+- React 19
+- TypeScript
+- Tailwind CSS 4
+- Framer Motion
+- React PDF / PDF.js
+- PWA support via `@ducanh2912/next-pwa`
+
+### Backend
+
+- FastAPI
+- Pydantic v2
+- Uvicorn
+- SlowAPI
+- Supabase Python client
+
+### Infrastructure / Services
+
+- Supabase Postgres + Supabase Auth
+- Google Drive for uploaded material storage
+- Gemini-compatible Google APIs
+- Groq
+- OpenRouter
+- Tavily, feature-gated for web search
+- optional Sentry for backend telemetry
 
 ## Prerequisites
 
-- Node.js 20+.
-- Python 3.10+.
-- Supabase project with the schema in `backend/migrations/schema.sql` or equivalent applied.
-- Google Drive API credentials and a configured upload folder.
-- At least one configured LLM provider key.
+- Node.js 20+
+- Python 3.10+
+- a Supabase project
+- Google Drive API credentials
+- a configured Google Drive upload folder
+- at least one valid LLM provider key
 
 ## Environment Variables
 
-Create environment files locally. Do not commit secrets.
+Create these locally. Do not commit them.
 
-Frontend variables usually go in `frontend/.env.local`:
+### Frontend: `frontend/.env.local`
 
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:8000
@@ -71,7 +140,7 @@ NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 ```
 
-Backend variables usually go in `backend/.env`:
+### Backend: `backend/.env`
 
 ```env
 ENVIRONMENT=development
@@ -84,13 +153,16 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 
 GOOGLE_DRIVE_FOLDER_ID=your-drive-folder-id
-GOOGLE_API_KEY=your-google-api-key
-GOOGLE_AI_API_KEY=your-google-ai-key
-GEMINI_API_KEY=your-gemini-key
-OPENROUTER_API_KEY=your-openrouter-key
-GROQ_API_KEY=your-groq-key
+
+GOOGLE_API_KEY=
+GOOGLE_AI_API_KEY=
+GEMINI_API_KEY=
+OPENROUTER_API_KEY=
+GROQ_API_KEY=
 
 SENTRY_DSN=
+TAVILY_API_KEY=
+
 RAG_MATCH_THRESHOLD=0.65
 
 QUIZ_BATCH_SIZE=5
@@ -102,47 +174,69 @@ QUIZ_RECENT_SIMILARITY_THRESHOLD=0.90
 QUIZ_IN_QUIZ_SIMILARITY_THRESHOLD=0.82
 
 WEB_SEARCH_FEATURE_ENABLED=false
-TAVILY_API_KEY=
 
 ZOHO_EMAIL=
 ZOHO_PASSWORD=
 ZOHO_UPDATES_EMAIL=
 ZOHO_UPDATES_PASSWORD=
+ZOHO_SMTP_HOST=smtp.zoho.com
+ZOHO_SMTP_PORT=465
 ```
 
-Important backend startup guard: `GOOGLE_DRIVE_FOLDER_ID` is required outside tests. The backend refuses to start without it so uploads do not accidentally go to the Drive root.
+### Important startup guard
+
+`GOOGLE_DRIVE_FOLDER_ID` is required outside tests.
+
+The backend intentionally refuses to start without it so uploads do not fall back to the Drive root by mistake.
 
 ## Local Development
 
-Install JavaScript dependencies:
+### 1. Install JavaScript dependencies
+
+From the repository root:
 
 ```bash
 npm install
 ```
 
-Install Python dependencies:
+### 2. Create and activate a Python environment
+
+From `backend/`:
 
 ```bash
-cd backend
 python -m venv .venv
-.venv\Scripts\activate
+```
+
+Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-Run both apps from the repository root:
+macOS/Linux:
+
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 3. Run the app
+
+From the repository root:
 
 ```bash
 npm run dev
 ```
 
-Or run them separately:
+Or run services separately:
 
 ```bash
-npm run dev:backend
 npm run dev:frontend
+npm run dev:backend
 ```
 
-Default local URLs:
+### Default local URLs
 
 - Frontend: `http://localhost:3000`
 - Backend: `http://localhost:8000`
@@ -150,138 +244,200 @@ Default local URLs:
 
 ## Common Commands
 
-```bash
-npm run dev                  # Run frontend and backend together
-npm run dev:frontend         # Run Next.js only
-npm run dev:backend          # Run FastAPI only
-npm run build                # Build frontend workspace
-npm run start                # Start built frontend
-
-make test-backend            # Run backend tests
-make lint                    # Backend syntax/undefined lint checks
-```
-
-Useful direct checks:
+### Root workspace
 
 ```bash
-python -m py_compile backend/api.py
-pytest backend/tests/ -q
-npm.cmd run build --prefix frontend
+npm run dev
+npm run dev:frontend
+npm run dev:backend
+npm run build
+npm run start
 ```
 
-## Backend API Areas
+### Frontend only
 
-The backend entry point is `backend/api.py`. Major routers include:
+```bash
+npm run build --workspace=frontend
+npm run lint --workspace=frontend
+```
 
-- `backend/routers/chat_core.py`: main streaming chat endpoint and chat pipeline.
-- `backend/routers/chat_sessions.py`: chat sessions/history.
-- `backend/routers/library.py`: document upload, processing, embeddings, PDF access.
-- `backend/routers/quiz.py`: quiz generation, jobs, questions, attempts, results.
-- `backend/routers/notes.py`: study notes.
-- `backend/routers/lecturer.py`: lecturer registration and material workflows.
-- `backend/routers/admin.py`: admin dashboards and university management.
-- `backend/routers/settings.py`: system settings.
-- `backend/routers/timetable.py`: timetable endpoints.
-- `backend/routers/feedback.py`: feedback handling.
+### Backend only
 
-Requests from the frontend include an `x-api-key` header and a Supabase bearer token. The backend validates both where required.
+```bash
+python -m compileall backend
+pytest backend/tests -q
+```
 
-## Frontend Areas
+### Makefile shortcuts
 
-The frontend uses the Next.js App Router. Important routes include:
+```bash
+make lint
+make test-backend
+make dev-backend
+make dev-frontend
+```
 
-- `/main`: main AI chat experience.
-- `/reader` and `/reader/[id]`: document reading flows.
-- `/notes`: notes workspace.
-- `/quiz`, `/quiz/new`, `/quiz/history`, `/quiz/generating/[jobId]`, `/quiz/[id]`: quiz flows.
-- `/lecturer/*`: lecturer registration/profile/material workflows.
-- `/admin/*`: university admin tools.
-- `/super-admin/*`: platform-level administration.
+## Testing And CI
 
-The frontend API client is `frontend/lib/api.ts`. It attaches the API key, Supabase auth token, and admin workspace university context when needed.
+GitHub Actions workflows live in `.github/workflows/`.
 
-## Quiz Generation Notes
+### CI
 
-Quiz generation is asynchronous and job-based. The frontend creates a quiz generation job and polls job state while the backend retrieves context, calls the LLM, validates output, and inserts questions incrementally.
+`ci.yml` currently runs:
 
-Current quiz reliability behavior:
+- backend lint: `ruff check backend --select E9,F63,F7,F82`
+- backend tests:
+  - `pytest backend/tests/ -q`
+  - with some heavy/security-targeted files split into a separate job
+- frontend build check:
+  - `npm run build` inside `frontend/`
 
-- `QUIZ_BATCH_SIZE` controls batch size and should stay env-driven.
-- Tagged text is the primary model output format.
-- Tagged text supports native `multiple_choice`, `MCQ`, `TRUE_FALSE`, and `SHORT_ANSWER` quiz question types.
-- JSON parsing and `json-repair` remain as legacy fallback.
-- Generated questions are validated before insert.
-- Partial valid tagged batches can be inserted while invalid blocks are rejected.
-- Recent-question duplicate checks run per question, not as all-or-nothing batch rejection.
-- `QUIZ_RECENT_QUESTION_LIMIT` controls how many past questions are compared for repetition.
-- `QUIZ_RECENT_PROMPT_LIMIT` controls how many past questions are shown in the prompt.
-- `QUIZ_RECENT_SIMILARITY_THRESHOLD` and `QUIZ_IN_QUIZ_SIMILARITY_THRESHOLD` tune duplicate strictness.
-- Quiz generation uses its own provider preference order and does not change the main chat routing.
-- Job rows track `generated_question_count` and `target_question_count`.
-- Provider attempt and parse timing logs are emitted with `quiz_generation_timing`.
+### Security regression
 
-## Web Search Status
+The CI pipeline also has a dedicated job for:
 
-Web search is intentionally disabled for now.
+- `backend/tests/test_prompt_guard.py`
+- `backend/tests/test_chat_security.py`
 
-Current disablement:
+## Backend Overview
 
-- Backend gate: `WEB_SEARCH_FEATURE_ENABLED=false` by default in `backend/routers/chat_core.py`.
-- Frontend gate: `WEB_SEARCH_FEATURE_ENABLED = false` in `frontend/hooks/useMainPageController.ts`.
-- The frontend sends `web_search: false` even if stale browser localStorage previously enabled it.
-- The frontend skips `/web-search/usage` while disabled.
-- Old clients cannot trigger Tavily unless the backend env gate is enabled.
+The backend entry point is:
 
-### Future TODO: Re-enable Web Search
+- `backend/api.py`
 
-To re-enable web search later:
+Important backend modules:
 
-1. Backend: set `WEB_SEARCH_FEATURE_ENABLED=true`.
-2. Frontend: set `WEB_SEARCH_FEATURE_ENABLED = true` in `frontend/hooks/useMainPageController.ts`.
-3. Re-enable the web-search UI toggle in `frontend/components/ChatInput.tsx` if users should control it per message.
-4. Confirm `system_settings.web_search_enabled` is enabled in Supabase.
-5. Configure `TAVILY_API_KEY`.
-6. Verify daily usage limits and quota UI.
-7. Keep a backend guard so greetings and small talk do not trigger web search unless the user explicitly asks.
+- `backend/dependencies.py`
+  - authentication
+  - role resolution
+  - university scope enforcement
+- `backend/routers/chat_core.py`
+  - main streaming chat endpoint
+- `backend/routers/chat_sessions.py`
+  - chat history/session handling
+- `backend/routers/library.py`
+  - uploads, document processing, ingestion, progress
+- `backend/routers/quiz.py`
+  - quiz generation, jobs, results, history
+- `backend/routers/notes.py`
+  - note storage and retrieval
+- `backend/routers/lecturer.py`
+  - lecturer registration and submission flows
+- `backend/routers/admin.py`
+  - university admin operations
+- `backend/routers/timetable.py`
+  - timetable endpoints
+- `backend/routers/feedback.py`
+  - feedback submission/handling
+- `backend/routers/settings.py`
+  - system and settings endpoints
 
-## Database
+### Auth model
 
-The canonical schema snapshot is in:
+Requests typically include:
+
+- `x-api-key`
+- `Authorization: Bearer <supabase-access-token>`
+
+Important distinction:
+- `x-api-key` is a coarse client/app gate
+- real user identity and authorization come from the bearer token and backend role/scope checks
+
+## Frontend Overview
+
+The frontend uses the Next.js App Router.
+
+Important areas:
+
+- `frontend/lib/api.ts`
+  - API wrapper
+  - auth token forwarding
+  - admin workspace query injection
+- `frontend/lib/supabase.ts`
+  - browser Supabase client
+- `frontend/lib/admin-workspace.ts`
+  - current admin workspace university state
+- `frontend/components/PDFViewer.tsx`
+  - reader, notes, export, progress sync, PDF fetch/cache
+
+Important route groups:
+
+- `/home`
+- `/reader/[id]`
+- `/notes`
+- `/quiz/*`
+- `/lecturer/*`
+- `/admin/*`
+- `/super-admin/*`
+
+## Database And Migrations
+
+Canonical schema snapshot:
 
 ```text
 backend/migrations/schema.sql
 ```
 
-Additional SQL files exist for setup and feature-specific migrations, including:
+Other SQL files currently present:
 
 - `backend/supabase_setup.sql`
 - `backend/quiz_tables.sql`
 - `backend/lbac_migration.sql`
+- feature-specific files in `backend/migrations/`
 
-Use the Supabase SQL editor or migration workflow for your environment. Service-role access is needed for backend write paths that bypass RLS safely.
+Use your normal Supabase migration/editor workflow for applying schema changes in your environment.
 
 ## Deployment
 
-Frontend deployment is configured through Vercel in `.github/workflows/deploy.yml`.
+### Frontend
 
-CI is configured in `.github/workflows/ci.yml`:
+`deploy.yml` deploys the frontend to Vercel on pushes to `main`.
 
-- Backend installs Python dependencies, runs limited Ruff checks, and runs `pytest backend/tests/ -q`.
-- Frontend installs dependencies and runs `npm run build`.
+Required GitHub secrets include:
 
-The backend is a separate FastAPI service and must be deployed with its own environment variables. The frontend must point `NEXT_PUBLIC_API_URL` to that deployed backend.
+- `VERCEL_TOKEN`
+- `VERCEL_ORG_ID`
+- `VERCEL_PROJECT_ID`
+
+### Backend
+
+The FastAPI backend is deployed separately and is not bundled into the Vercel frontend deployment.
+
+The frontend must point `NEXT_PUBLIC_API_URL` to the deployed backend base URL.
 
 ## Operational Notes
 
-- Do not commit `backend/.env`, Google credentials, service account files, Supabase keys, or provider keys.
-- Keep `SUPABASE_SERVICE_ROLE_KEY` backend-only.
-- Keep `NEXT_PUBLIC_*` values safe for browser exposure.
-- If quiz generation slows down, inspect `quiz_generation_timing` logs before changing batch size or provider routing.
-- If `/chat` feels slow, compare context gathering time vs provider call time in `CHAT LATENCY` logs.
-- If document uploads fail, verify Google Drive credentials and `GOOGLE_DRIVE_FOLDER_ID`.
+- keep `SUPABASE_SERVICE_ROLE_KEY` backend-only
+- treat all `NEXT_PUBLIC_*` variables as browser-visible
+- do not commit `.env` files, service-account files, or API keys
+- verify `GOOGLE_DRIVE_FOLDER_ID` before backend startup in non-test environments
+- if document uploads fail, check:
+  - Drive credentials
+  - upload folder configuration
+  - backend logs
+- if quiz generation becomes unstable, inspect:
+  - quiz provider timeouts
+  - duplicate-filter thresholds
+  - generation logs
 
-## Current Caveats
+## Known Product / Engineering Notes
 
-- Web search is parked and disabled until it is intentionally reintroduced.
-- Some documentation in `docs/` is audit-style and may describe historical states, not necessarily the current implementation.
-- The backend still contains both older and newer quiz generation paths because JSON fallback has been preserved while tagged text proves stable in production.
+### Web search is currently disabled by default
+
+Current gating:
+
+- backend env gate: `WEB_SEARCH_FEATURE_ENABLED=false`
+- frontend hard gate in `frontend/hooks/useMainPageController.ts`
+
+To re-enable later:
+
+1. set `WEB_SEARCH_FEATURE_ENABLED=true` in backend env
+2. re-enable the frontend gate
+3. configure `TAVILY_API_KEY`
+4. verify usage limits and UI behavior
+
+### Documentation caveat
+
+Some internal markdown under ignored/private documentation areas may be audit-style, planning-oriented, or historical.
+
+Treat the code as the source of truth if any document appears stale.

@@ -14,15 +14,16 @@ TEXT_SECONDARY = "gemma-4-26b-a4b-it"         # Google AI Studio fallback
 TEXT_TERTIARY = "meta-llama/llama-4-scout-17b-16e-instruct"  # [GROQ TERTIARY FIX]
 # Compatibility alias for callers still referencing TEXT_FALLBACK.
 TEXT_FALLBACK = TEXT_SECONDARY
-FAST_TEXT_MODEL_ORDER = [TEXT_TERTIARY, TEXT_SECONDARY, TEXT_PRIMARY]
-QUIZ_TEXT_MODEL_ORDER = [TEXT_TERTIARY, TEXT_SECONDARY, TEXT_PRIMARY]
-FAST_TEXT_PRIMARY = FAST_TEXT_MODEL_ORDER[0]
-QUIZ_TEXT_PRIMARY = QUIZ_TEXT_MODEL_ORDER[0]
 
 SMALL_PRIMARY = "meta-llama/llama-3.3-70b-instruct:free"   # OpenRouter (Llama 3.3 70B Free)
 SMALL_SECONDARY = "llama-3.1-8b-instant"                  # Groq (Llama 3.1 8b)
 SMALL_TERTIARY = "qwen/qwen-2.5-72b-instruct:free"         # OpenRouter (Qwen 2.5 72B Free)
-TEXT_FAST = SMALL_PRIMARY                  # Smaller and faster model for quick tasks (e.g. titles)
+TEXT_FAST = SMALL_SECONDARY                # Smaller and faster model for quick tasks (e.g. titles)
+FAST_TEXT_MODEL_ORDER = [TEXT_TERTIARY, SMALL_PRIMARY, SMALL_SECONDARY, TEXT_SECONDARY]
+THINK_TEXT_MODEL_ORDER = [TEXT_PRIMARY, TEXT_SECONDARY, SMALL_TERTIARY]
+FAST_TEXT_PRIMARY = FAST_TEXT_MODEL_ORDER[0]
+QUIZ_TEXT_MODEL_ORDER = [TEXT_TERTIARY, SMALL_PRIMARY, TEXT_SECONDARY, TEXT_PRIMARY]
+QUIZ_TEXT_PRIMARY = QUIZ_TEXT_MODEL_ORDER[0]
 
 VISION_PRIMARY = "meta-llama/llama-4-scout-17b-16e-instruct"
 VISION_SECONDARY = "gemma-4-31b-it"
@@ -40,16 +41,10 @@ VISION_MODEL_MAX_TOKENS = {
     VISION_TERTIARY: 512,
     VISION_QUATERNARY: 384,
 }
-SYSTEM_ROLE_SAFE_TEXT_MODEL_ORDER = [
-    TEXT_TERTIARY,
-    SMALL_SECONDARY,
-    SMALL_PRIMARY,
-    SMALL_TERTIARY,
-]
-SYSTEM_ROLE_SAFE_VISION_MODEL_ORDER = [
-    VISION_PRIMARY,
-    VISION_QUATERNARY,
-]
+FAST_VISION_MODEL_ORDER = [VISION_PRIMARY, VISION_TERTIARY, VISION_SECONDARY]
+THINK_VISION_MODEL_ORDER = [VISION_SECONDARY, VISION_TERTIARY, VISION_QUATERNARY]
+SYSTEM_ROLE_SAFE_TEXT_MODEL_ORDER = THINK_TEXT_MODEL_ORDER
+SYSTEM_ROLE_SAFE_VISION_MODEL_ORDER = THINK_VISION_MODEL_ORDER
 
 openrouter_client = None
 google_client = None
@@ -163,6 +158,26 @@ def _client_for_text_model(model_name: str) -> Any:
     if model_name in {SMALL_PRIMARY, SMALL_TERTIARY}:
         return openrouter_client
     return None
+
+
+def _all_text_order() -> list[tuple[str, str]]:
+    return [
+        ("TEXT_PRIMARY", TEXT_PRIMARY),
+        ("TEXT_SECONDARY", TEXT_SECONDARY),
+        ("TEXT_TERTIARY", TEXT_TERTIARY),
+        ("SMALL_PRIMARY", SMALL_PRIMARY),
+        ("SMALL_SECONDARY", SMALL_SECONDARY),
+        ("SMALL_TERTIARY", SMALL_TERTIARY),
+    ]
+
+
+def _all_vision_order() -> list[str]:
+    return [
+        VISION_PRIMARY,
+        VISION_SECONDARY,
+        VISION_TERTIARY,
+        VISION_QUATERNARY,
+    ]
 
 
 def _max_tokens_for_text_model(model_name: str, requested_max_tokens: int) -> int:
@@ -303,7 +318,13 @@ async def generate_completion_with_failover(
     # --- Vision path ---
     if has_images:
         last_exc = None
-        vision_order = SYSTEM_ROLE_SAFE_VISION_MODEL_ORDER if require_system_role_support else VISION_MODEL_ORDER
+        default_vision_order = SYSTEM_ROLE_SAFE_VISION_MODEL_ORDER if require_system_role_support else VISION_MODEL_ORDER
+        if preferred_models:
+            known_vision_models = _all_vision_order()
+            preferred_set = [model_name for model_name in preferred_models if model_name in known_vision_models]
+            vision_order = preferred_set + [model_name for model_name in default_vision_order if model_name not in preferred_set]
+        else:
+            vision_order = default_vision_order
         for model_name in vision_order:
             if model_name == VISION_PRIMARY:
                 client = groq_text_client
@@ -346,17 +367,8 @@ async def generate_completion_with_failover(
         raise RuntimeError("No vision-capable client is available.")
 
     # [MODEL ROUTING FIX]
-    default_text_order = [
-        ("TEXT_PRIMARY", TEXT_PRIMARY),
-        ("TEXT_SECONDARY", TEXT_SECONDARY),
-        ("TEXT_TERTIARY", TEXT_TERTIARY),
-    ]
-    system_safe_order = [
-        ("TEXT_TERTIARY", TEXT_TERTIARY),
-        ("SMALL_SECONDARY", SMALL_SECONDARY),
-        ("SMALL_PRIMARY", SMALL_PRIMARY),
-        ("SMALL_TERTIARY", SMALL_TERTIARY),
-    ]
+    default_text_order = _all_text_order()
+    system_safe_order = _all_text_order()
     full_order = system_safe_order if require_system_role_support else default_text_order
     if preferred_models:
         preferred_set = {
@@ -498,26 +510,12 @@ async def generate_small_completion_with_failover(
 ) -> Optional[Any]:
     """
     Failover chain for small/fast tasks:
-    1. SMALL_PRIMARY (meta-llama/llama-3.3-70b-instruct:free) using openrouter_client
-    2. SMALL_SECONDARY (llama-3.1-8b-instant) using groq_client
+    1. SMALL_SECONDARY (llama-3.1-8b-instant) using groq_client
+    2. SMALL_PRIMARY (meta-llama/llama-3.3-70b-instruct:free) using openrouter_client
     3. SMALL_TERTIARY (qwen/qwen-2.5-72b-instruct:free) using openrouter_client
     4. Fall back to the main generate_completion_with_failover chain if all small clients fail.
     """
-    # 1. Try OpenRouter (SMALL_PRIMARY)
-    if openrouter_client is not None:
-        try:
-            logger.info(f"[INFO] SMALL failover chain: attempting SMALL_PRIMARY ({SMALL_PRIMARY})")
-            return await openrouter_client.chat.completions.create(
-                model=SMALL_PRIMARY,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stream=stream,
-            )
-        except Exception as exc:
-            logger.warning(f"SMALL_PRIMARY failed ({SMALL_PRIMARY}), trying next: {exc}")
-
-    # 2. Try Groq (SMALL_SECONDARY)
+    # 1. Try Groq (SMALL_SECONDARY)
     if groq_client is not None:
         try:
             logger.info(f"[INFO] SMALL failover chain: attempting SMALL_SECONDARY ({SMALL_SECONDARY})")
@@ -530,6 +528,20 @@ async def generate_small_completion_with_failover(
             )
         except Exception as exc:
             logger.warning(f"SMALL_SECONDARY failed ({SMALL_SECONDARY}), trying next: {exc}")
+
+    # 2. Try OpenRouter (SMALL_PRIMARY)
+    if openrouter_client is not None:
+        try:
+            logger.info(f"[INFO] SMALL failover chain: attempting SMALL_PRIMARY ({SMALL_PRIMARY})")
+            return await openrouter_client.chat.completions.create(
+                model=SMALL_PRIMARY,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=stream,
+            )
+        except Exception as exc:
+            logger.warning(f"SMALL_PRIMARY failed ({SMALL_PRIMARY}), trying next: {exc}")
 
     # 3. Try OpenRouter (SMALL_TERTIARY)
     if openrouter_client is not None:

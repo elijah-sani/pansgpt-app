@@ -1234,8 +1234,8 @@ async def _generate_and_save_title(session_id: str, user_text: str, current_user
         if not session_id or not chat_history.has_client():
             return
 
-        if llm_engine.google_client is None:
-            logger.error("Google client not initialized for title generation")
+        if not llm_engine.has_available_client():
+            logger.error("No LLM client initialized for title generation")
             return
 
         conversation_excerpt = "(no prior messages)"
@@ -1336,7 +1336,7 @@ async def _generate_and_save_title(session_id: str, user_text: str, current_user
 
         await chat_history.update_session_title(session_id, new_title)
         logger.info(
-            f"AI Auto-renamed session {session_id} to '{new_title}' (via Google AI) "
+            f"AI Auto-renamed session {session_id} to '{new_title}' "
             f"for user {getattr(current_user, 'id', 'unknown')}"
         )
         return new_title
@@ -2041,7 +2041,12 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                 temperature=temperature,
                 max_tokens=VISION_MAX_OUTPUT_TOKENS if is_vision_mode else 2048,
                 requested_model="VISION_PRIMARY" if is_vision_mode else (llm_engine.TEXT_PRIMARY if request.thinking_mode else llm_engine.FAST_TEXT_PRIMARY),
-                preferred_models=None if request.thinking_mode else llm_engine.FAST_TEXT_MODEL_ORDER,
+                preferred_models=(
+                    llm_engine.THINK_VISION_MODEL_ORDER if is_vision_mode and request.thinking_mode else
+                    llm_engine.FAST_VISION_MODEL_ORDER if is_vision_mode else
+                    llm_engine.THINK_TEXT_MODEL_ORDER if request.thinking_mode else
+                    llm_engine.FAST_TEXT_MODEL_ORDER
+                ),
                 require_system_role_support=True,
             )
             yield {"status": "preparing_response"}
@@ -2802,7 +2807,12 @@ async def edit_message(
                 temperature=temperature,
                 max_tokens=VISION_MAX_OUTPUT_TOKENS if is_vision_mode else 2048,
                 requested_model="VISION_PRIMARY" if is_vision_mode else (llm_engine.TEXT_PRIMARY if payload.thinking_mode else llm_engine.FAST_TEXT_PRIMARY),
-                preferred_models=None if payload.thinking_mode else llm_engine.FAST_TEXT_MODEL_ORDER,
+                preferred_models=(
+                    llm_engine.THINK_VISION_MODEL_ORDER if is_vision_mode and payload.thinking_mode else
+                    llm_engine.FAST_VISION_MODEL_ORDER if is_vision_mode else
+                    llm_engine.THINK_TEXT_MODEL_ORDER if payload.thinking_mode else
+                    llm_engine.FAST_TEXT_MODEL_ORDER
+                ),
                 require_system_role_support=True,
             )
             yield {"status": "preparing_response"}
@@ -3276,7 +3286,12 @@ async def regenerate_response(
                 temperature=temperature,
                 max_tokens=VISION_MAX_OUTPUT_TOKENS if is_vision_mode else 2048,
                 requested_model="VISION_PRIMARY" if is_vision_mode else (llm_engine.TEXT_PRIMARY if payload.thinking_mode else llm_engine.FAST_TEXT_PRIMARY),
-                preferred_models=None if payload.thinking_mode else llm_engine.FAST_TEXT_MODEL_ORDER,
+                preferred_models=(
+                    llm_engine.THINK_VISION_MODEL_ORDER if is_vision_mode and payload.thinking_mode else
+                    llm_engine.FAST_VISION_MODEL_ORDER if is_vision_mode else
+                    llm_engine.THINK_TEXT_MODEL_ORDER if payload.thinking_mode else
+                    llm_engine.FAST_TEXT_MODEL_ORDER
+                ),
                 require_system_role_support=True,
             )
             yield {"status": "preparing_response"}

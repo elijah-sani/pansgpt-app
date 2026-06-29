@@ -137,7 +137,8 @@ async def _call_background_llm_with_retry(call_fn, operation_name: str, max_atte
 async def _summarize_previous_session(user_id: str, exclude_session_id: str):
     """
     Background task: fetch the most recent completed session for this user,
-    generate a title (if still New Chat) and a summary using Gemma 3 12B,
+    generate a title (if still New Chat) and a summary using the shared
+    small-task failover chain,
     and save both back to the database.
     """
     try:
@@ -190,7 +191,7 @@ async def _summarize_previous_session(user_id: str, exclude_session_id: str):
                 conversation_text += f"{role}: {content}\n\n"
         conversation_text = conversation_text[:8000]
 
-        # Step 4: Build prompt for Gemma 3 12B
+        # Step 4: Build the prompt for the shared small-task chain
         needs_title = _is_generic_title(prev_title) or prev_title == "New Chat" or not prev_title
 
         prompt = (
@@ -216,7 +217,8 @@ async def _summarize_previous_session(user_id: str, exclude_session_id: str):
                 "SUMMARY: <summary here>"
             )
 
-        # Step 5: Call LLM with small failover chain (Gemma 12B -> Llama 3.1 8B Groq -> OpenRouter)
+        # Step 5: Call the shared small-task failover chain
+        # Current order: Llama 3.1 8B -> Llama 3.3 70B -> Qwen 2.5 72B.
         response = await llm_engine.generate_small_completion_with_failover(
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3,
