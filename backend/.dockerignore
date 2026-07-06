@@ -1,0 +1,17 @@
+.env
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.coverage
+htmlcov/
+
+credentials.json
+service_account.json
+token.json
+*.log
+
+Dockerfile
+.dockerignore
