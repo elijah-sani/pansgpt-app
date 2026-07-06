@@ -30,44 +30,98 @@ class DriveUploadConfigurationError(ValueError):
 class GoogleDriveService:
     """
     Service class for Google Drive operations.
-    Handles authentication via a Service Account (service_account.json).
+    Handles authentication via OAuth 2.0 User Credentials (token.json).
     """
-    
+
     SCOPES = ['https://www.googleapis.com/auth/drive']
-    TOKEN_FILE = 'token.json'
+
+    # ---------------------------------------------------------------------------
+    # Token file resolution order:
+    #   1. GOOGLE_TOKEN_FILE environment variable (explicit override)
+    #   2. /etc/secrets/token.json  (Render Secret Files mount)
+    #   3. token.json               (local development fallback)
+    # ---------------------------------------------------------------------------
+    _RENDER_SECRETS_PATH = '/etc/secrets/token.json'
+    _LOCAL_FALLBACK_PATH = 'token.json'
+
+    @classmethod
+    def _resolve_token_file(cls) -> str:
+        """Return the token file path based on environment, with clear precedence."""
+        env_path = os.environ.get('GOOGLE_TOKEN_FILE')
+        if env_path:
+            logger.info(f"Using token file from GOOGLE_TOKEN_FILE env var: {env_path}")
+            return env_path
+        if os.path.exists(cls._RENDER_SECRETS_PATH):
+            logger.info(f"Using Render Secret Files token: {cls._RENDER_SECRETS_PATH}")
+            return cls._RENDER_SECRETS_PATH
+        logger.info(f"Using local fallback token file: {cls._LOCAL_FALLBACK_PATH}")
+        return cls._LOCAL_FALLBACK_PATH
 
     def __init__(self, allow_upload: bool = False):
         """
         Initialize Google Drive service with OAuth 2.0 User Credentials.
+
+        Token file resolution order (see _resolve_token_file):
+          GOOGLE_TOKEN_FILE env var -> /etc/secrets/token.json -> token.json
+
+        Note: Render Secret Files are read-only. If the resolved path is not
+        writable, the refreshed credentials are still used in-memory but the
+        updated token is not persisted (the next cold start will refresh again).
         """
         self.credentials = None
-        
+        token_file = self._resolve_token_file()
+
+        # Detect at startup whether we can write back after a refresh.
+        # /etc/secrets/* on Render is a read-only tmpfs mount.
+        self._token_file_writable = os.access(token_file, os.W_OK) if os.path.exists(token_file) else True
+        if not self._token_file_writable:
+            logger.warning(
+                f"Token file '{token_file}' is read-only (expected on Render Secret Files). "
+                "Refreshed tokens will be held in-memory only."
+            )
+
         # 1. Load User Credentials
-        if os.path.exists(self.TOKEN_FILE):
+        if os.path.exists(token_file):
             try:
-                self.credentials = Credentials.from_authorized_user_file(self.TOKEN_FILE, self.SCOPES)
+                self.credentials = Credentials.from_authorized_user_file(token_file, self.SCOPES)
             except Exception as e:
-                logger.warning(f"Error loading token.json: {e}")
-        
+                logger.warning(f"Error loading token file '{token_file}': {e}")
+        else:
+            logger.warning(f"Token file not found at '{token_file}'.")
+
         # 2. Refresh if needed
         if not self.credentials or not self.credentials.valid:
             if self.credentials and self.credentials.expired and self.credentials.refresh_token:
                 import google.auth.exceptions
                 from google.auth.transport.requests import Request
-                import time
-                
+
                 max_retries = 3
                 success = False
                 last_error = None
-                
+
                 for attempt in range(max_retries):
                     try:
                         logger.info("Refreshing access token...")
                         self.credentials.refresh(Request())
-                        # Save the refreshed token
-                        with open(self.TOKEN_FILE, 'w') as token:
-                            token.write(self.credentials.to_json())
-                        logger.info("Token refreshed and saved.")
+                        logger.info("Access token refreshed successfully.")
+
+                        # Only write back when the file is writable (not on Render secrets).
+                        if self._token_file_writable:
+                            try:
+                                with open(token_file, 'w') as f:
+                                    f.write(self.credentials.to_json())
+                                logger.info(f"Refreshed token saved to '{token_file}'.")
+                            except OSError as write_err:
+                                logger.warning(
+                                    f"Could not write refreshed token to '{token_file}': {write_err}. "
+                                    "Continuing with in-memory credentials."
+                                )
+                        else:
+                            logger.info(
+                                f"Skipping token write-back: '{token_file}' is read-only. "
+                                "Refreshed token is active in-memory for this process lifetime."
+                            )
+
                         success = True
                         break
                     except (google.auth.exceptions.RefreshError, ConnectionError) as e:
@@ -80,18 +134,25 @@ class GoogleDriveService:
                         logger.warning(f"Unexpected error during token refresh: {e}")
                         if attempt < max_retries - 1:
                             time.sleep(2)
-                
+
                 if not success:
-                    logger.error("CRITICAL: Token refresh failed after 3 attempts. Please delete token.json and re-authenticate.")
-                    raise Exception(f"CRITICAL: Token refresh failed after 3 attempts. Please delete token.json and re-authenticate. Last error: {last_error}")
+                    logger.error("CRITICAL: Token refresh failed after 3 attempts.")
+                    raise Exception(
+                        f"CRITICAL: Token refresh failed after 3 attempts. Last error: {last_error}"
+                    )
             else:
-                raise Exception("CRITICAL: token.json is missing or invalid. Please run setup_auth.py locally.")
-        
+                raise Exception(
+                    f"CRITICAL: No valid token found at '{token_file}'. "
+                    "On Render, mount token.json as a Secret File at /etc/secrets/token.json "
+                    "or set the GOOGLE_TOKEN_FILE environment variable. "
+                    "For local development, run setup_auth.py."
+                )
+
         logger.info("Successfully authenticated with Google Drive (User OAuth).")
-        
+
         # Build the Drive API service
         self.service = build('drive', 'v3', credentials=self.credentials, cache_discovery=False)
-    
+
     def _execute_with_retry(self, request_func):
         """Helper to retry API calls on network failure."""
         max_retries = 3
@@ -118,75 +179,75 @@ class GoogleDriveService:
                 fields='id, name, mimeType, size, createdTime, modifiedTime'
             )
         )
-    
+
     def get_file_stream(self, file_id: str, chunk_size: int = 256 * 1024) -> Iterator[bytes]:
         """
         Stream file content with Range-Header Resumption.
-        If the connection drops (SSL/Network), this method automatically reconnects 
+        If the connection drops (SSL/Network), this method automatically reconnects
         and requests the *remaining* bytes using the Range header.
         """
-        import requests 
-        
+        import requests
+
         url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media"
         downloaded_bytes = 0
         max_retries = 5
-        
+
         for attempt in range(max_retries):
             try:
                 # Create a fresh session for each attempt to clear bad SSL state
                 authed_session = AuthorizedSession(self.credentials)
-                
+
                 headers = {}
                 if downloaded_bytes > 0:
                     headers["Range"] = f"bytes={downloaded_bytes}-"
                     logger.info(f"Resuming stream from byte {downloaded_bytes}...")
-                
+
                 # Timeout: 15s connect, 60s read
                 response = authed_session.get(url, headers=headers, stream=True, timeout=(15, 60))
-                
+
                 # Handle 416 Range Not Satisfiable (file fully downloaded?)
                 if response.status_code == 416:
-                     logger.info("Stream finished (416 Range Not Satisfiable reached).")
-                     return
+                    logger.info("Stream finished (416 Range Not Satisfiable reached).")
+                    return
 
                 response.raise_for_status()
-                
+
                 # iterate_content handles chunk decoding
                 # We wrap it to catch errors during the READ phase
                 for chunk in response.iter_content(chunk_size=chunk_size):
                     if chunk:
                         yield chunk
                         downloaded_bytes += len(chunk)
-                        
+
                 # If we exit the loop naturally, we are done
                 return
 
-            except (ssl.SSLError, requests.exceptions.ChunkedEncodingError, 
+            except (ssl.SSLError, requests.exceptions.ChunkedEncodingError,
                     requests.exceptions.ConnectionError, requests.exceptions.ReadTimeout) as e:
                 logger.warning(f"Stream dropped at {downloaded_bytes} bytes (Attempt {attempt + 1}/{max_retries}): {e}")
                 if attempt < max_retries - 1:
-                    time.sleep(2) # Wait a bit before reconnecting
+                    time.sleep(2)  # Wait a bit before reconnecting
                     continue
                 else:
                     raise ValueError(f"Stream failed after {max_retries} attempts. Last error: {e}")
             except Exception as e:
                 logger.error(f"Critical Stream Error: {e}")
                 raise
-    
+
     def download_file_bytes(self, file_id: str) -> bytes:
         """Download entire file content as bytes."""
         try:
             request = self.service.files().get_media(fileId=file_id)
             buffer = io.BytesIO()
             downloader = MediaIoBaseDownload(buffer, request)
-            
+
             done = False
             while not done:
                 status, done = downloader.next_chunk()
-            
+
             buffer.seek(0)
             return buffer.read()
-            
+
         except Exception as e:
             raise ValueError(f"Failed to download file: {str(e)}")
 
@@ -304,11 +365,11 @@ class GoogleDriveService:
                 os.remove(temp_path)
             except OSError:
                 pass
-    
+
     def upload_file(
-        self, 
-        file_name: str, 
-        file_obj, 
+        self,
+        file_name: str,
+        file_obj,
         mime_type: str = 'application/pdf',
         folder_id: Optional[str] = None,
         file_size: Optional[int] = None
@@ -322,7 +383,7 @@ class GoogleDriveService:
         target_folder = (folder_id or os.getenv('GOOGLE_DRIVE_FOLDER_ID') or "").strip()
         if not target_folder:
             raise DriveUploadConfigurationError("Google Drive upload folder is not configured.")
-        
+
         # Prepare Metadata
         metadata = {'name': file_name, 'parents': [target_folder]}
 
@@ -474,19 +535,21 @@ class GoogleDriveService:
         raise DriveUploadTemporaryError(
             f"Upload failed after retries for {file_name}. Last error: {final_error}"
         )
-    
+
     def list_files(
-        self, 
-        folder_id: Optional[str] = None, 
+        self,
+        folder_id: Optional[str] = None,
         mime_type: Optional[str] = None,
         page_size: int = 100
     ) -> list:
         """List files in Google Drive."""
         query_parts = []
-        if folder_id: query_parts.append(f"'{folder_id}' in parents")
-        if mime_type: query_parts.append(f"mimeType='{mime_type}'")
+        if folder_id:
+            query_parts.append(f"'{folder_id}' in parents")
+        if mime_type:
+            query_parts.append(f"mimeType='{mime_type}'")
         query = ' and '.join(query_parts) if query_parts else None
-        
+
         try:
             result = self._execute_with_retry(
                 lambda: self.service.files().list(
@@ -496,7 +559,7 @@ class GoogleDriveService:
             )
             return result.get('files', [])
         except Exception as e:
-             raise ValueError(f"Failed to list files: {str(e)}")
+            raise ValueError(f"Failed to list files: {str(e)}")
 
     def delete_file(self, file_id: str) -> None:
         """Delete a file from Google Drive using AuthorizedSession for reliability."""
@@ -505,16 +568,16 @@ class GoogleDriveService:
             # This is more reliable on Windows than httplib2
             authed_session = AuthorizedSession(self.credentials)
             url = f"https://www.googleapis.com/drive/v3/files/{file_id}"
-            
+
             response = authed_session.delete(url, timeout=30)
-            
+
             if response.status_code == 204:
                 return  # Success - file deleted
             elif response.status_code == 404:
                 raise ValueError(f"File not found: {file_id}")
             else:
                 response.raise_for_status()
-                
+
         except Exception as e:
             raise ValueError(f"Failed to delete file: {str(e)}")
 
@@ -529,9 +592,8 @@ def get_drive_service(allow_upload: bool = False) -> GoogleDriveService:
     Since we use token.json which has static scopes, allow_upload is mainly for compatibility.
     """
     global _drive_service
-    
+
     if _drive_service is None:
         _drive_service = GoogleDriveService(allow_upload=allow_upload)
-        
-    return _drive_service
 
+    return _drive_service
