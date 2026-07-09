@@ -8,13 +8,11 @@ import {
     CalendarDays,
     FileCheck2,
     GraduationCap,
-    Home,
     LayoutDashboard,
     Library,
     Menu,
     Search,
     ShieldAlert,
-    User,
     UserCheck,
     Users,
     X,
@@ -75,20 +73,6 @@ const navSections: AdminNavSection[] = [
     },
 ];
 
-const mobileNavItems: AdminNavItem[] = [
-    { icon: Home, label: 'Home', href: '/admin' },
-    { icon: Library, label: 'Library', href: '/admin/library' },
-    { icon: FileCheck2, label: 'Materials', href: '/admin/material-submissions' },
-    { icon: Users, label: 'Students', href: '/admin/students' },
-];
-
-const mobileBottomNavItems: AdminNavItem[] = [
-    { icon: Home, label: 'Home', href: '/admin' },
-    { icon: Library, label: 'Library', href: '/admin/library' },
-    { icon: FileCheck2, label: 'Materials', href: '/admin/material-submissions' },
-    { icon: Users, label: 'Students', href: '/admin/students' },
-    { icon: User, label: 'Me', href: '/admin/settings' },
-];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
     const router = useRouter();
@@ -224,8 +208,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     const mainClass = [
         isLibraryPage
             ? 'ml-0 flex h-[100dvh] flex-1 flex-col scroll-smooth transition-[margin] duration-200 overflow-x-hidden overflow-y-hidden px-0 pt-2 sm:px-0 lg:h-screen lg:overflow-hidden lg:p-0'
-            : 'ml-0 flex flex-1 flex-col scroll-smooth overflow-x-hidden overflow-y-visible px-4 pt-2 transition-[margin] duration-200 sm:px-5',
-        hideMobileNav ? 'pb-0' : isLibraryPage ? 'pb-0' : 'pb-28',
+            : 'ml-0 flex flex-1 flex-col scroll-smooth overflow-x-hidden overflow-y-visible px-4 pt-2 pb-6 transition-[margin] duration-200 sm:px-5',
         isLibraryPage
             ? 'lg:h-screen lg:overflow-hidden lg:p-0'
             : 'md:min-h-screen md:overflow-y-visible md:p-8 md:pb-8 md:pt-8',
@@ -301,7 +284,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                                         {mobileOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
                                     </button>
                                     <h1 className="truncate text-sm font-semibold tracking-wide text-foreground">{mobileTitle}</h1>
-                                    <Link href="/admin/settings" aria-label="Open admin profile" className={profileButtonClass}>
+                                    <Link href="/main" aria-label="Go to Student App" className={profileButtonClass}>
                                         {userInitial}
                                     </Link>
                                 </div>
@@ -312,20 +295,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
                 {children}
             </main>
-
-            {hideMobileNav ? null : (
-                <nav className={`fixed bottom-0 left-0 right-0 z-40 border-t border-border/40 bg-card/95 backdrop-blur-xl flex items-center justify-around px-4 pb-[calc(env(safe-area-inset-bottom)+0.625rem)] pt-1.5 transition-transform duration-300 md:hidden ${mobileOpen ? 'translate-y-20' : 'translate-y-0'}`}>
-                    {mobileBottomNavItems.map((item) => (
-                        <AdminMobileNavItem
-                            key={item.href}
-                            href={item.href}
-                            label={item.label}
-                            icon={item.icon}
-                            active={isActivePath(pathname, item.href)}
-                        />
-                    ))}
-                </nav>
-            )}
         </div>
     );
 }
@@ -359,8 +328,7 @@ function AdminSidebarContent({
             items: section.items.filter((item) => {
                 // Role-based filter: hide senior-only links from standard admins
                 if (item.seniorAdminOnly && !canSeeSeniorLinks) return false;
-                if (!mobile) return true;
-                return !['/admin', '/admin/library', '/admin/material-submissions', '/admin/students'].includes(item.href);
+                return true;
             }),
         }))
         .filter((section) => section.items.length > 0);
@@ -462,30 +430,7 @@ function SidebarItem({
     );
 }
 
-function AdminMobileNavItem({
-    href,
-    label,
-    icon: Icon,
-    active,
-}: {
-    href: string;
-    label: string;
-    icon: LucideIcon;
-    active?: boolean;
-}) {
-    return (
-        <Link
-            href={href}
-            aria-current={active ? "page" : undefined}
-            className={`flex flex-col items-center justify-center flex-1 h-full py-1.5 transition-all duration-200 active:scale-95 ${
-                active ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
-            }`}
-        >
-            <Icon className="h-5 w-5 shrink-0" />
-            <span className="mt-1 truncate text-[10px] font-bold tracking-wide">{label}</span>
-        </Link>
-    );
-}
+
 
 function isActivePath(pathname: string, href: string) {
     if (href === '/admin') return pathname === '/admin';
