@@ -14,6 +14,8 @@ import {
     X,
 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { useRouter } from 'next/navigation';
+import { fetchBootstrap } from '@/lib/bootstrap-cache';
 import {
     Dialog,
     DialogContent,
@@ -77,6 +79,20 @@ export default function AdminLecturersPage() {
     const [actionError, setActionError] = useState<string | null>(null);
     const [isSubmittingAction, setIsSubmittingAction] = useState(false);
     const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+
+    const router = useRouter();
+
+    // Guard: only Senior Admins and Super Admins can access this page
+    useEffect(() => {
+        void fetchBootstrap().then((data) => {
+            if (!data) return;
+            const isSuperAdmin = Boolean(data.is_super_admin);
+            const isSeniorAdmin = Boolean(data.is_senior_university_admin || data.admin_level === 'senior');
+            if (!isSuperAdmin && !isSeniorAdmin) {
+                router.replace('/admin');
+            }
+        });
+    }, [router]);
 
     const fetchLecturers = useCallback(async (showRefreshing = false) => {
         if (showRefreshing) {

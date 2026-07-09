@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Mail, Search, Shield, UserCog, Trash2, ShieldAlert } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 
 import { api } from '@/lib/api';
 import { getAdminWorkspaceUniversityId } from '@/lib/admin-workspace';
@@ -18,6 +19,7 @@ type AdminUser = {
 };
 
 export default function WorkspaceAdminsPage() {
+    const router = useRouter();
     const [admins, setAdmins] = useState<AdminUser[]>([]);
     const [email, setEmail] = useState('');
     const [query, setQuery] = useState('');
@@ -40,6 +42,11 @@ export default function WorkspaceAdminsPage() {
                 setIsSuperAdmin(superAdmin);
                 setIsSeniorAdmin(seniorAdmin);
                 setCanManage(superAdmin || seniorAdmin);
+                // Guard: redirect standard admins away
+                if (!superAdmin && !seniorAdmin) {
+                    router.replace('/admin');
+                    return;
+                }
             }
 
             const univId = getAdminWorkspaceUniversityId();

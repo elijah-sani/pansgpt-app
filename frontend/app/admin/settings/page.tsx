@@ -2,8 +2,10 @@
 
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, CalendarDays, CheckCircle2, RefreshCw } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 
 import { api } from '@/lib/api';
+import { fetchBootstrap } from '@/lib/bootstrap-cache';
 
 type AcademicContext = {
     university_id?: string | null;
@@ -18,6 +20,7 @@ type RolloverPreview = {
 };
 
 export default function AdminSettingsPage() {
+    const router = useRouter();
     const [academicContext, setAcademicContext] = useState<AcademicContext | null>(null);
     const [academicSessionDraft, setAcademicSessionDraft] = useState('');
     const [semesterDraft, setSemesterDraft] = useState<'first' | 'second'>('first');
@@ -40,6 +43,18 @@ export default function AdminSettingsPage() {
         setRolloverSessionDraft(currentSession);
         setRolloverSemesterDraft(currentSemester);
     };
+
+    // Guard: only Senior Admins and Super Admins can access this page
+    useEffect(() => {
+        void fetchBootstrap().then((data) => {
+            if (!data) return;
+            const isSuperAdmin = Boolean(data.is_super_admin);
+            const isSeniorAdmin = Boolean(data.is_senior_university_admin || data.admin_level === 'senior');
+            if (!isSuperAdmin && !isSeniorAdmin) {
+                router.replace('/admin');
+            }
+        });
+    }, [router]);
 
     useEffect(() => {
         const load = async () => {

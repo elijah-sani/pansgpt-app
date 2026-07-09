@@ -2,7 +2,9 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Search, Users, GraduationCap, Crown, User, X } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
+import { fetchBootstrap } from '@/lib/bootstrap-cache';
 
 interface Student {
     id: string;
@@ -38,6 +40,20 @@ export default function StudentsPage() {
             setIsLoading(false);
         }
     }, []);
+
+    const router = useRouter();
+
+    // Guard: only Senior Admins and Super Admins can access this page
+    useEffect(() => {
+        void fetchBootstrap().then((data) => {
+            if (!data) return;
+            const isSuperAdmin = Boolean(data.is_super_admin);
+            const isSeniorAdmin = Boolean(data.is_senior_university_admin || data.admin_level === 'senior');
+            if (!isSuperAdmin && !isSeniorAdmin) {
+                router.replace('/admin');
+            }
+        });
+    }, [router]);
 
     useEffect(() => { fetchStudents(); }, [fetchStudents]);
 

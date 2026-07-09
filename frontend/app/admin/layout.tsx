@@ -37,6 +37,8 @@ type AdminNavItem = {
     icon: LucideIcon;
     label: string;
     href: string;
+    /** If true, only Senior Admins and Super Admins can see this link */
+    seniorAdminOnly?: boolean;
 };
 
 type AdminNavSection = {
@@ -50,19 +52,19 @@ const navSections: AdminNavSection[] = [
         items: [
             { icon: LayoutDashboard, label: 'Home', href: '/admin' },
             { icon: Library, label: 'Library', href: '/admin/library' },
-            { icon: Users, label: 'Students', href: '/admin/students' },
-            { icon: ShieldCheck, label: 'Admins', href: '/admin/admins' },
+            { icon: Users, label: 'Students', href: '/admin/students', seniorAdminOnly: true },
+            { icon: ShieldCheck, label: 'Admins', href: '/admin/admins', seniorAdminOnly: true },
         ],
     },
     {
         label: 'Academic',
         items: [
-            { icon: UserCheck, label: 'Lecturers', href: '/admin/lecturers' },
+            { icon: UserCheck, label: 'Lecturers', href: '/admin/lecturers', seniorAdminOnly: true },
             { icon: FileCheck2, label: 'Material Submissions', href: '/admin/material-submissions' },
             { icon: ShieldAlert, label: 'Restrictions', href: '/admin/restrictions' },
             { icon: CalendarDays, label: 'Timetable', href: '/admin/timetable' },
             { icon: BookOpenCheck, label: 'Faculty Knowledge', href: '/admin/faculty-knowledge' },
-            { icon: CalendarDays, label: 'Academic Context', href: '/admin/settings' },
+            { icon: CalendarDays, label: 'Academic Context', href: '/admin/settings', seniorAdminOnly: true },
         ],
     },
     {
@@ -94,6 +96,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     const [userEmail, setUserEmail] = useState<string | null>(null);
     const [userRole, setUserRole] = useState<string | null>(null);
     const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+    const [isSeniorAdmin, setIsSeniorAdmin] = useState(false);
     const [workspaceName, setWorkspaceName] = useState('');
     const [mobileOpen, setMobileOpen] = useState(false);
     const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
@@ -140,12 +143,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             }
 
             setUserEmail(email);
-            setIsSuperAdmin(Boolean(data?.is_super_admin));
+            const superAdmin = Boolean(data?.is_super_admin);
+            const seniorAdmin = Boolean(data?.is_senior_university_admin || data?.admin_level === 'senior');
+            setIsSuperAdmin(superAdmin);
+            setIsSeniorAdmin(seniorAdmin);
             if (!data?.is_super_admin) {
                 setAdminWorkspaceUniversityId('');
             }
             setWorkspaceName(data?.is_super_admin ? getAdminWorkspaceUniversityName() : (data?.university_name || data?.profile?.university || 'University Workspace'));
-            setUserRole(data?.is_super_admin ? 'Super Admin' : 'Admin');
+            setUserRole(superAdmin ? 'Super Admin' : seniorAdmin ? 'Senior Admin' : 'Admin');
 
             // University suspension gate for university admins.
             // Super admins can still access the admin panel to manage universities.
@@ -238,6 +244,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                     pathname={pathname}
                     userEmail={userEmail}
                     userRole={userRole}
+                    isSeniorAdmin={isSeniorAdmin}
+                    isSuperAdmin={isSuperAdmin}
                     collapsed={sidebarCollapsed}
                     onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
                 />
@@ -255,6 +263,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                         pathname={pathname}
                         userEmail={userEmail}
                         userRole={userRole}
+                        isSeniorAdmin={isSeniorAdmin}
+                        isSuperAdmin={isSuperAdmin}
                         mobile
                         onNavigate={() => setMobileOpen(false)}
                     />
@@ -324,6 +334,8 @@ function AdminSidebarContent({
     pathname,
     userEmail,
     userRole,
+    isSeniorAdmin = false,
+    isSuperAdmin = false,
     mobile = false,
     collapsed = false,
     onToggleCollapsed,
@@ -332,15 +344,21 @@ function AdminSidebarContent({
     pathname: string;
     userEmail: string | null;
     userRole: string | null;
+    isSeniorAdmin?: boolean;
+    isSuperAdmin?: boolean;
     mobile?: boolean;
     collapsed?: boolean;
     onToggleCollapsed?: () => void;
     onNavigate?: () => void;
 }) {
+    const canSeeSeniorLinks = isSuperAdmin || isSeniorAdmin;
+
     const visibleSections = navSections
         .map((section) => ({
             ...section,
             items: section.items.filter((item) => {
+                // Role-based filter: hide senior-only links from standard admins
+                if (item.seniorAdminOnly && !canSeeSeniorLinks) return false;
                 if (!mobile) return true;
                 return !['/admin', '/admin/library', '/admin/material-submissions', '/admin/students'].includes(item.href);
             }),
