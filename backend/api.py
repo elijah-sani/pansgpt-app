@@ -545,7 +545,9 @@ async def _run_db(execute_fn, operation_name: str = "Supabase query", user_id: O
                 await asyncio.sleep(0.75 * attempt)
                 continue
             raise
-    raise last_error
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Supabase query failed without raising an exception")
 
 
 async def _insert_audit_log(
@@ -923,8 +925,8 @@ async def sync_my_profile(current_user: User = Depends(get_current_user)):
         "other_names": other_names if other_names is not None else existing_profile.get("other_names"),
         "full_name": full_name if full_name is not None else existing_profile.get("full_name"),
         "level": level if level is not None else existing_profile.get("level"),
-        "university": resolved_university["university"] if university_id or university_text is not None else existing_profile.get("university"),
-        "university_id": resolved_university["university_id"] if university_id or university_text is not None else existing_profile.get("university_id"),
+        "university": resolved_university["university"] if (university_id is not None or university_text is not None) else existing_profile.get("university"),
+        "university_id": resolved_university["university_id"] if (university_id is not None or university_text is not None) else existing_profile.get("university_id"),
         "avatar_url": existing_profile.get("avatar_url"),
         "subscription_tier": existing_profile.get("subscription_tier") or "free",
         "has_seen_welcome": existing_profile.get("has_seen_welcome") if existing_profile.get("has_seen_welcome") is not None else False,
@@ -1660,8 +1662,7 @@ async def handle_signup_webhook(request: Request, background_tasks: BackgroundTa
 if os.getenv("ENV", "").lower() != "production":
     @app.get("/debug-sentry")
     def trigger_error():
-        division_by_zero = 1 / 0
-        return {"result": division_by_zero}
+        raise ZeroDivisionError("Sentry debug trigger")
 
 @app.get("/documents", dependencies=[Depends(verify_api_key)])
 async def list_documents(level: Optional[str] = None, current_user: User = Depends(get_current_user)):

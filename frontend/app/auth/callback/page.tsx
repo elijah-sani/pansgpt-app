@@ -61,7 +61,7 @@ export default function AuthCallbackPage() {
                         shouldForceProfileCompletion = true;
                     } else {
                         const syncPayload = await syncResponse.json().catch(() => null);
-                        if (!syncPayload?.data?.university_id) {
+                        if (!syncPayload?.data?.first_name && !syncPayload?.data?.full_name) {
                             shouldForceProfileCompletion = true;
                         }
                     }
