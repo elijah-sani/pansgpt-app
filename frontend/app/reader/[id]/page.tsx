@@ -5,6 +5,8 @@ import dynamic from 'next/dynamic';
 import { Loader2 } from 'lucide-react';
 import { useEffect } from 'react';
 import { useReaderCache } from '@/lib/ReaderCacheContext';
+import LocalErrorBoundary from '@/components/LocalErrorBoundary';
+import ErrorRecoveryView from '@/components/ErrorRecoveryView';
 
 const PDFViewer = dynamic(() => import('@/components/PDFViewer'), {
     ssr: false,
@@ -43,7 +45,22 @@ export default function ReaderPage() {
 
     return (
         <main className="h-[100dvh] w-full overflow-hidden bg-background">
-            <PDFViewer fileId={fileId} fileSize={fileSize} />
+            <LocalErrorBoundary
+                boundaryName="pdf-viewer"
+                fallback={({ error, retry }) => (
+                    <ErrorRecoveryView
+                        title="Reader failed to load"
+                        description="The document viewer hit an unexpected problem. Retry the viewer or return to the reader home."
+                        errorMessage={error.message}
+                        retryLabel="Refresh Page"
+                        onRetry={() => window.location.reload()}
+                        secondaryLabel="Back"
+                        onSecondaryAction={() => window.location.assign('/reader')}
+                    />
+                )}
+            >
+                <PDFViewer fileId={fileId} fileSize={fileSize} />
+            </LocalErrorBoundary>
         </main>
     );
 }
