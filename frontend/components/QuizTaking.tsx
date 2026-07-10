@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import { useChatSession } from '@/lib/ChatSessionContext';
+import { useQuizCache } from '@/lib/QuizCacheContext';
 import { ArrowLeft, ChevronLeft, ChevronRight, Clock3, X } from 'lucide-react';
 
 interface Question {
@@ -87,6 +88,7 @@ function formatDifficulty(value?: string) {
 export default function QuizTaking({ quizId }: { quizId: string }) {
   const router = useRouter();
   const { setPendingPath } = useChatSession();
+  const { fetchQuizHistory } = useQuizCache();
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -370,12 +372,15 @@ export default function QuizTaking({ quizId }: { quizId: string }) {
         throw new Error(data.error || 'Failed to submit quiz');
       }
 
+      // Refresh the quiz history cache so that when user navigates back to /quiz, it updates immediately
+      void fetchQuizHistory(true).catch(() => {});
+
       router.push(`/quiz/${quizId}/results?resultId=${data.result.id}`);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to submit quiz');
       setIsSubmitting(false);
     }
-  }, [quiz, quizId, router, startTime, userAnswers, userId]);
+  }, [quiz, quizId, router, startTime, userAnswers, userId, fetchQuizHistory]);
 
   useEffect(() => {
     if (timeRemaining === null || timeRemaining <= 0) return;

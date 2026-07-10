@@ -55,9 +55,9 @@ export default function QuizHistory() {
   const filtersRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (quizHistoryLoaded || quizHistory.results.length > 0) return;
-    void fetchQuizHistory().catch(() => {});
-  }, [fetchQuizHistory, quizHistory.results.length, quizHistoryLoaded]);
+    // Always trigger background refresh to ensure cache remains up-to-date
+    void fetchQuizHistory(true).catch(() => {});
+  }, [fetchQuizHistory]);
 
   useEffect(() => {
     if (!filtersOpen) return;

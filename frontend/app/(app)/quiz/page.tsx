@@ -93,9 +93,9 @@ export default function QuizPage() {
     if (typeof window !== "undefined" && window.localStorage.getItem("pansgpt-active-quiz-job-id")) {
       return;
     }
-    if (quizHistoryLoaded || quizHistory.results.length > 0) return;
-    void fetchQuizHistory().catch(() => {});
-  }, [fetchQuizHistory, quizHistory.results.length, quizHistoryLoaded]);
+    // Always trigger background refresh to ensure cache remains up-to-date
+    void fetchQuizHistory(true).catch(() => {});
+  }, [fetchQuizHistory]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
