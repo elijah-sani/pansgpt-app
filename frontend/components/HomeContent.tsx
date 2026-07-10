@@ -177,13 +177,39 @@ export default function HomeContent() {
         setHasLoadedDocuments,
         setLastOpenedDocument,
     } = useReaderCache();
-    const [docs, setDocs] = useState<PDFDocument[]>(documents as PDFDocument[]);
-    const [loading, setLoading] = useState(true);
+    const [docs, setDocs] = useState<PDFDocument[]>(() => {
+        if (typeof window !== 'undefined') {
+            const stored = localStorage.getItem('study_mode_cached_docs');
+            if (stored) {
+                try {
+                    return JSON.parse(stored);
+                } catch (e) {}
+            }
+        }
+        return documents as PDFDocument[];
+    });
+    const [loading, setLoading] = useState(() => {
+        if (typeof window !== 'undefined') {
+            const stored = localStorage.getItem('study_mode_cached_docs');
+            if (stored) return false;
+        }
+        return !hasLoadedDocuments;
+    });
     const [error, setError] = useState<string | null>(null);
     const [, setMaintenanceMode] = useState(false);
     
     // Progress: drive_file_id -> { current_page, total_pages, updated_at }
-    const [progressMap, setProgressMap] = useState<Record<string, DocumentProgress>>({});
+    const [progressMap, setProgressMap] = useState<Record<string, DocumentProgress>>(() => {
+        if (typeof window !== 'undefined') {
+            const stored = localStorage.getItem('recent_document_progress_map');
+            if (stored) {
+                try {
+                    return JSON.parse(stored);
+                } catch (e) {}
+            }
+        }
+        return {};
+    });
 
     // Starred documents (stored locally in client for native-like interaction)
     const [starredIds, setStarredIds] = useState<string[]>([]);
@@ -205,6 +231,33 @@ export default function HomeContent() {
     // View layout: 'grid' by default for replica match
     const [viewStyle, setViewStyle] = useState<'list' | 'grid'>('grid');
     const [showMobileFilters, setShowMobileFilters] = useState(false);
+
+    // Save to localStorage when documents change
+    useEffect(() => {
+        if (docs.length > 0) {
+            localStorage.setItem('study_mode_cached_docs', JSON.stringify(docs));
+        }
+    }, [docs]);
+
+    // Save to localStorage when progressMap changes
+    useEffect(() => {
+        if (Object.keys(progressMap).length > 0) {
+            localStorage.setItem('recent_document_progress_map', JSON.stringify(progressMap));
+        }
+    }, [progressMap]);
+
+    // Load viewStyle from localStorage on mount
+    useEffect(() => {
+        const stored = localStorage.getItem('study_mode_view_style');
+        if (stored === 'list' || stored === 'grid') {
+            setViewStyle(stored);
+        }
+    }, []);
+
+    const handleSetViewStyle = (style: 'list' | 'grid') => {
+        setViewStyle(style);
+        localStorage.setItem('study_mode_view_style', style);
+    };
     
     // Selected document details sidebar
     const [selectedDoc, setSelectedDoc] = useState<PDFDocument | null>(null);
@@ -266,16 +319,18 @@ export default function HomeContent() {
     }, []);
 
     // Fetch documents from backend
-    const fetchDocs = async () => {
-        if (hasLoadedDocuments && documents.length > 0) {
+    const fetchDocs = async (force = false) => {
+        if (!force && hasLoadedDocuments && documents.length > 0) {
             setDocs(documents as PDFDocument[]);
             setLoading(false);
             return;
         }
 
-        setLoading(true);
+        // Only set full loading screen if we don't have any cached docs to display
+        if (docs.length === 0) {
+            setLoading(true);
+        }
         setError(null);
-        const startTime = performance.now();
 
         try {
             const response = await api.fetch('/documents');
@@ -289,14 +344,15 @@ export default function HomeContent() {
             }
 
             const data = await response.json();
-            const endTime = performance.now();
 
             setDocs(data || []);
             setDocuments((data || []) as ReaderDocument[]);
             setHasLoadedDocuments(true);
         } catch (err) {
             console.error('Fetch error:', err);
-            setError(err instanceof Error ? err.message : 'Failed to connect to backend.');
+            if (docs.length === 0) {
+                setError(err instanceof Error ? err.message : 'Failed to connect to backend.');
+            }
         } finally {
             setLoading(false);
         }
@@ -652,7 +708,7 @@ export default function HomeContent() {
                                     )}
                                 </h1>
                                 <button
-                                    onClick={fetchDocs}
+                                    onClick={() => fetchDocs(true)}
                                     className="p-1.5 hover:bg-accent rounded-lg text-muted-foreground hover:text-foreground transition-colors ml-1"
                                     title="Reload Documents"
                                 >
@@ -663,13 +719,13 @@ export default function HomeContent() {
                             {/* View style toggle */}
                             <div className="flex items-center bg-muted/60 p-1 rounded-xl">
                                 <button
-                                    onClick={() => setViewStyle('list')}
+                                    onClick={() => handleSetViewStyle('list')}
                                     className={`p-1.5 rounded-lg transition-all ${viewStyle === 'list' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
                                 >
                                     <List className="h-4.5 w-4.5" />
                                 </button>
                                 <button
-                                    onClick={() => setViewStyle('grid')}
+                                    onClick={() => handleSetViewStyle('grid')}
                                     className={`p-1.5 rounded-lg transition-all ${viewStyle === 'grid' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
                                 >
                                     <LayoutGrid className="h-4.5 w-4.5" />
@@ -764,7 +820,7 @@ export default function HomeContent() {
                                         <div className="flex items-center gap-3.5 text-muted-foreground">
                                             {/* Layout Switcher */}
                                             <button 
-                                                onClick={() => setViewStyle(prev => prev === 'grid' ? 'list' : 'grid')}
+                                                onClick={() => handleSetViewStyle(viewStyle === 'grid' ? 'list' : 'grid')}
                                                 className="p-1 hover:text-foreground transition-colors"
                                                 title="Switch layout"
                                             >
@@ -895,7 +951,7 @@ export default function HomeContent() {
                                                             <div className="flex items-center gap-3.5 text-muted-foreground">
                                                                 {/* Toggle Grid/List */}
                                                                 <button 
-                                                                    onClick={() => setViewStyle(prev => prev === 'grid' ? 'list' : 'grid')}
+                                                                    onClick={() => handleSetViewStyle(viewStyle === 'grid' ? 'list' : 'grid')}
                                                                     className="p-1 hover:text-foreground transition-colors"
                                                                     title="Switch layout"
                                                                 >
@@ -1013,7 +1069,7 @@ export default function HomeContent() {
                                                                     </button>
                                                                     <div className="flex items-center gap-3.5 text-muted-foreground">
                                                                         <button 
-                                                                            onClick={() => setViewStyle(prev => prev === 'grid' ? 'list' : 'grid')}
+                                                                            onClick={() => handleSetViewStyle(viewStyle === 'grid' ? 'list' : 'grid')}
                                                                             className="p-1 hover:text-foreground transition-colors"
                                                                         >
                                                                             {viewStyle === 'grid' ? (
@@ -1384,7 +1440,6 @@ export default function HomeContent() {
                     /* 2-COLUMN GRID ON MOBILE, 5-COLUMN GRID ON DESKTOP */
                     <div className="grid grid-cols-2 gap-3.5 md:grid-cols-5">
                         {items.map((item) => {
-                            const hasStarred = isStarred(item.drive_file_id);
                             return (
                                 <div
                                     key={item.id}
@@ -1399,21 +1454,9 @@ export default function HomeContent() {
                                         selectedDoc?.id === item.id ? 'border-primary bg-primary/[0.015]' : 'border-border/80 bg-surface-secondary hover:bg-surface-secondary/80'
                                     }`}
                                 >
-                                    {/* Thumbnail box with star icon - NO INNER CARD PADDING */}
+                                    {/* Thumbnail box - NO INNER CARD PADDING */}
                                     <div className="relative w-full aspect-[4/3] overflow-hidden shrink-0 border-b border-zinc-850">
                                         <DocumentThumbnail doc={item} />
-                                        
-                                        {/* Star icon at the top-right corner of thumbnail */}
-                                        <button
-                                            onClick={(e) => toggleStar(e, item.drive_file_id)}
-                                            className="absolute top-1.5 right-1.5 p-1 rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors backdrop-blur-[2px]"
-                                        >
-                                            <Star 
-                                                className="h-3.5 w-3.5" 
-                                                fill={hasStarred ? "#fbbc05" : "none"} 
-                                                stroke={hasStarred ? "#fbbc05" : "currentColor"} 
-                                            />
-                                        </button>
                                     </div>
  
                                     {/* Card metadata line - Padded bottom section */}
@@ -1427,15 +1470,16 @@ export default function HomeContent() {
                                                     <FileText className="h-3 w-3" />
                                                 )}
                                             </span>
-                                            <span className="text-[11px] font-bold text-foreground leading-tight line-clamp-2 flex-1 group-hover:text-primary transition-colors">
+                                            <span 
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleOpenReader(item);
+                                                }}
+                                                className="text-[11px] font-bold text-foreground leading-tight line-clamp-2 flex-1 hover:text-primary hover:underline transition-colors cursor-pointer"
+                                            >
                                                 {item.topic}
                                             </span>
                                         </div>
-                                        
-                                        {/* Three vertical dots menu options */}
-                                        <button className="text-muted-foreground/75 hover:text-foreground shrink-0 p-0.5">
-                                            <MoreVertical className="h-4 w-4" />
-                                        </button>
                                     </div>
                                 </div>
                             );
@@ -1560,7 +1604,13 @@ export default function HomeContent() {
                                                         )}
                                                     </div>
                                                     <div className="min-w-0">
-                                                        <h4 className="text-sm font-semibold truncate group-hover:text-primary transition-colors pr-2">
+                                                        <h4 
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleOpenReader(item);
+                                                            }}
+                                                            className="text-sm font-semibold truncate hover:text-primary hover:underline transition-colors pr-2 cursor-pointer"
+                                                        >
                                                             {item.topic}
                                                         </h4>
                                                         <div className="flex items-center gap-1.5 mt-0.5">
