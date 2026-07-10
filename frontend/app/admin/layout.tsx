@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
     BookOpenCheck,
     CalendarDays,
+    ChevronLeft,
     FileCheck2,
     GraduationCap,
     LayoutDashboard,
@@ -275,18 +276,33 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                         <div className={mobileHeaderClass}>
                         <div className="mx-auto flex min-h-[4.75rem] max-w-[48rem] items-center px-4 py-3 sm:px-5">
                                 <div className="flex h-10 w-full items-center justify-between gap-3">
-                                    <button
-                                        type="button"
-                                        onClick={() => setMobileOpen((value) => !value)}
-                                        aria-label={mobileOpen ? 'Close admin navigation' : 'Open admin navigation'}
-                                        className={headerButtonClass}
-                                    >
-                                        {mobileOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
-                                    </button>
+                                    {pathname === '/admin/profile' ? (
+                                        <button
+                                            type="button"
+                                            onClick={() => router.back()}
+                                            aria-label="Go back"
+                                            className={headerButtonClass}
+                                        >
+                                            <ChevronLeft className="h-5 w-5" />
+                                        </button>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={() => setMobileOpen((value) => !value)}
+                                            aria-label={mobileOpen ? 'Close admin navigation' : 'Open admin navigation'}
+                                            className={headerButtonClass}
+                                        >
+                                            {mobileOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+                                        </button>
+                                    )}
                                     <h1 className="truncate text-sm font-semibold tracking-wide text-foreground">{mobileTitle}</h1>
-                                    <Link href="/main" aria-label="Go to Student App" className={profileButtonClass}>
-                                        {userInitial}
-                                    </Link>
+                                    {pathname === '/admin/profile' ? (
+                                        <div className="w-10" />
+                                    ) : (
+                                        <Link href="/admin/profile" aria-label="Open admin profile" className={profileButtonClass}>
+                                            {userInitial}
+                                        </Link>
+                                    )}
                                 </div>
                             </div>
                         </div>
@@ -384,7 +400,10 @@ function AdminSidebarContent({
             </nav>
 
             <div className={`border-t border-border ${collapsed ? 'p-3' : 'p-4'} ${mobile ? 'hidden' : 'block'}`}>
-                <div className={`mb-3 flex items-center rounded-md bg-muted/60 py-2.5 ${collapsed ? 'justify-center px-0' : 'gap-3 px-3'}`}>
+                <Link
+                    href="/admin/profile"
+                    className={`mb-3 flex items-center rounded-md bg-muted/60 py-2.5 transition-colors hover:bg-muted/80 ${collapsed ? 'justify-center px-0' : 'gap-3 px-3'}`}
+                >
                     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-background text-xs font-semibold text-primary ring-1 ring-border">
                         {userEmail ? userEmail.charAt(0).toUpperCase() : 'A'}
                     </div>
@@ -395,7 +414,7 @@ function AdminSidebarContent({
                             {userRole ?? 'Admin'}
                         </p>
                     </div>
-                </div>
+                </Link>
             </div>
         </div>
     );
@@ -448,5 +467,6 @@ function getAdminMobileTitle(pathname: string) {
     if (pathname.startsWith('/admin/timetable')) return 'Timetable';
     if (pathname.startsWith('/admin/faculty-knowledge')) return 'Faculty Knowledge';
     if (pathname.startsWith('/admin/settings')) return 'University Settings';
+    if (pathname.startsWith('/admin/profile')) return 'Profile';
     return 'Admin';
 }
