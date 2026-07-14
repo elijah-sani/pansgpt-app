@@ -15,6 +15,8 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
+import ErrorRecoveryView from '@/components/ErrorRecoveryView';
+import LocalErrorBoundary from '@/components/LocalErrorBoundary';
 import { fetchBootstrap } from '@/lib/bootstrap-cache';
 import { supabase } from '@/lib/supabase';
 import UniversitySuspendedBlocker from '@/components/UniversitySuspendedBlocker';
@@ -273,16 +275,34 @@ export default function LecturerProtectedLayout({ children }: { children: React.
 
   return (
     <div className="flex min-h-screen bg-muted/20 font-sans text-foreground selection:bg-primary/30">
-      <aside className={asideClass}>
-        <LecturerSidebarContent
-          pathname={pathname}
-          userEmail={userEmail}
-          userName={userName}
-          userInitials={userInitials}
-          collapsed={sidebarCollapsed}
-          onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
-        />
-      </aside>
+      <LocalErrorBoundary
+        boundaryName="lecturer-shell-sidebar"
+        fallback={({ error, retry }) => (
+          <aside className="fixed left-0 top-0 z-20 hidden h-full w-64 shrink-0 border-r border-border bg-background md:flex md:items-center md:justify-center md:p-4">
+            <ErrorRecoveryView
+              title="Lecturer sidebar unavailable"
+              description="The lecturer shell navigation hit an unexpected problem. Retry the sidebar without reloading the whole lecturer workspace."
+              sectionLabel="Lecturer"
+              errorMessage={error.message}
+              retryLabel="Retry Sidebar"
+              onRetry={retry}
+              secondaryLabel="Go Home"
+              onSecondaryAction={() => window.location.assign('/lecturer')}
+            />
+          </aside>
+        )}
+      >
+        <aside className={asideClass}>
+          <LecturerSidebarContent
+            pathname={pathname}
+            userEmail={userEmail}
+            userName={userName}
+            userInitials={userInitials}
+            collapsed={sidebarCollapsed}
+            onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
+          />
+        </aside>
+      </LocalErrorBoundary>
 
       <main className={mainClass}>
         {hideMobileHeader ? null : (

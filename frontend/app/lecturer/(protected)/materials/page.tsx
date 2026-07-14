@@ -5,6 +5,8 @@ import { ExternalLink, FileText, FileUp, Loader2, RefreshCcw, X } from 'lucide-r
 
 import { AuthMessage } from '@/components/auth/AuthMessage';
 import { INPUT_CLASS_NAME, LEVELS, PRIMARY_BUTTON_CLASS_NAME } from '@/components/auth/authConstants';
+import ErrorRecoveryView from '@/components/ErrorRecoveryView';
+import LocalErrorBoundary from '@/components/LocalErrorBoundary';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 
@@ -350,146 +352,178 @@ export default function LecturerMaterialsPage() {
             </p>
           </header>
 
-          <section>
-            <form onSubmit={submitMaterial} className="space-y-5">
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <Field label="Level" required>
-                  <select
-                    autoFocus
-                    value={form.level}
-                    onChange={(event) => updateFormField('level', event.target.value)}
-                    className={`${INPUT_CLASS_NAME} appearance-none`}
-                  >
-                    <option value="">Select level</option>
-                    {LEVELS.map((level) => (
-                      <option key={level} value={`${level}L`}>
-                        {level}L
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-
-                <Field label="Course code" required>
-                  <input
-                    value={form.course_code}
-                    onChange={(event) => updateFormField('course_code', event.target.value)}
-                    className={INPUT_CLASS_NAME}
-                    placeholder="e.g. PCL 422"
-                  />
-                </Field>
-
-                <Field label="Topic" required>
-                  <input
-                    value={form.topic}
-                    onChange={(event) => updateFormField('topic', event.target.value)}
-                    className={INPUT_CLASS_NAME}
-                    placeholder="e.g. Cardiovascular Pharmacology"
-                  />
-                </Field>
-
-                <Field label="Course title">
-                  <input
-                    value={form.course_title}
-                    onChange={(event) => updateFormField('course_title', event.target.value)}
-                    className={INPUT_CLASS_NAME}
-                    placeholder="e.g. Clinical Pharmacy"
-                  />
-                </Field>
-
-              </div>
-
-              {formError ? <AuthMessage message={{ type: 'error', text: formError }} /> : null}
-
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                <div className="w-full space-y-1.5 lg:max-w-2xl">
-                  <span className="text-sm font-bold text-foreground">
-                    File upload <span className="ml-1 text-rose-600">*</span>
-                  </span>
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <label className={fileLabelClass}>
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-background">
-                        {selectedFile ? (
-                          <FileText className="h-4 w-4 text-primary" />
-                        ) : (
-                          <FileUp className="h-4 w-4 text-primary" />
-                        )}
-                      </span>
-                      <span className="min-w-0 flex-1 text-left">
-                        <span className="block truncate text-sm font-semibold text-foreground">
-                          {selectedFile ? selectedFile.name : 'Choose material file'}
-                        </span>
-                        <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                          {selectedFile ? `${formatSelectedFileMeta(selectedFile)}. Click to change.` : 'One file only'}
-                        </span>
-                      </span>
-                      <input key={fileInputKey} type="file" className="sr-only" onChange={handleFileChange} />
-                    </label>
-                    {selectedFile ? (
-                      <button
-                        type="button"
-                        onClick={clearSelectedFile}
-                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-border px-3 py-3 text-sm font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-14"
-                      >
-                        <X className="h-4 w-4" />
-                        Remove
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className={submitButtonClass}
-                >
-                  {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Submit material'}
-                </button>
-              </div>
-            </form>
-          </section>
-
-          <section className="border-t border-border pt-6">
-            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h2 className="text-lg font-semibold text-foreground">Your submissions</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Track each material you have sent.</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => void fetchMaterials(true)}
-                disabled={isRefreshing}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-border px-4 py-2.5 text-sm font-semibold text-foreground transition-colors hover:bg-muted disabled:opacity-60"
-              >
-                <RefreshCcw className={refreshIconClass} />
-                Refresh
-              </button>
-            </div>
-
-            {loadError ? (
-              <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 p-5">
-                <h3 className="text-sm font-semibold text-rose-700">Unable to load materials.</h3>
-                <p className="mt-2 text-sm text-rose-700/90">{loadError}</p>
-              </div>
-            ) : isLoading ? (
-              <div className="flex min-h-[140px] items-center gap-3 text-sm text-muted-foreground">
-                <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                <span>Loading submissions...</span>
-              </div>
-            ) : orderedMaterials.length === 0 ? (
-              <div className="rounded-2xl border border-border bg-background/70 p-6">
-                <h3 className="text-sm font-semibold text-foreground">No materials submitted yet</h3>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                  Submit your first material with the form above. It will appear here after it is sent for admin review.
-                </p>
-              </div>
-            ) : (
-              <MaterialList
-                materials={orderedMaterials}
-                cancellingIds={cancellingIds}
-                onCancel={cancelSubmission}
-                onResubmit={openResubmitDialog}
+          <LocalErrorBoundary
+            boundaryName="lecturer-materials-form"
+            fallback={({ error, retry }) => (
+              <ErrorRecoveryView
+                title="Material form unavailable"
+                description="The lecturer materials submission form hit an unexpected problem. Retry the form without losing the rest of the page."
+                sectionLabel="Lecturer"
+                errorMessage={error.message}
+                retryLabel="Retry Form"
+                onRetry={retry}
+                secondaryLabel="Go Home"
+                onSecondaryAction={() => window.location.assign('/lecturer')}
               />
             )}
-          </section>
+          >
+            <section>
+              <form onSubmit={submitMaterial} className="space-y-5">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <Field label="Level" required>
+                    <select
+                      autoFocus
+                      value={form.level}
+                      onChange={(event) => updateFormField('level', event.target.value)}
+                      className={`${INPUT_CLASS_NAME} appearance-none`}
+                    >
+                      <option value="">Select level</option>
+                      {LEVELS.map((level) => (
+                        <option key={level} value={`${level}L`}>
+                          {level}L
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+
+                  <Field label="Course code" required>
+                    <input
+                      value={form.course_code}
+                      onChange={(event) => updateFormField('course_code', event.target.value)}
+                      className={INPUT_CLASS_NAME}
+                      placeholder="e.g. PCL 422"
+                    />
+                  </Field>
+
+                  <Field label="Topic" required>
+                    <input
+                      value={form.topic}
+                      onChange={(event) => updateFormField('topic', event.target.value)}
+                      className={INPUT_CLASS_NAME}
+                      placeholder="e.g. Cardiovascular Pharmacology"
+                    />
+                  </Field>
+
+                  <Field label="Course title">
+                    <input
+                      value={form.course_title}
+                      onChange={(event) => updateFormField('course_title', event.target.value)}
+                      className={INPUT_CLASS_NAME}
+                      placeholder="e.g. Clinical Pharmacy"
+                    />
+                  </Field>
+
+                </div>
+
+                {formError ? <AuthMessage message={{ type: 'error', text: formError }} /> : null}
+
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="w-full space-y-1.5 lg:max-w-2xl">
+                    <span className="text-sm font-bold text-foreground">
+                      File upload <span className="ml-1 text-rose-600">*</span>
+                    </span>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <label className={fileLabelClass}>
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-background">
+                          {selectedFile ? (
+                            <FileText className="h-4 w-4 text-primary" />
+                          ) : (
+                            <FileUp className="h-4 w-4 text-primary" />
+                          )}
+                        </span>
+                        <span className="min-w-0 flex-1 text-left">
+                          <span className="block truncate text-sm font-semibold text-foreground">
+                            {selectedFile ? selectedFile.name : 'Choose material file'}
+                          </span>
+                          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                            {selectedFile ? `${formatSelectedFileMeta(selectedFile)}. Click to change.` : 'One file only'}
+                          </span>
+                        </span>
+                        <input key={fileInputKey} type="file" className="sr-only" onChange={handleFileChange} />
+                      </label>
+                      {selectedFile ? (
+                        <button
+                          type="button"
+                          onClick={clearSelectedFile}
+                          className="inline-flex items-center justify-center gap-2 rounded-xl border border-border px-3 py-3 text-sm font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-14"
+                        >
+                          <X className="h-4 w-4" />
+                          Remove
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className={submitButtonClass}
+                  >
+                    {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Submit material'}
+                  </button>
+                </div>
+              </form>
+            </section>
+          </LocalErrorBoundary>
+
+          <LocalErrorBoundary
+            boundaryName="lecturer-materials-list"
+            fallback={({ error, retry }) => (
+              <ErrorRecoveryView
+                title="Materials list unavailable"
+                description="The submission tracking panel hit an unexpected problem. Retry just this panel and keep the rest of the page available."
+                sectionLabel="Lecturer"
+                errorMessage={error.message}
+                retryLabel="Retry List"
+                onRetry={retry}
+                secondaryLabel="Refresh Data"
+                onSecondaryAction={() => void fetchMaterials(true)}
+              />
+            )}
+          >
+            <section className="border-t border-border pt-6">
+              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-foreground">Your submissions</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">Track each material you have sent.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void fetchMaterials(true)}
+                  disabled={isRefreshing}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-border px-4 py-2.5 text-sm font-semibold text-foreground transition-colors hover:bg-muted disabled:opacity-60"
+                >
+                  <RefreshCcw className={refreshIconClass} />
+                  Refresh
+                </button>
+              </div>
+
+              {loadError ? (
+                <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 p-5">
+                  <h3 className="text-sm font-semibold text-rose-700">Unable to load materials.</h3>
+                  <p className="mt-2 text-sm text-rose-700/90">{loadError}</p>
+                </div>
+              ) : isLoading ? (
+                <div className="flex min-h-[140px] items-center gap-3 text-sm text-muted-foreground">
+                  <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                  <span>Loading submissions...</span>
+                </div>
+              ) : orderedMaterials.length === 0 ? (
+                <div className="rounded-2xl border border-border bg-background/70 p-6">
+                  <h3 className="text-sm font-semibold text-foreground">No materials submitted yet</h3>
+                  <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                    Submit your first material with the form above. It will appear here after it is sent for admin review.
+                  </p>
+                </div>
+              ) : (
+                <MaterialList
+                  materials={orderedMaterials}
+                  cancellingIds={cancellingIds}
+                  onCancel={cancelSubmission}
+                  onResubmit={openResubmitDialog}
+                />
+              )}
+            </section>
+          </LocalErrorBoundary>
         </div>
       {resubmitTarget ? (
         <ResubmitDialog

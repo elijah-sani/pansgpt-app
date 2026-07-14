@@ -2,15 +2,17 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
-import { Bug, CalendarDays, ChevronDown, ChevronRight, CircleHelp, ExternalLink, FileText, Mail, MoreVertical, PanelLeft, Pencil, Search, Settings, NotepadText, MessageSquare, BookOpen, Brain, Trash2, X, SquarePen } from "lucide-react";
+import { Bug, CalendarDays, ChevronDown, ChevronRight, CircleHelp, ExternalLink, FileText, Mail, PanelLeft, Search, Settings, MessageSquare, BookOpen, Brain, X, SquarePen } from "lucide-react";
 import Logo from "@/components/Logo";
+import ErrorRecoveryView from "@/components/ErrorRecoveryView";
+import LocalErrorBoundary from "@/components/LocalErrorBoundary";
 import { useChatSession } from "@/lib/ChatSessionContext";
 import { MainSidebarContent } from "@/components/sidebar/MainSidebarContent";
 import { StudySidebarContent } from "@/components/sidebar/StudySidebarContent";
 import { QuizSidebarContent } from "@/components/sidebar/QuizSidebarContent";
 import { SidebarConversationList } from "@/components/sidebar/SidebarConversationList";
 import { SidebarLink } from "@/components/sidebar/SidebarPrimitives";
-import { SidebarNotesSection, type SidebarNoteItem } from "@/components/sidebar/SidebarNotesSection";
+import { type SidebarNoteItem } from "@/components/sidebar/SidebarNotesSection";
 import { api } from "@/lib/api";
 import { buildWhatsAppSupportUrl } from "@/lib/support-config";
 
@@ -41,45 +43,6 @@ type SidebarChatSession = {
 
 function isLegacyQuickNote(note: { tags?: string[] | null }) {
   return Array.isArray(note.tags) && note.tags.some((tag) => typeof tag === "string" && tag.startsWith(LEGACY_QUICK_NOTE_TAG_PREFIX));
-}
-
-function getChatDateGroup(timestamp?: string | null) {
-  if (!timestamp) {
-    return "Older";
-  }
-
-  const created = new Date(timestamp);
-  if (Number.isNaN(created.getTime())) {
-    return "Older";
-  }
-
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const startOfCreated = new Date(created.getFullYear(), created.getMonth(), created.getDate()).getTime();
-  const dayDiff = Math.floor((startOfToday - startOfCreated) / 86400000);
-
-  if (dayDiff <= 0) return "Today";
-  if (dayDiff === 1) return "Yesterday";
-  if (dayDiff <= 7) return "Previous 7 days";
-  if (dayDiff <= 30) return "Previous 30 days";
-  return created.toLocaleDateString(undefined, { month: "long", year: "numeric" });
-}
-
-function groupChatSessionsByDate(sessions: SidebarChatSession[]) {
-  const groups: Array<{ label: string; sessions: SidebarChatSession[] }> = [];
-  const groupMap = new Map<string, SidebarChatSession[]>();
-
-  sessions.forEach((session) => {
-    const label = getChatDateGroup(session.updated_at || session.created_at);
-    const group = groupMap.get(label) || [];
-    group.push(session);
-    if (!groupMap.has(label)) {
-      groupMap.set(label, group);
-      groups.push({ label, sessions: group });
-    }
-  });
-
-  return groups;
 }
 
 type SidebarChatHistorySectionProps = {
@@ -140,19 +103,34 @@ function SidebarChatHistorySection({
         </div>
         {isChatHistoryOpen ? (
           <div className="flex-1 overflow-y-auto px-3 pb-2">
-            <SidebarConversationList
-              activeSessionId={activeSessionId}
-              emptyText="No chats yet"
-              handleLoadSession={handleLoadSession}
-              isDateGroupingEnabled={isDateGroupingEnabled}
-              isLoadingHistory={isLoadingHistory}
-              loadingText="Loading..."
-              onDeleteRequest={onDeleteRequest}
-              onRenameRequest={onRenameRequest}
-              openMenuId={openMenuId}
-              sessions={sessions}
-              setOpenMenuId={setOpenMenuId}
-            />
+            <LocalErrorBoundary
+              boundaryName="student-sidebar-conversation-list"
+              fallback={({ error, retry }) => (
+                <ErrorRecoveryView
+                  title="Recent chats unavailable"
+                  description="The conversation history panel hit an unexpected problem. Retry the panel and keep the rest of the sidebar available."
+                  errorMessage={error.message}
+                  retryLabel="Retry Chats"
+                  onRetry={retry}
+                  secondaryLabel="Hide Panel"
+                  onSecondaryAction={() => setIsChatHistoryOpen(false)}
+                />
+              )}
+            >
+              <SidebarConversationList
+                activeSessionId={activeSessionId}
+                emptyText="No chats yet"
+                handleLoadSession={handleLoadSession}
+                isDateGroupingEnabled={isDateGroupingEnabled}
+                isLoadingHistory={isLoadingHistory}
+                loadingText="Loading..."
+                onDeleteRequest={onDeleteRequest}
+                onRenameRequest={onRenameRequest}
+                openMenuId={openMenuId}
+                sessions={sessions}
+                setOpenMenuId={setOpenMenuId}
+              />
+            </LocalErrorBoundary>
           </div>
         ) : null}
       </div>

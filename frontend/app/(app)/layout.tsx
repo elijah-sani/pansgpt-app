@@ -14,8 +14,10 @@ import ReportProblemModal from "@/components/ReportProblemModal";
 import SearchChatsModal from "@/components/SearchChatsModal";
 import SettingsModal from "@/components/SettingsModal";
 import UniversitySuspendedBlocker from "@/components/UniversitySuspendedBlocker";
+import LocalErrorBoundary from "@/components/LocalErrorBoundary";
+import ErrorRecoveryView from "@/components/ErrorRecoveryView";
 import type { MainUser } from "@/components/main/types";
-import { ChatSessionProvider, useChatSession } from "@/lib/ChatSessionContext";
+import { useChatSession } from "@/lib/ChatSessionContext";
 import { PROFILE_UPDATED_EVENT, type ProfileUpdateDetail } from "@/lib/profile-events";
 import { SidebarControlsContext } from "@/lib/sidebar-controls";
 import { fetchBootstrap } from "@/lib/bootstrap-cache";
@@ -396,16 +398,33 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                         onTouchEnd={handleShellTouchEnd}
                     >
                         {!isQuizTaking && (
-                            <AppSidebar
-                                isOpen={isSidebarOpen}
-                                onClose={() => setIsSidebarOpen((prev) => !prev)}
-                                onSearchOpen={() => setIsSearchModalOpen(true)}
-                                onOpenReportProblem={() => setIsReportProblemOpen(true)}
-                                onOpenSettings={() => setIsSettingsOpen(true)}
-                                onDeleteRequest={(id) => { setDeleteTargetId(id); setIsDeleteModalOpen(true); }}
-                                onRenameRequest={(id, title) => { setRenamingChatId(id); setRenameDraft(title); }}
-                                isAdmin={isAdmin}
-                            />
+                            <LocalErrorBoundary
+                                boundaryName="student-app-sidebar"
+                                fallback={({ error, retry }) => (
+                                    <div className="hidden h-[100dvh] w-[22rem] shrink-0 border-r border-border bg-card/90 md:flex md:items-center md:justify-center md:p-4">
+                                        <ErrorRecoveryView
+                                            title="Sidebar unavailable"
+                                            description="The student sidebar hit an unexpected problem. Retry the shell panel without reloading the whole page."
+                                            errorMessage={error.message}
+                                            retryLabel="Retry Sidebar"
+                                            onRetry={retry}
+                                            secondaryLabel="Go Home"
+                                            onSecondaryAction={() => window.location.assign('/main')}
+                                        />
+                                    </div>
+                                )}
+                            >
+                                <AppSidebar
+                                    isOpen={isSidebarOpen}
+                                    onClose={() => setIsSidebarOpen((prev) => !prev)}
+                                    onSearchOpen={() => setIsSearchModalOpen(true)}
+                                    onOpenReportProblem={() => setIsReportProblemOpen(true)}
+                                    onOpenSettings={() => setIsSettingsOpen(true)}
+                                    onDeleteRequest={(id) => { setDeleteTargetId(id); setIsDeleteModalOpen(true); }}
+                                    onRenameRequest={(id, title) => { setRenamingChatId(id); setRenameDraft(title); }}
+                                    isAdmin={isAdmin}
+                                />
+                            </LocalErrorBoundary>
                         )}
 
                         <div className={`flex-1 min-w-0 overflow-x-hidden overflow-y-auto transition-transform duration-300 ease-out md:translate-x-0 ${
@@ -423,18 +442,42 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                         </div>
                     </div>
 
-                    <SearchChatsModal
-                        isOpen={isSearchModalOpen}
-                        onClose={() => setIsSearchModalOpen(false)}
-                        sessions={sessions}
-                        onSelectSession={(id) => {
-                            setActiveSessionId(id);
-                            setIsSearchModalOpen(false);
-                            if (typeof window !== "undefined" && window.location.pathname !== "/main") {
-                                router.push("/main");
-                            }
-                        }}
-                    />
+                    <LocalErrorBoundary
+                        boundaryName="student-chat-search-modal"
+                        fallback={({ error, retry }) => (
+                            <div className="fixed inset-0 z-[100] flex items-start justify-center bg-black/60 px-4 pt-[15vh] backdrop-blur-sm">
+                                <div className="w-full max-w-lg">
+                                    <ErrorRecoveryView
+                                        title="Chat search unavailable"
+                                        description="The chat search surface failed to render. Retry it or return to the main workspace."
+                                        errorMessage={error.message}
+                                        retryLabel="Retry Search"
+                                        onRetry={retry}
+                                        secondaryLabel="Close"
+                                        onSecondaryAction={() => setIsSearchModalOpen(false)}
+                                        tertiaryLabel="Open Main"
+                                        onTertiaryAction={() => {
+                                            setIsSearchModalOpen(false);
+                                            window.location.assign('/main');
+                                        }}
+                                    />
+                                </div>
+                            </div>
+                        )}
+                    >
+                        <SearchChatsModal
+                            isOpen={isSearchModalOpen}
+                            onClose={() => setIsSearchModalOpen(false)}
+                            sessions={sessions}
+                            onSelectSession={(id) => {
+                                setActiveSessionId(id);
+                                setIsSearchModalOpen(false);
+                                if (typeof window !== "undefined" && window.location.pathname !== "/main") {
+                                    router.push("/main");
+                                }
+                            }}
+                        />
+                    </LocalErrorBoundary>
 
                     {isDeleteModalOpen && (
                         <div className="fixed inset-0 z-[260] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">

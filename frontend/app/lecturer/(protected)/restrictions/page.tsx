@@ -5,6 +5,8 @@ import { ChevronRight, Clock3, Loader2 } from 'lucide-react';
 
 import { AuthMessage } from '@/components/auth/AuthMessage';
 import { INPUT_CLASS_NAME, LEVELS, PRIMARY_BUTTON_CLASS_NAME } from '@/components/auth/authConstants';
+import ErrorRecoveryView from '@/components/ErrorRecoveryView';
+import LocalErrorBoundary from '@/components/LocalErrorBoundary';
 import { api } from '@/lib/api';
 
 type RestrictionStatus = 'scheduled' | 'active' | 'completed' | 'cancelled';
@@ -207,146 +209,180 @@ export default function LecturerRestrictionsPage() {
             </p>
           </header>
 
-          <section>
-            <form onSubmit={submitRestriction} className="space-y-5">
-              <div className="space-y-4">
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <label className="text-sm font-bold text-foreground">
-                      Student level
-                      <span className="ml-1 text-rose-600">*</span>
-                    </label>
-                    <select
-                      autoFocus
-                      value={form.level}
-                      onChange={(event) => updateFormField('level', event.target.value)}
-                      className={`${INPUT_CLASS_NAME} appearance-none`}
-                    >
-                      <option value="">Select level</option>
-                      {LEVELS.map((level) => (
-                        <option key={level} value={`${level}L`}>
-                          {level}L
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-sm font-bold text-foreground">Course code</label>
-                    <input
-                      type="text"
-                      value={form.course_code}
-                      onChange={(event) => updateFormField('course_code', event.target.value)}
-                      className={INPUT_CLASS_NAME}
-                      placeholder="PCL 302"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="w-full max-w-sm space-y-1.5">
+          <LocalErrorBoundary
+            boundaryName="lecturer-restrictions-form"
+            fallback={({ error, retry }) => (
+              <ErrorRecoveryView
+                title="Restriction form unavailable"
+                description="The restriction creation form hit an unexpected problem. Retry the form without losing the rest of the lecturer page."
+                sectionLabel="Lecturer"
+                errorMessage={error.message}
+                retryLabel="Retry Form"
+                onRetry={retry}
+                secondaryLabel="Go Home"
+                onSecondaryAction={() => window.location.assign('/lecturer')}
+              />
+            )}
+          >
+            <section>
+              <form onSubmit={submitRestriction} className="space-y-5">
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="space-y-1.5">
                       <label className="text-sm font-bold text-foreground">
-                        How long should it last?
+                        Student level
                         <span className="ml-1 text-rose-600">*</span>
                       </label>
-                      <div className="space-y-3">
-                        <div className="relative">
-                          <Clock3 className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
-                          <select
-                            value={form.duration_option}
-                            onChange={(event) => updateFormField('duration_option', event.target.value)}
-                            className={`${INPUT_CLASS_NAME} appearance-none pl-12`}
-                          >
-                            {DURATION_OPTIONS.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        {form.duration_option === 'custom' ? (
-                          <div className="grid grid-cols-2 gap-3">
-                            <input
-                              type="number"
-                              min="0"
-                              step="1"
-                              value={form.custom_duration_hours}
-                              onChange={(event) => updateFormField('custom_duration_hours', event.target.value)}
-                              className={INPUT_CLASS_NAME}
-                              placeholder="Hours"
-                            />
-                            <input
-                              type="number"
-                              min="0"
-                              step="5"
-                              value={form.custom_duration_minutes}
-                              onChange={(event) => updateFormField('custom_duration_minutes', event.target.value)}
-                              className={INPUT_CLASS_NAME}
-                              placeholder="Minutes"
-                            />
-                          </div>
-                        ) : null}
-                      </div>
+                      <select
+                        autoFocus
+                        value={form.level}
+                        onChange={(event) => updateFormField('level', event.target.value)}
+                        className={`${INPUT_CLASS_NAME} appearance-none`}
+                      >
+                        <option value="">Select level</option>
+                        {LEVELS.map((level) => (
+                          <option key={level} value={`${level}L`}>
+                            {level}L
+                          </option>
+                        ))}
+                      </select>
                     </div>
 
-                    <button
-                      type="submit"
-                      disabled={isSubmitting}
-                      className={`${PRIMARY_BUTTON_CLASS_NAME.replace("w-full ", "")} w-full lg:mt-8 lg:w-auto`}
-                    >
-                      {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Start Restriction'}
-                    </button>
+                    <div className="space-y-1.5">
+                      <label className="text-sm font-bold text-foreground">Course code</label>
+                      <input
+                        type="text"
+                        value={form.course_code}
+                        onChange={(event) => updateFormField('course_code', event.target.value)}
+                        className={INPUT_CLASS_NAME}
+                        placeholder="PCL 302"
+                      />
+                    </div>
                   </div>
-                  <p className="text-xs text-muted-foreground">Choose how long the restriction should stay active.</p>
+
+                  <div className="space-y-1.5">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="w-full max-w-sm space-y-1.5">
+                        <label className="text-sm font-bold text-foreground">
+                          How long should it last?
+                          <span className="ml-1 text-rose-600">*</span>
+                        </label>
+                        <div className="space-y-3">
+                          <div className="relative">
+                            <Clock3 className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
+                            <select
+                              value={form.duration_option}
+                              onChange={(event) => updateFormField('duration_option', event.target.value)}
+                              className={`${INPUT_CLASS_NAME} appearance-none pl-12`}
+                            >
+                              {DURATION_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {form.duration_option === 'custom' ? (
+                            <div className="grid grid-cols-2 gap-3">
+                              <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                value={form.custom_duration_hours}
+                                onChange={(event) => updateFormField('custom_duration_hours', event.target.value)}
+                                className={INPUT_CLASS_NAME}
+                                placeholder="Hours"
+                              />
+                              <input
+                                type="number"
+                                min="0"
+                                step="5"
+                                value={form.custom_duration_minutes}
+                                onChange={(event) => updateFormField('custom_duration_minutes', event.target.value)}
+                                className={INPUT_CLASS_NAME}
+                                placeholder="Minutes"
+                              />
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={isSubmitting}
+                        className={`${PRIMARY_BUTTON_CLASS_NAME.replace("w-full ", "")} w-full lg:mt-8 lg:w-auto`}
+                      >
+                        {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Start Restriction'}
+                      </button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Choose how long the restriction should stay active.</p>
+                  </div>
                 </div>
-              </div>
 
-              {formError ? <AuthMessage message={{ type: 'error', text: formError }} /> : null}
+                {formError ? <AuthMessage message={{ type: 'error', text: formError }} /> : null}
 
-              <div className="flex flex-col gap-3 border-t border-border/70 pt-4 sm:flex-row sm:items-center sm:justify-between">
-                <button
-                  type="button"
-                  onClick={() => setHistoryOpen((current) => !current)}
-                  className="inline-flex items-center gap-2 text-sm font-bold text-foreground transition-colors hover:text-primary"
-                >
-                  <ChevronRight className={`h-4 w-4 transition-transform ${historyOpen ? "rotate-90" : ""}`} />
-                  View live and past restrictions
-                </button>
-              </div>
-            </form>
+                <div className="flex flex-col gap-3 border-t border-border/70 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setHistoryOpen((current) => !current)}
+                    className="inline-flex items-center gap-2 text-sm font-bold text-foreground transition-colors hover:text-primary"
+                  >
+                    <ChevronRight className={`h-4 w-4 transition-transform ${historyOpen ? "rotate-90" : ""}`} />
+                    View live and past restrictions
+                  </button>
+                </div>
+              </form>
+            </section>
+          </LocalErrorBoundary>
 
-            {historyOpen ? (
-              <div className="mt-6">
-                {loadError ? (
-                  <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 p-5">
-                    <h3 className="text-sm font-semibold text-rose-700">Unable to load test restrictions. Please try again.</h3>
-                    <p className="mt-2 text-sm text-rose-700/90">{loadError}</p>
-                    <button
-                      type="button"
-                      onClick={() => void fetchRestrictions()}
-                      className="mt-4 inline-flex min-h-10 items-center rounded-xl border border-rose-500/20 bg-white/80 px-4 py-2 text-sm font-semibold text-rose-700 transition-colors hover:bg-white"
-                    >
-                      Retry
-                    </button>
-                  </div>
-                ) : isLoading ? (
-                  <div className="flex min-h-[120px] items-center gap-3 text-sm text-muted-foreground">
-                    <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                    <span>Loading restrictions...</span>
-                  </div>
-                ) : (
-                  <HistoryList
-                    restrictions={orderedRestrictions}
-                    now={now}
-                    activeCancelId={activeCancelId}
-                    onCancel={cancelRestriction}
-                  />
-                )}
-              </div>
-            ) : null}
-          </section>
+          <LocalErrorBoundary
+            boundaryName="lecturer-restrictions-history"
+            fallback={({ error, retry }) => (
+              <ErrorRecoveryView
+                title="Restriction history unavailable"
+                description="The restrictions history panel hit an unexpected problem. Retry just this panel and keep the rest of the lecturer page available."
+                sectionLabel="Lecturer"
+                errorMessage={error.message}
+                retryLabel="Retry History"
+                onRetry={retry}
+                secondaryLabel="Refresh Data"
+                onSecondaryAction={() => void fetchRestrictions()}
+              />
+            )}
+          >
+            <section>
+              {historyOpen ? (
+                <div className="mt-6">
+                  {loadError ? (
+                    <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 p-5">
+                      <h3 className="text-sm font-semibold text-rose-700">Unable to load test restrictions. Please try again.</h3>
+                      <p className="mt-2 text-sm text-rose-700/90">{loadError}</p>
+                      <button
+                        type="button"
+                        onClick={() => void fetchRestrictions()}
+                        className="mt-4 inline-flex min-h-10 items-center rounded-xl border border-rose-500/20 bg-white/80 px-4 py-2 text-sm font-semibold text-rose-700 transition-colors hover:bg-white"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  ) : isLoading ? (
+                    <div className="flex min-h-[120px] items-center gap-3 text-sm text-muted-foreground">
+                      <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                      <span>Loading restrictions...</span>
+                    </div>
+                  ) : (
+                    <HistoryList
+                      restrictions={orderedRestrictions}
+                      now={now}
+                      activeCancelId={activeCancelId}
+                      onCancel={cancelRestriction}
+                    />
+                  )}
+                </div>
+              ) : null}
+            </section>
+          </LocalErrorBoundary>
         </div>
       </div>
   );
