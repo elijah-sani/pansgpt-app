@@ -69,6 +69,7 @@ from services.policy_guard import (
     contains_prompt_leak,
     evaluate_request_policy,
 )
+from services.security_logging import log_security_event
 from services.web_search import search_web
 from utils.thinking_token_utils import (
     strip_thinking_tokens,
@@ -1419,11 +1420,16 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
 
     policy_decision = evaluate_request_policy(request.text)
     if not policy_decision.allow:
-        logger.warning(
-            "Blocked chat request by policy: route=/chat category=%s matched_rule=%s session_id=%s",
-            policy_decision.category,
-            policy_decision.matched_rule,
-            request.session_id,
+        log_security_event(
+            logger,
+            event_type="policy_block",
+            route="/chat",
+            decision="blocked",
+            category=policy_decision.category,
+            severity=policy_decision.severity,
+            matched_rule=policy_decision.matched_rule,
+            user_id=current_user.id,
+            session_id=request.session_id,
         )
         async def blocked_event_stream():
             yield build_refusal_event(policy_decision)
@@ -2345,11 +2351,16 @@ async def edit_message(
     payload.new_text = sanitize_text(payload.new_text, CHAT_MAX)
     policy_decision = evaluate_request_policy(payload.new_text)
     if not policy_decision.allow:
-        logger.warning(
-            "Blocked edit request by policy: route=/chat/edit category=%s matched_rule=%s session_id=%s",
-            policy_decision.category,
-            policy_decision.matched_rule,
-            payload.session_id,
+        log_security_event(
+            logger,
+            event_type="policy_block",
+            route="/chat/edit",
+            decision="blocked",
+            category=policy_decision.category,
+            severity=policy_decision.severity,
+            matched_rule=policy_decision.matched_rule,
+            user_id=current_user.id,
+            session_id=payload.session_id,
         )
         async def blocked_event_stream():
             yield build_refusal_event(policy_decision)
@@ -2904,11 +2915,16 @@ async def regenerate_response(
         user_text = last_user_msg['content']
         policy_decision = evaluate_request_policy(user_text)
         if not policy_decision.allow:
-            logger.warning(
-                "Blocked regenerate request by policy: route=/chat/{session_id}/regenerate category=%s matched_rule=%s session_id=%s",
-                policy_decision.category,
-                policy_decision.matched_rule,
-                session_id,
+            log_security_event(
+                logger,
+                event_type="policy_block",
+                route="/chat/{session_id}/regenerate",
+                decision="blocked",
+                category=policy_decision.category,
+                severity=policy_decision.severity,
+                matched_rule=policy_decision.matched_rule,
+                user_id=current_user.id,
+                session_id=session_id,
             )
             async def blocked_event_stream():
                 yield build_refusal_event(policy_decision)
