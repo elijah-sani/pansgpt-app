@@ -2023,3 +2023,155 @@ async def reactivate_lecturer(
         set_approval_to_current_user=True,
     )
 
+
+# ---------------------------------------------------------------------------
+# AI Usage Analytics  (super admin only)
+# ---------------------------------------------------------------------------
+
+@router.get("/admin/ai-analytics", dependencies=[Depends(verify_api_key)])
+async def get_ai_analytics(
+    university_id: Optional[str] = Query(None),
+    days: int = Query(30, ge=1, le=365),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Return aggregated AI usage statistics.
+
+    Access: super_admin / global_admin only.
+    Filters:
+      - university_id: if supplied, scope to that university; otherwise return
+        platform-wide totals.
+      - days: rolling window in days (1–365, default 30).
+
+    Response includes:
+      - totals (requests, tokens, avg latency, success/error counts)
+      - breakdown by model, provider, request_type
+      - daily time-series for the last N days
+      - list of universities (for the filter dropdown)
+    """
+    from dependencies import require_super_admin_role
+    await require_super_admin_role(current_user)
+
+    sb = shared.supabase_service_client or shared.supabase_client
+    if sb is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    # --- Normalise university_id filter ---
+    norm_uni_id = (university_id or "").strip() or None
+
+    # --- Fetch university list for the dropdown ---
+    try:
+        uni_res = await asyncio.to_thread(
+            lambda: sb.table("universities")
+            .select("id,name,short_name,status")
+            .eq("status", "active")
+            .order("name")
+            .execute()
+        )
+        universities = [
+            {"id": row["id"], "name": row["name"], "short_name": row.get("short_name")}
+            for row in (uni_res.data or [])
+        ]
+    except Exception as exc:
+        logger.warning("[ai-analytics] Failed to fetch universities: %s", exc)
+        universities = []
+
+    # --- Build usage log query ---
+    from datetime import datetime, timezone, timedelta
+    since_iso = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    try:
+        q = sb.table("ai_usage_logs").select(
+            "id,model_used,provider,request_type,prompt_tokens,completion_tokens,"
+            "total_tokens,latency_ms,status,has_images,university_id,created_at"
+        ).gte("created_at", since_iso)
+
+        if norm_uni_id:
+            q = q.eq("university_id", norm_uni_id)
+
+        logs_res = await asyncio.to_thread(lambda: q.execute())
+        rows = logs_res.data or []
+    except Exception as exc:
+        logger.error("[ai-analytics] Failed to fetch usage logs: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to fetch AI usage analytics")
+
+    # --- Aggregate ---
+    total_requests = len(rows)
+    total_prompt_tokens = sum(r.get("prompt_tokens") or 0 for r in rows)
+    total_completion_tokens = sum(r.get("completion_tokens") or 0 for r in rows)
+    total_tokens = sum(r.get("total_tokens") or 0 for r in rows)
+    latency_values = [r["latency_ms"] for r in rows if r.get("latency_ms") is not None]
+    avg_latency_ms = round(sum(latency_values) / len(latency_values), 2) if latency_values else None
+
+    status_counts: dict[str, int] = {}
+    model_breakdown: dict[str, dict] = {}
+    provider_breakdown: dict[str, dict] = {}
+    request_type_breakdown: dict[str, dict] = {}
+    daily_breakdown: dict[str, dict] = {}
+
+    def _blank_bucket() -> dict:
+        return {"requests": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+    for row in rows:
+        # status counts
+        s = row.get("status", "success")
+        status_counts[s] = status_counts.get(s, 0) + 1
+
+        pt = row.get("prompt_tokens") or 0
+        ct = row.get("completion_tokens") or 0
+        tt = row.get("total_tokens") or 0
+
+        # model breakdown
+        model = row.get("model_used", "unknown")
+        if model not in model_breakdown:
+            model_breakdown[model] = {"provider": row.get("provider", "unknown"), **_blank_bucket()}
+        model_breakdown[model]["requests"] += 1
+        model_breakdown[model]["prompt_tokens"] += pt
+        model_breakdown[model]["completion_tokens"] += ct
+        model_breakdown[model]["total_tokens"] += tt
+
+        # provider breakdown
+        prov = row.get("provider", "unknown")
+        if prov not in provider_breakdown:
+            provider_breakdown[prov] = _blank_bucket()
+        provider_breakdown[prov]["requests"] += 1
+        provider_breakdown[prov]["total_tokens"] += tt
+
+        # request_type breakdown
+        rt = row.get("request_type", "chat")
+        if rt not in request_type_breakdown:
+            request_type_breakdown[rt] = _blank_bucket()
+        request_type_breakdown[rt]["requests"] += 1
+        request_type_breakdown[rt]["total_tokens"] += tt
+
+        # daily time-series (YYYY-MM-DD bucket)
+        created_at = row.get("created_at", "")
+        day = created_at[:10] if created_at else "unknown"
+        if day not in daily_breakdown:
+            daily_breakdown[day] = _blank_bucket()
+        daily_breakdown[day]["requests"] += 1
+        daily_breakdown[day]["total_tokens"] += tt
+
+    # Sort daily breakdown chronologically
+    daily_series = [
+        {"date": day, **daily_breakdown[day]}
+        for day in sorted(daily_breakdown.keys())
+    ]
+
+    return {
+        "period_days": days,
+        "university_id": norm_uni_id,
+        "universities": universities,
+        "totals": {
+            "requests": total_requests,
+            "prompt_tokens": total_prompt_tokens,
+            "completion_tokens": total_completion_tokens,
+            "total_tokens": total_tokens,
+            "avg_latency_ms": avg_latency_ms,
+            "by_status": status_counts,
+        },
+        "by_model": model_breakdown,
+        "by_provider": provider_breakdown,
+        "by_request_type": request_type_breakdown,
+        "daily_series": daily_series,
+    }

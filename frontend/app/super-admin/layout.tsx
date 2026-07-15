@@ -38,6 +38,7 @@ const navItems: SuperAdminNavItem[] = [
     { icon: Building2, label: 'Universities', href: '/super-admin/universities' },
     { icon: UserCog, label: 'University Admins', href: '/super-admin/university-admins' },
     { icon: Cpu, label: 'AI Configuration', href: '/super-admin/ai-configuration' },
+    { icon: Activity, label: 'AI Analytics', href: '/super-admin/ai-analytics' },
     { icon: MessageSquareWarning, label: 'Feedback', href: '/super-admin/feedback' },
     { icon: HeartPulse, label: 'System Health', href: '/super-admin/system-health' },
 ];
@@ -45,8 +46,8 @@ const navItems: SuperAdminNavItem[] = [
 const mobileBottomNavItems: SuperAdminNavItem[] = [
     { icon: LayoutDashboard, label: 'Home', href: '/super-admin' },
     { icon: Building2, label: 'Universities', href: '/super-admin/universities' },
-    { icon: UserCog, label: 'Admins', href: '/super-admin/university-admins' },
-    { icon: Cpu, label: 'AI', href: '/super-admin/ai-configuration' },
+    { icon: Cpu, label: 'AI Config', href: '/super-admin/ai-configuration' },
+    { icon: Activity, label: 'Analytics', href: '/super-admin/ai-analytics' },
 ];
 
 export default function SuperAdminLayout({ children }: { children: React.ReactNode }) {
@@ -388,6 +389,7 @@ function getSuperAdminMobileTitle(pathname: string) {
     if (pathname.startsWith('/super-admin/universities')) return 'Universities';
     if (pathname.startsWith('/super-admin/university-admins')) return 'University Admins';
     if (pathname.startsWith('/super-admin/ai-configuration')) return 'AI Configuration';
+    if (pathname.startsWith('/super-admin/ai-analytics')) return 'AI Analytics';
     if (pathname.startsWith('/super-admin/feedback')) return 'Feedback';
     if (pathname.startsWith('/super-admin/system-health')) return 'System Health';
     return 'Super Admin';

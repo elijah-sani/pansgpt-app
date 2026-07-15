@@ -4,6 +4,7 @@ import os
 import time
 import httpx  # [GROQ TERTIARY FIX]
 from typing import Any, AsyncIterator, Optional
+from services import ai_usage_tracker
 
 logger = logging.getLogger("PansGPT")
 
@@ -217,13 +218,37 @@ async def _create_completion_with_audit(
     try:
         request = client.chat.completions.create(**kwargs)
         res = await asyncio.wait_for(request, timeout=timeout_seconds) if timeout_seconds else await request
+        _latency_ms = (time.perf_counter() - started) * 1000
         _log_quiz_provider_timing(
             "llm_provider_call_completed",
-            (time.perf_counter() - started) * 1000,
+            _latency_ms,
             model,
             response_format,
             audit_meta,
         )
+        # Fire-and-forget AI usage tracking (non-streaming only)
+        if not kwargs.get("stream", False):
+            _usage = getattr(res, "usage", None)
+            if _usage is not None:
+                _pt = getattr(_usage, "prompt_tokens", 0) or 0
+                _ct = getattr(_usage, "completion_tokens", 0) or 0
+                _tt = getattr(_usage, "total_tokens", 0) or (_pt + _ct)
+            else:
+                _pt = _ct = _tt = 0
+            _meta = audit_meta or {}
+            asyncio.create_task(ai_usage_tracker.log_usage(
+                model_used=model,
+                request_type=_meta.get("request_type", "chat"),
+                prompt_tokens=_pt,
+                completion_tokens=_ct,
+                total_tokens=_tt,
+                latency_ms=_latency_ms,
+                status="success",
+                has_images=bool(_meta.get("has_images", False)),
+                user_id=_meta.get("user_id"),
+                university_id=_meta.get("university_id"),
+                session_id=_meta.get("session_id"),
+            ))
         return res
     except asyncio.TimeoutError:
         _log_quiz_provider_timing(

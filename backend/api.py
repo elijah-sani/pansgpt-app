@@ -19,6 +19,7 @@ from restrictions import (
     normalize_university_name,
 )
 from services import llm_engine
+from services import ai_usage_tracker
 import sentry_sdk
 from dependencies import (
     prime_jwks_cache,
@@ -483,6 +484,7 @@ system.set_dependencies(supabase_client)
 settings.set_dependencies(supabase_client, verify_api_key, supabase_service_client)
 quiz.set_dependencies(supabase_client, verify_api_key, supabase_service_client)
 lecturer.set_dependencies(supabase_client, verify_api_key, supabase_service_client, drive_service, GOOGLE_DRIVE_FOLDER_ID)
+ai_usage_tracker.set_dependencies(supabase_service_client)
 
 # Include routers
 app.include_router(library.router)
