@@ -1719,18 +1719,18 @@ async def list_documents(level: Optional[str] = None, current_user: User = Depen
         )
         all_docs = response.data or []
 
-        if role_info and role_info.is_admin:
-            return all_docs
-
         # 3. Filter: return docs explicitly assigned to the user's level.
         user_tokens = _level_tokens(user_level)
         filtered_docs = []
+        is_platform_admin = bool(role_info and (role_info.is_super_admin or role_info.is_global_admin))
+
         for doc in all_docs:
             if not _is_student_visible_document(doc):
                 continue
             document_university_id = doc.get("university_id")
-            if document_university_id and document_university_id != user_university_id:
-                continue
+            if not is_platform_admin:
+                if document_university_id and document_university_id != user_university_id:
+                    continue
             if _document_matches_level(doc, user_tokens):
                 filtered_docs.append(doc)
 

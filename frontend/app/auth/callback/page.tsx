@@ -54,20 +54,19 @@ export default function AuthCallbackPage() {
 
                 let shouldForceProfileCompletion = false;
 
-                try {
-                    const syncResponse = await api.post('/me/profile/sync', {});
-                    if (!syncResponse.ok) {
-                        console.error('[auth/callback] profile sync failed with status:', syncResponse.status);
-                        shouldForceProfileCompletion = true;
-                    } else {
-                        const syncPayload = await syncResponse.json().catch(() => null);
-                        if (!syncPayload?.data?.first_name && !syncPayload?.data?.full_name) {
-                            shouldForceProfileCompletion = true;
-                        }
-                    }
-                } catch (syncError) {
-                    console.error('[auth/callback] profile sync request failed:', syncError);
+                // Check auth metadata locally to determine if profile information is missing
+                const metadata = user.user_metadata;
+                if (!metadata?.first_name && !metadata?.full_name) {
                     shouldForceProfileCompletion = true;
+                }
+
+                // Sync profile to database in the background without blocking or forcing modal on temporary network/session errors
+                try {
+                    api.post('/me/profile/sync', {}).catch((err) => {
+                        console.warn('[auth/callback] background profile sync warning:', err);
+                    });
+                } catch (syncError) {
+                    console.warn('[auth/callback] background profile sync failed:', syncError);
                 }
 
                 let callbackDestination = shouldForceProfileCompletion ? '/main?welcome=true&profile=1' : '/main?welcome=true';
