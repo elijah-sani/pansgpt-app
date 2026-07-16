@@ -755,7 +755,8 @@ export default function ChatInterface({
                                 }}
                                 onPaste={handlePaste}
                                 onKeyDown={(e) => {
-                                    if (e.key === 'Enter' && !e.shiftKey) {
+                                    const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+                                    if (e.key === 'Enter' && !e.shiftKey && !isMobile) {
                                         e.preventDefault();
                                         handleSendMessageWrapper();
                                     }

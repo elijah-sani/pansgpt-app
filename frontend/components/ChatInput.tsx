@@ -166,7 +166,8 @@ export default function ChatInput({
             }}
             onPaste={onPaste}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
+              const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+              if (e.key === 'Enter' && !e.shiftKey && !isMobile) {
                 e.preventDefault();
                 onSendMessage();
               }
