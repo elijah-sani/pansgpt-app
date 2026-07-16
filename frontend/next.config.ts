@@ -37,17 +37,12 @@ const nextConfig: NextConfig = {
     "@tiptap/pm",
     "@tiptap/react",
     "@handlewithcare/prosemirror-inputrules",
-    "react-pdf",
-    "pdfjs-dist",
   ],
-  webpack: (config, { dev }) => {
+  webpack: (config) => {
     config.resolve.alias = {
       ...config.resolve.alias,
       canvas: false,
     };
-    if (dev) {
-      config.devtool = "cheap-module-source-map";
-    }
     return config;
   },
   turbopack: {

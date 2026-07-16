@@ -20,31 +20,40 @@ import type { PDFNote } from './pdf/types';
 import { useOfflineStatus } from '../hooks/useOfflineStatus';
 import { toast } from 'sonner';
 
-let reactPdfModulePromise: Promise<typeof import('react-pdf')> | null = null;
+// Dynamic import for react-pdf: pdfjs-dist v5 ships only .mjs files which
+// use import.meta internally. Webpack's transpilePackages corrupts the ESM
+// module wrapper (__webpack_require__.r gets an undefined exports object),
+// causing "Object.defineProperty called on non-object" during dev.
+// Using next/dynamic with ssr:false defers the import to the browser at
+// runtime, sidestepping the webpack bundling issue entirely.
+let reactPdfModule: typeof import('react-pdf') | null = null;
 
 const loadReactPdf = async () => {
-    if (!reactPdfModulePromise) {
-        reactPdfModulePromise = import('react-pdf').then((mod) => {
-            mod.pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${mod.pdfjs.version}/build/pdf.worker.min.mjs`;
-            (mod.pdfjs.GlobalWorkerOptions as unknown as { verbosity: number }).verbosity = 0;
-            return mod;
-        });
+    if (!reactPdfModule) {
+        const mod = await import('react-pdf');
+        mod.pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${mod.pdfjs.version}/build/pdf.worker.min.mjs`;
+        (mod.pdfjs.GlobalWorkerOptions as unknown as { verbosity: number }).verbosity = 0;
+        reactPdfModule = mod;
     }
-    return reactPdfModulePromise;
+    return reactPdfModule;
 };
 
-const Document = dynamic(() => loadReactPdf().then((mod) => mod.Document), {
-    ssr: false,
-    loading: () => (
-        <div className="flex items-center justify-center py-12 text-muted-foreground">
-            <Loader2 className="h-5 w-5 animate-spin" />
-        </div>
-    ),
-});
+const Document = dynamic(
+    () => loadReactPdf().then((mod) => mod.Document),
+    {
+        ssr: false,
+        loading: () => (
+            <div className="flex items-center justify-center py-12 text-muted-foreground">
+                <Loader2 className="h-5 w-5 animate-spin" />
+            </div>
+        ),
+    }
+);
 
-const Page = dynamic(() => loadReactPdf().then((mod) => mod.Page), {
-    ssr: false,
-});
+const Page = dynamic(
+    () => loadReactPdf().then((mod) => mod.Page),
+    { ssr: false }
+);
 
 type MaterialStatus = 'active' | 'archived';
 
