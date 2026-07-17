@@ -6,6 +6,7 @@ import { AlertCircle, ArrowDown, BookOpen, Check, ChevronDown, Copy, FileText, G
 import { AnimatePresence, motion } from 'framer-motion';
 import ChatInput from '@/components/ChatInput';
 import ChatSkeleton from '@/components/ChatSkeleton';
+import WelcomeSkeleton from '@/components/WelcomeSkeleton';
 import MessageBubble, { type Message } from '@/components/MessageBubble';
 import { api } from '@/lib/api';
 import {
@@ -650,7 +651,7 @@ export function MainConversation({
       >
         <div className="max-w-[741px] mx-auto px-4 min-h-full flex flex-col">
           {isLoadingChat ? (
-            <ChatSkeleton />
+            activeSessionId ? <ChatSkeleton /> : <WelcomeSkeleton />
           ) : !hasMessages ? (
             <div className="flex-1 flex flex-col items-start justify-start px-4 pb-0 pt-16 text-left sm:items-center sm:justify-center sm:px-0 sm:pb-56 sm:pt-40 sm:text-center">
               <div className="w-full max-w-[440px] flex flex-col flex-1 sm:mx-auto sm:max-w-4xl sm:block">
@@ -988,7 +989,13 @@ export function MainConversation({
           </button>
         </div>
 
-        {activeCard !== null ? (
+        {isLoadingChat ? (
+          !activeSessionId && (
+            <div className="sm:hidden w-full px-4 pb-4">
+              <div className="h-11 rounded-2xl bg-accent/20 border border-border/40 w-full animate-pulse" />
+            </div>
+          )
+        ) : activeCard !== null ? (
           <div className="sm:hidden w-full px-4 pb-4">
             <QuickActionModal // [QUICK ACTION CARDS]
               isOpen={activeCard !== null} // [QUICK ACTION CARDS]
