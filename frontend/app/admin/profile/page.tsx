@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import Image from 'next/image'; // [IMG OPTIMIZATION]
 import { useRouter } from 'next/navigation';
 import {
     ShieldCheck,
@@ -148,8 +149,8 @@ export default function AdminProfilePage() {
 
                         <div className="relative z-10 px-5 pt-6 pb-5 flex flex-col items-center text-center">
                             {/* Avatar */}
-                            <div className="w-[72px] h-[72px] rounded-full bg-muted shadow-sm overflow-hidden ring-2 ring-primary/30">
-                                <img src={currentAvatar} alt="Avatar" className="w-full h-full object-cover rounded-full" />
+                            <div className="w-[72px] h-[72px] rounded-full bg-muted shadow-sm overflow-hidden ring-2 ring-primary/30 relative"> {/* [IMG OPTIMIZATION] */}
+                                <Image src={currentAvatar} alt="Avatar" fill className="w-full h-full object-cover rounded-full" /> {/* [IMG OPTIMIZATION] */}
                             </div>
 
                             {/* Name */}

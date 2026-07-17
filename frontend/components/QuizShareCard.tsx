@@ -1,6 +1,7 @@
-﻿'use client';
+'use client';
 
 import React, { useRef, useState, useEffect } from 'react';
+import Image from 'next/image'; // [IMG OPTIMIZATION]
 import html2canvas from 'html2canvas';
 import { Clipboard, Download, Link, MessageCircle, Share2 } from 'lucide-react';
 
@@ -73,7 +74,7 @@ function ShareCardCanvas({ result }: { result: QuizShareCardProps['result'] }) {
       {/* Header */}
       <div style={{ position: 'relative', zIndex: 10, textAlign: 'center', marginTop: 64, marginBottom: 32, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
         <div style={{ width: 160, height: 160, marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <img src="/uploads/Logo.png" alt="PANSGPT Logo" width={160} height={160} style={{ objectFit: 'contain' }} />
+          <Image src="/uploads/Logo.png" alt="PANSGPT Logo" width={160} height={160} style={{ objectFit: 'contain' }} priority /> {/* [IMG OPTIMIZATION] */}
         </div>
         <p style={{ color: SHARE_THEME.accent, fontSize: 24, fontWeight: 600, margin: 0 }}>Quiz Results</p>
       </div>
@@ -296,13 +297,15 @@ export default function QuizShareCard({ result, onShare, onClose }: QuizShareCar
             </div>
           ) : (
             <div
-              className="flex h-full max-h-[58vh] w-full max-w-[min(70vw,360px)] items-center justify-center rounded-[28px] p-4 shadow-2xl md:max-h-full md:max-w-full md:rounded-[5px] md:p-0"
+              className="relative flex h-full max-h-[58vh] w-full max-w-[min(70vw,360px)] items-center justify-center rounded-[28px] p-4 shadow-2xl md:max-h-full md:max-w-full md:rounded-[5px] md:p-0" // [IMG OPTIMIZATION]
               style={{ background: SHARE_THEME.swatch }}
             >
-              <img
+              <Image
                 src={imageUrl}
                 alt="Quiz Results Share Card"
-                className="max-h-full w-full rounded-[18px] object-contain md:h-full md:rounded-[5px]"
+                fill
+                className="max-h-full w-full rounded-[18px] object-contain md:h-full md:rounded-[5px]" // [IMG OPTIMIZATION]
+                unoptimized
               />
             </div>
           )}

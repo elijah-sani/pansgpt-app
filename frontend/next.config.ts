@@ -51,6 +51,25 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: false,
   },
+  images: { // [IMG OPTIMIZATION]
+    dangerouslyAllowSVG: true, // [IMG OPTIMIZATION]
+    contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;", // [IMG OPTIMIZATION]
+    contentDispositionType: 'attachment', // [IMG OPTIMIZATION]
+    remotePatterns: [ // [IMG OPTIMIZATION]
+      { // [IMG OPTIMIZATION]
+        protocol: "https", // [IMG OPTIMIZATION]
+        hostname: "api.dicebear.com", // [IMG OPTIMIZATION]
+      }, // [IMG OPTIMIZATION]
+      { // [IMG OPTIMIZATION]
+        protocol: "https", // [IMG OPTIMIZATION]
+        hostname: "res.cloudinary.com", // [IMG OPTIMIZATION]
+      }, // [IMG OPTIMIZATION]
+      { // [IMG OPTIMIZATION]
+        protocol: "https", // [IMG OPTIMIZATION]
+        hostname: "poimasnehsnamibhztwl.supabase.co", // [IMG OPTIMIZATION]
+      }, // [IMG OPTIMIZATION]
+    ], // [IMG OPTIMIZATION]
+  }, // [IMG OPTIMIZATION]
   experimental: {
     serverActions: {
       allowedOrigins: process.env.ALLOWED_ORIGINS

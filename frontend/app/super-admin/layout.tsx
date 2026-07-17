@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image'; // [IMG OPTIMIZATION]
 import { usePathname, useRouter } from 'next/navigation';
 import {
     Activity,
@@ -119,7 +120,7 @@ export default function SuperAdminLayout({ children }: { children: React.ReactNo
         return (
             <div className="flex min-h-screen items-center justify-center bg-background">
                 <div className="flex flex-col items-center gap-3">
-                    <img src="/icon.svg" alt="PansGPT" className="h-8 w-8 animate-pulse" />
+                    <Image src="/icon.svg" alt="PansGPT" width={32} height={32} className="h-8 w-8 animate-pulse" priority /> {/* [IMG OPTIMIZATION] */}
                     <p className="text-xs font-medium text-muted-foreground">Verifying platform access...</p>
                 </div>
             </div>

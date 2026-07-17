@@ -5,6 +5,7 @@ import type { CSSProperties, ChangeEvent, ClipboardEvent, Dispatch, RefObject, S
 import { AlertCircle, ArrowDown, BookOpen, Check, ChevronDown, Copy, FileText, GraduationCap, HelpCircle, Layers, Pencil, RotateCw } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import ChatInput from '@/components/ChatInput';
+import Image from 'next/image'; // [IMG OPTIMIZATION]
 import ChatSkeleton from '@/components/ChatSkeleton';
 import WelcomeSkeleton from '@/components/WelcomeSkeleton';
 import MessageBubble, { type Message } from '@/components/MessageBubble';
@@ -658,7 +659,7 @@ export function MainConversation({
                 <div className="text-left sm:px-4 sm:text-center">
                   <div className="mb-4 flex flex-col items-start justify-start gap-3 sm:mb-3 sm:flex-row sm:items-center sm:justify-center">
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center sm:h-9 sm:w-9">
-                      <img src="/avatar.png" alt="PansGPT" className="h-8 w-8 object-contain drop-shadow-sm sm:h-7 sm:w-7" />
+                      <Image src="/avatar.png" alt="PansGPT" width={32} height={32} className="h-8 w-8 object-contain drop-shadow-sm sm:h-7 sm:w-7" priority /> {/* [IMG OPTIMIZATION] */}
                     </div>
                     <h2
                       className="text-2xl font-semibold leading-tight text-foreground sm:text-[26px] sm:font-medium sm:text-4xl"
@@ -732,10 +733,12 @@ export function MainConversation({
                             <div className="flex flex-wrap gap-2 mb-2 justify-end">
                               {uniqueImages.map((image, imageIndex) => (
                                 <div key={imageIndex} onClick={() => selectedImageSetter(image)} className="cursor-zoom-in">
-                                  <img
+                                  <Image
                                     src={`data:image/jpeg;base64,${image}`}
                                     alt={`Attachment ${imageIndex + 1}`}
-                                    className="w-20 h-20 object-cover rounded-lg shadow-sm hover:opacity-90 transition-opacity"
+                                    width={80}
+                                    height={80}
+                                    className="w-20 h-20 object-cover rounded-lg shadow-sm hover:opacity-90 transition-opacity" // [IMG OPTIMIZATION]
                                   />
                                 </div>
                               ))}

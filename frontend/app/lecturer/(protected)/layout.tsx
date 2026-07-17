@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image'; // [IMG OPTIMIZATION]
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -414,7 +415,7 @@ function LecturerSidebarContent({
     <div className="flex h-full flex-col">
       <div className={headerClass}>
         <div className={logoWrapClass}>
-          <img src="/icon.svg" alt="PansGPT" className="h-8 w-8 shrink-0 object-contain" />
+          <Image src="/icon.svg" alt="PansGPT" width={32} height={32} className="h-8 w-8 shrink-0 object-contain" priority /> {/* [IMG OPTIMIZATION] */}
           <div className={logoTextClass}>
             <h1 className="truncate text-sm font-semibold tracking-tight">PansGPT</h1>
             <p className="text-[11px] font-medium uppercase text-muted-foreground">Lecturer Console</p>

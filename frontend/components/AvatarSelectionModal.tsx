@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Check, RefreshCw, X } from 'lucide-react';
+import Image from 'next/image'; // [IMG OPTIMIZATION]
 import MobileBottomSheet from '@/components/MobileBottomSheet';
 import { buildAvatarUrl } from '@/lib/avatars';
 
@@ -62,7 +63,7 @@ export default function AvatarSelectionModal({ isOpen, onClose, onConfirm }: Ava
                                     : 'border-border hover:border-primary/50 hover:scale-105'
                             }`}
                         >
-                            <img src={buildAvatarUrl(seed)} alt={`Avatar ${i}`} className="w-full h-full object-cover bg-muted/30" loading="lazy" />
+                            <Image src={buildAvatarUrl(seed)} alt={`Avatar ${i}`} fill className="w-full h-full object-cover bg-muted/30" /> {/* [IMG OPTIMIZATION] */}
                             {selectedSeed === seed && (
                                 <div className="absolute top-1 right-1 bg-primary text-primary-foreground p-0.5 rounded-full shadow-sm">
                                     <Check className="w-3 h-3" />

@@ -1,4 +1,5 @@
 import { PanelLeft, SquarePen, User } from 'lucide-react';
+import Image from 'next/image'; // [IMG OPTIMIZATION]
 import type { MainUser } from './types';
 
 type SessionSummary = {
@@ -54,11 +55,11 @@ export function MainHeader({
         {!isProfileOpen && (
           <button
             onClick={onOpenProfile}
-            className="w-7 h-7 rounded-full ring-1 ring-primary flex items-center justify-center overflow-hidden bg-muted flex-shrink-0 transition-all"
+            className="w-7 h-7 rounded-full ring-1 ring-primary flex items-center justify-center overflow-hidden bg-muted flex-shrink-0 transition-all relative" // [IMG OPTIMIZATION]
             title="Profile"
           >
             {user.avatarUrl ? (
-              <img src={user.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+              <Image src={user.avatarUrl} alt="Avatar" fill className="w-full h-full object-cover" />
             ) : (
               <User size={18} className="text-muted-foreground" />
             )}

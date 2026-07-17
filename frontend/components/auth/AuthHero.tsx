@@ -1,3 +1,4 @@
+import Image from 'next/image'; // [IMG OPTIMIZATION]
 import { TAGLINES } from './authConstants';
 
 type AuthHeroProps = {
@@ -11,7 +12,7 @@ export function AuthHero({ taglineFading, taglineIndex, onSelectTagline }: AuthH
     <>
       <div className="hidden lg:flex absolute inset-0 flex-col justify-between p-12 overflow-hidden">
         <div className="flex items-center gap-2.5 z-10 w-fit auth-fade-up">
-          <img src="/icon.svg" alt="PansGPT icon" className="h-8 w-8 object-contain" />
+          <Image src="/icon.svg" alt="PansGPT icon" width={32} height={32} className="h-8 w-8 object-contain" priority /> {/* [IMG OPTIMIZATION] */}
           <span className="text-foreground text-xl font-bold" style={{ fontFamily: 'var(--font-albert-sans, Albert Sans, sans-serif)' }}>
             PansGPT
           </span>
@@ -98,7 +99,7 @@ export function AuthHero({ taglineFading, taglineIndex, onSelectTagline }: AuthH
 
       <div className="lg:hidden relative z-10 flex flex-col items-center justify-center pt-16 pb-8 gap-3 shrink-0 auth-fade-up">
         <div className="flex items-center gap-2.5">
-          <img src="/icon.svg" alt="PansGPT" className="h-9 w-9 object-contain" />
+          <Image src="/icon.svg" alt="PansGPT" width={36} height={36} className="h-9 w-9 object-contain" priority /> {/* [IMG OPTIMIZATION] */}
           <span className="text-foreground text-2xl font-bold" style={{ fontFamily: 'var(--font-albert-sans, Albert Sans, sans-serif)' }}>
             PansGPT
           </span>

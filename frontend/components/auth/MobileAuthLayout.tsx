@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, type Dispatch, type SetStateAction } from 'react';
+import Image from 'next/image'; // [IMG OPTIMIZATION]
 import { AnimatePresence, motion } from 'framer-motion';
 import { ForgotPasswordSection } from './ForgotPasswordSection';
 import { LoginForm } from './LoginForm';
@@ -162,7 +163,7 @@ export function MobileAuthLayout({
                 transition={{ duration: 0.4 }}
                 className="flex items-center gap-2.5 px-7 pt-14 z-10"
             >
-                <img src="/icon.svg" alt="PansGPT" className="h-6 w-6 object-contain" />
+                <Image src="/icon.svg" alt="PansGPT" width={24} height={24} className="h-6 w-6 object-contain" priority /> {/* [IMG OPTIMIZATION] */}
                 <span
                     className="text-foreground text-lg font-bold"
                     style={{ fontFamily: 'var(--font-albert-sans, Albert Sans, sans-serif)' }}

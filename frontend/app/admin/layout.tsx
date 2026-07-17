@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image'; // [IMG OPTIMIZATION]
 import { usePathname, useRouter } from 'next/navigation';
 import {
     BookOpenCheck,
@@ -173,7 +174,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         return (
             <div className="flex min-h-screen items-center justify-center bg-background">
                 <div className="flex flex-col items-center gap-3">
-                    <img src="/icon.svg" alt="PansGPT" className="h-8 w-8 animate-pulse" />
+                    <Image src="/icon.svg" alt="PansGPT" width={32} height={32} className="h-8 w-8 animate-pulse" priority /> {/* [IMG OPTIMIZATION] */}
                     <p className="text-xs font-medium text-muted-foreground">Verifying access...</p>
                 </div>
             </div>
@@ -353,7 +354,7 @@ function AdminSidebarContent({
         <div className="flex h-full flex-col">
             <div className={`flex h-[73px] items-center border-b border-border ${collapsed ? 'justify-center px-3' : 'justify-between gap-3 px-5'}`}>
                 <div className={`flex min-w-0 items-center ${collapsed ? 'justify-center' : 'gap-3'}`}>
-                    <img src="/icon.svg" alt="PansGPT" className="h-8 w-8 shrink-0 object-contain" />
+                    <Image src="/icon.svg" alt="PansGPT" width={32} height={32} className="h-8 w-8 shrink-0 object-contain" priority /> {/* [IMG OPTIMIZATION] */}
                     <div className={`min-w-0 ${collapsed ? 'hidden' : 'block'}`}>
                         <h1 className="truncate text-sm font-semibold tracking-tight">PansGPT</h1>
                         <p className="text-[11px] font-medium uppercase text-muted-foreground">Admin Console</p>
