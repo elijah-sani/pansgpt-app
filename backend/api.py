@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, Header, Depends, status, Request, BackgroundTasks, Query
+from contextlib import asynccontextmanager # [GRACEFUL SHUTDOWN]
 from starlette.concurrency import iterate_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -359,132 +360,161 @@ async def _custom_rate_limit_handler(request: Request, exc: RateLimitExceeded):
         }
     )
 
-app = FastAPI()
-app.state.limiter = limiter
-app.state.chat_limiter = chat_limiter
-app.add_exception_handler(RateLimitExceeded, _custom_rate_limit_handler)
-
-app.include_router(settings.router)
-app.include_router(system.router)
-
-# Security Configuration
-API_KEYS = os.getenv("API_KEYS", "").split(",")
-GOOGLE_DRIVE_FOLDER_ID = (os.getenv("GOOGLE_DRIVE_FOLDER_ID") or "").strip()
-if not GOOGLE_DRIVE_FOLDER_ID:
-    # During testing, we allow this to be empty to avoid collection errors
-    is_testing = (
-        os.getenv("PYTEST_CURRENT_TEST") or 
-        os.getenv("ENVIRONMENT") == "testing" or 
-        "pytest" in sys.modules or 
-        (len(sys.argv) > 0 and "pytest" in sys.argv[0])
-    )
-    if is_testing:
-        logger.warning("GOOGLE_DRIVE_FOLDER_ID is not configured. Proceeding anyway for testing.")
-        GOOGLE_DRIVE_FOLDER_ID = "test-folder-id"
-    else:
-        logger.critical("GOOGLE_DRIVE_FOLDER_ID is not configured. Refusing to start because uploads would go to My Drive root.")
-        raise RuntimeError("GOOGLE_DRIVE_FOLDER_ID is not configured.")
-# Initialize dual-provider LLM clients through service layer
-llm_engine.initialize_clients()
-
-# CORS: Allow your frontend to talk to this backend
-allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "")
-origins = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
-if not origins:
-    origins = [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-    ] # Default fallback
-    logger.info("Using default CORS origins: %s", origins)
-else:
-    logger.info(f"Loaded CORS origins: {origins}")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Models and constants moved to routers
-
-# --- Dependency: The Bouncer ---
-async def verify_api_key(x_api_key: str = Header(...)):
-    """
-    Validates the 'x-api-key' header. 
-    Returns True if valid, raises 403 if invalid.
-    """
-    if x_api_key not in API_KEYS:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid or missing API Key"
-        )
-    return x_api_key
-
-# --- Service Initialization ---
-try:
-    drive_service = get_drive_service(allow_upload=True)
-    logger.info("[INFO] Google Drive Service Initialized")
-except Exception as e:
-    logger.error(f"[ERROR] Failed to initialize Drive Service: {e}")
-    drive_service = None
-
-# --- Supabase Initialization (Moved up to be available for routes) ---
-# NOTE: Using supabase==2.0.3 for httpx compatibility
-logger.info("--- Supabase Initialization Debug ---")
-SUPABASE_URL = os.getenv("NEXT_PUBLIC_SUPABASE_URL") or os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or \
-               os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
-if not os.getenv("SUPABASE_SERVICE_ROLE_KEY"):
-    logger.warning(
-        "[WARNING] SUPABASE_SERVICE_ROLE_KEY not set — "
-        "falling back to anon key. Service-role operations may fail."
-    )
-
-supabase_client = None
-supabase_service_client = None
-try:
-    from supabase import create_client, Client, ClientOptions
-    if SUPABASE_URL and SUPABASE_KEY:
-        supabase_options = ClientOptions(postgrest_client_timeout=60)
-        supabase_client: Client = create_client(SUPABASE_URL, SUPABASE_KEY, options=supabase_options)
-        logger.info("[INFO] Supabase Client Initialized Successfully")
-
-        # Optional service-role client with same timeout policy when available.
-        service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        if service_role_key:
-            supabase_service_client = create_client(SUPABASE_URL, service_role_key, options=supabase_options)
-    else:
-        logger.warning("[WARNING] Supabase Initialization Skipped due to missing variables.")
-except ImportError:
-    logger.error("[ERROR] 'supabase' package not installed.")
-except Exception as e:
-    logger.error(f"[ERROR] Failed to initialize Supabase: {e}")
-logger.info("---------------------------------------")
-
-set_role_dependencies(supabase_client, supabase_service_client)
-
-# --- Auth JWKS Preflight (startup-only, no request-path overhead) ---
-try:
-    jwks_health = prime_jwks_cache()
-    if jwks_health.get("ready"):
-        logger.info(f"[INFO] JWKS preflight ready via {jwks_health.get('endpoint')}")
-    else:
-        logger.warning(f"[WARNING] JWKS preflight not ready: {jwks_health.get('error')}")
-except Exception as e:
-    logger.warning(f"[WARNING] JWKS preflight failed: {e}")
-
-# --- Initialize Routers with Dependencies ---
-library.set_dependencies(drive_service, supabase_client, verify_api_key, GOOGLE_DRIVE_FOLDER_ID, supabase_service_client)
-chat.set_dependencies(supabase_client, verify_api_key, supabase_service_client)
-system.set_dependencies(supabase_client)
-settings.set_dependencies(supabase_client, verify_api_key, supabase_service_client)
-quiz.set_dependencies(supabase_client, verify_api_key, supabase_service_client)
-lecturer.set_dependencies(supabase_client, verify_api_key, supabase_service_client, drive_service, GOOGLE_DRIVE_FOLDER_ID)
-ai_usage_tracker.set_dependencies(supabase_service_client)
+# [GRACEFUL SHUTDOWN]
+API_KEYS = os.getenv("API_KEYS", "").split(",")  # [GRACEFUL SHUTDOWN]
+GOOGLE_DRIVE_FOLDER_ID = (os.getenv("GOOGLE_DRIVE_FOLDER_ID") or "").strip()  # [GRACEFUL SHUTDOWN]
+if not GOOGLE_DRIVE_FOLDER_ID:  # [GRACEFUL SHUTDOWN]
+    # During testing, we allow this to be empty to avoid collection errors  # [GRACEFUL SHUTDOWN]
+    is_testing = (  # [GRACEFUL SHUTDOWN]
+        os.getenv("PYTEST_CURRENT_TEST") or   # [GRACEFUL SHUTDOWN]
+        os.getenv("ENVIRONMENT") == "testing" or   # [GRACEFUL SHUTDOWN]
+        "pytest" in sys.modules or   # [GRACEFUL SHUTDOWN]
+        (len(sys.argv) > 0 and "pytest" in sys.argv[0])  # [GRACEFUL SHUTDOWN]
+    )  # [GRACEFUL SHUTDOWN]
+    if is_testing:  # [GRACEFUL SHUTDOWN]
+        logger.warning("GOOGLE_DRIVE_FOLDER_ID is not configured. Proceeding anyway for testing.")  # [GRACEFUL SHUTDOWN]
+        GOOGLE_DRIVE_FOLDER_ID = "test-folder-id"  # [GRACEFUL SHUTDOWN]
+    else:  # [GRACEFUL SHUTDOWN]
+        logger.critical("GOOGLE_DRIVE_FOLDER_ID is not configured. Refusing to start because uploads would go to My Drive root.")  # [GRACEFUL SHUTDOWN]
+        raise RuntimeError("GOOGLE_DRIVE_FOLDER_ID is not configured.")  # [GRACEFUL SHUTDOWN]
+  # [GRACEFUL SHUTDOWN]
+async def verify_api_key(x_api_key: str = Header(...)):  # [GRACEFUL SHUTDOWN]
+    """  # [GRACEFUL SHUTDOWN]
+    Validates the 'x-api-key' header.   # [GRACEFUL SHUTDOWN]
+    Returns True if valid, raises 403 if invalid.  # [GRACEFUL SHUTDOWN]
+    """  # [GRACEFUL SHUTDOWN]
+    if x_api_key not in API_KEYS:  # [GRACEFUL SHUTDOWN]
+        raise HTTPException(  # [GRACEFUL SHUTDOWN]
+            status_code=status.HTTP_403_FORBIDDEN,  # [GRACEFUL SHUTDOWN]
+            detail="Invalid or missing API Key"  # [GRACEFUL SHUTDOWN]
+        )  # [GRACEFUL SHUTDOWN]
+    return x_api_key  # [GRACEFUL SHUTDOWN]
+  # [GRACEFUL SHUTDOWN]
+drive_service = None  # [GRACEFUL SHUTDOWN]
+supabase_client = None  # [GRACEFUL SHUTDOWN]
+supabase_service_client = None  # [GRACEFUL SHUTDOWN]
+  # [GRACEFUL SHUTDOWN]
+@asynccontextmanager  # [GRACEFUL SHUTDOWN]
+async def lifespan(app: FastAPI):  # [GRACEFUL SHUTDOWN]
+    global drive_service, supabase_client, supabase_service_client  # [GRACEFUL SHUTDOWN]
+    logger.info("[GRACEFUL SHUTDOWN] Starting up lifecycle manager...")  # [GRACEFUL SHUTDOWN]
+      # [GRACEFUL SHUTDOWN]
+    # Initialize dual-provider LLM clients through service layer  # [GRACEFUL SHUTDOWN]
+    llm_engine.initialize_clients()  # [GRACEFUL SHUTDOWN]
+      # [GRACEFUL SHUTDOWN]
+    try:  # [GRACEFUL SHUTDOWN]
+        drive_service = get_drive_service(allow_upload=True)  # [GRACEFUL SHUTDOWN]
+        logger.info("[INFO] Google Drive Service Initialized")  # [GRACEFUL SHUTDOWN]
+    except Exception as e:  # [GRACEFUL SHUTDOWN]
+        logger.error(f"[ERROR] Failed to initialize Drive Service: {e}")  # [GRACEFUL SHUTDOWN]
+        drive_service = None  # [GRACEFUL SHUTDOWN]
+      # [GRACEFUL SHUTDOWN]
+    # Supabase Initialization  # [GRACEFUL SHUTDOWN]
+    logger.info("--- Supabase Initialization Debug ---")  # [GRACEFUL SHUTDOWN]
+    SUPABASE_URL = os.getenv("NEXT_PUBLIC_SUPABASE_URL") or os.getenv("SUPABASE_URL")  # [GRACEFUL SHUTDOWN]
+    SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or \
+                   os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")  # [GRACEFUL SHUTDOWN]
+    if not os.getenv("SUPABASE_SERVICE_ROLE_KEY"):  # [GRACEFUL SHUTDOWN]
+        logger.warning(  # [GRACEFUL SHUTDOWN]
+            "[WARNING] SUPABASE_SERVICE_ROLE_KEY not set — "  # [GRACEFUL SHUTDOWN]
+            "falling back to anon key. Service-role operations may fail."  # [GRACEFUL SHUTDOWN]
+        )  # [GRACEFUL SHUTDOWN]
+      # [GRACEFUL SHUTDOWN]
+    try:  # [GRACEFUL SHUTDOWN]
+        from supabase import create_client, Client, ClientOptions  # [GRACEFUL SHUTDOWN]
+        if SUPABASE_URL and SUPABASE_KEY:  # [GRACEFUL SHUTDOWN]
+            supabase_options = ClientOptions(postgrest_client_timeout=60)  # [GRACEFUL SHUTDOWN]
+            supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY, options=supabase_options)  # [GRACEFUL SHUTDOWN]
+            logger.info("[INFO] Supabase Client Initialized Successfully")  # [GRACEFUL SHUTDOWN]
+              # [GRACEFUL SHUTDOWN]
+            # Optional service-role client with same timeout policy when available.  # [GRACEFUL SHUTDOWN]
+            service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")  # [GRACEFUL SHUTDOWN]
+            if service_role_key:  # [GRACEFUL SHUTDOWN]
+                supabase_service_client = create_client(SUPABASE_URL, service_role_key, options=supabase_options)  # [GRACEFUL SHUTDOWN]
+        else:  # [GRACEFUL SHUTDOWN]
+            logger.warning("[WARNING] Supabase Initialization Skipped due to missing variables.")  # [GRACEFUL SHUTDOWN]
+    except ImportError:  # [GRACEFUL SHUTDOWN]
+        logger.error("[ERROR] 'supabase' package not installed.")  # [GRACEFUL SHUTDOWN]
+    except Exception as e:  # [GRACEFUL SHUTDOWN]
+        logger.error(f"[ERROR] Failed to initialize Supabase: {e}")  # [GRACEFUL SHUTDOWN]
+    logger.info("---------------------------------------")  # [GRACEFUL SHUTDOWN]
+      # [GRACEFUL SHUTDOWN]
+    set_role_dependencies(supabase_client, supabase_service_client)  # [GRACEFUL SHUTDOWN]
+      # [GRACEFUL SHUTDOWN]
+    # Auth JWKS Preflight (startup-only, no request-path overhead)  # [GRACEFUL SHUTDOWN]
+    try:  # [GRACEFUL SHUTDOWN]
+        jwks_health = prime_jwks_cache()  # [GRACEFUL SHUTDOWN]
+        if jwks_health.get("ready"):  # [GRACEFUL SHUTDOWN]
+            logger.info(f"[INFO] JWKS preflight ready via {jwks_health.get('endpoint')}")  # [GRACEFUL SHUTDOWN]
+        else:  # [GRACEFUL SHUTDOWN]
+            logger.warning(f"[WARNING] JWKS preflight not ready: {jwks_health.get('error')}")  # [GRACEFUL SHUTDOWN]
+    except Exception as e:  # [GRACEFUL SHUTDOWN]
+        logger.warning(f"[WARNING] JWKS preflight failed: {e}")  # [GRACEFUL SHUTDOWN]
+      # [GRACEFUL SHUTDOWN]
+    # Initialize Routers with Dependencies  # [GRACEFUL SHUTDOWN]
+    library.set_dependencies(drive_service, supabase_client, verify_api_key, GOOGLE_DRIVE_FOLDER_ID, supabase_service_client)  # [GRACEFUL SHUTDOWN]
+    chat.set_dependencies(supabase_client, verify_api_key, supabase_service_client)  # [GRACEFUL SHUTDOWN]
+    system.set_dependencies(supabase_client)  # [GRACEFUL SHUTDOWN]
+    settings.set_dependencies(supabase_client, verify_api_key, supabase_service_client)  # [GRACEFUL SHUTDOWN]
+    quiz.set_dependencies(supabase_client, verify_api_key, supabase_service_client)  # [GRACEFUL SHUTDOWN]
+    lecturer.set_dependencies(supabase_client, verify_api_key, supabase_service_client, drive_service, GOOGLE_DRIVE_FOLDER_ID)  # [GRACEFUL SHUTDOWN]
+    ai_usage_tracker.set_dependencies(supabase_service_client)  # [GRACEFUL SHUTDOWN]
+      # [GRACEFUL SHUTDOWN]
+    # Stale Job Recovery Checks  # [GRACEFUL SHUTDOWN]
+    sb_db = supabase_service_client or supabase_client  # [GRACEFUL SHUTDOWN]
+    if sb_db:  # [GRACEFUL SHUTDOWN]
+        recovered_quizzes = await quiz.recover_orphaned_quiz_jobs(sb_db)  # [GRACEFUL SHUTDOWN]
+        recovered_docs = await library.recover_orphaned_document_ingestions(sb_db)  # [GRACEFUL SHUTDOWN]
+        logger.info(  # [GRACEFUL SHUTDOWN]
+            "[GRACEFUL SHUTDOWN] Startup recovery check completed: "  # [GRACEFUL SHUTDOWN]
+            "recovered %d quizzes, %d documents.",  # [GRACEFUL SHUTDOWN]
+            recovered_quizzes,  # [GRACEFUL SHUTDOWN]
+            recovered_docs,  # [GRACEFUL SHUTDOWN]
+        )  # [GRACEFUL SHUTDOWN]
+      # [GRACEFUL SHUTDOWN]
+    yield  # [GRACEFUL SHUTDOWN]
+      # [GRACEFUL SHUTDOWN]
+    # On Shutdown: Log in-flight tasks and wait/warn  # [GRACEFUL SHUTDOWN]
+    from utils import background_task_tracker  # [GRACEFUL SHUTDOWN]
+    active_count = background_task_tracker.active_tasks  # [GRACEFUL SHUTDOWN]
+    if active_count > 0:  # [GRACEFUL SHUTDOWN]
+        logger.warning(  # [GRACEFUL SHUTDOWN]
+            "[GRACEFUL SHUTDOWN] Server shutting down. %d background tasks are currently in-flight. "  # [GRACEFUL SHUTDOWN]
+            "Attempting ASGI graceful drain.",  # [GRACEFUL SHUTDOWN]
+            active_count,  # [GRACEFUL SHUTDOWN]
+        )  # [GRACEFUL SHUTDOWN]
+    else:  # [GRACEFUL SHUTDOWN]
+        logger.info("[GRACEFUL SHUTDOWN] Server shutting down cleanly with 0 active background tasks.")  # [GRACEFUL SHUTDOWN]
+  # [GRACEFUL SHUTDOWN]
+app = FastAPI(lifespan=lifespan)  # [GRACEFUL SHUTDOWN]
+app.state.limiter = limiter  # [GRACEFUL SHUTDOWN]
+app.state.chat_limiter = chat_limiter  # [GRACEFUL SHUTDOWN]
+app.add_exception_handler(RateLimitExceeded, _custom_rate_limit_handler)  # [GRACEFUL SHUTDOWN]
+  # [GRACEFUL SHUTDOWN]
+app.include_router(settings.router)  # [GRACEFUL SHUTDOWN]
+app.include_router(system.router)  # [GRACEFUL SHUTDOWN]
+  # [GRACEFUL SHUTDOWN]
+# CORS: Allow your frontend to talk to this backend  # [GRACEFUL SHUTDOWN]
+allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "")  # [GRACEFUL SHUTDOWN]
+origins = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]  # [GRACEFUL SHUTDOWN]
+if not origins:  # [GRACEFUL SHUTDOWN]
+    origins = [  # [GRACEFUL SHUTDOWN]
+        "http://localhost:3000",  # [GRACEFUL SHUTDOWN]
+        "http://127.0.0.1:3000",  # [GRACEFUL SHUTDOWN]
+        "http://localhost:3001",  # [GRACEFUL SHUTDOWN]
+        "http://127.0.0.1:3001",  # [GRACEFUL SHUTDOWN]
+    ] # Default fallback  # [GRACEFUL SHUTDOWN]
+    logger.info("Using default CORS origins: %s", origins)  # [GRACEFUL SHUTDOWN]
+else:  # [GRACEFUL SHUTDOWN]
+    logger.info(f"Loaded CORS origins: {origins}")  # [GRACEFUL SHUTDOWN]
+  # [GRACEFUL SHUTDOWN]
+app.add_middleware(  # [GRACEFUL SHUTDOWN]
+    CORSMiddleware,  # [GRACEFUL SHUTDOWN]
+    allow_origins=origins,  # [GRACEFUL SHUTDOWN]
+    allow_credentials=True,  # [GRACEFUL SHUTDOWN]
+    allow_methods=["*"],  # [GRACEFUL SHUTDOWN]
+    allow_headers=["*"],  # [GRACEFUL SHUTDOWN]
+)  # [GRACEFUL SHUTDOWN]
 
 # Include routers
 app.include_router(library.router)

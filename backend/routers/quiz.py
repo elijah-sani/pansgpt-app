@@ -2646,32 +2646,38 @@ Return only <question>...</question> blocks."""
 
 
 async def _process_quiz_generation_job(job_id: str, body_payload: dict, user_payload: dict) -> None:
-    sb = _get_supabase()
+    # [GRACEFUL SHUTDOWN]
+    from utils import background_task_tracker
+    background_task_tracker.increment()
     try:
-        body = QuizGenerateRequest.model_validate(body_payload)
-        current_user = User.model_validate(user_payload)
-        await _generate_quiz_now(body, current_user, job_id=job_id)
-    except HTTPException as exc:
-        # [QUIZ BATCH FIX] — await async update
-        await _update_quiz_generation_job(
-            sb,
-            job_id,
-            status="failed",
-            progress=100,
-            current_step="Could not generate quiz",
-            error_message=_serialize_http_detail(exc.detail),
-        )
-    except Exception as exc:
-        logger.error("Quiz generation job %s failed: %s", job_id, exc)
-        # [QUIZ BATCH FIX] — await async update
-        await _update_quiz_generation_job(
-            sb,
-            job_id,
-            status="failed",
-            progress=100,
-            current_step="Could not generate quiz",
-            error_message=_serialize_http_detail({"code": _classify_quiz_generation_exception(exc), "message": "Unable to generate quiz. Please try again."}),
-        )
+        sb = _get_supabase()
+        try:
+            body = QuizGenerateRequest.model_validate(body_payload)
+            current_user = User.model_validate(user_payload)
+            await _generate_quiz_now(body, current_user, job_id=job_id)
+        except HTTPException as exc:
+            # [QUIZ BATCH FIX] — await async update
+            await _update_quiz_generation_job(
+                sb,
+                job_id,
+                status="failed",
+                progress=100,
+                current_step="Could not generate quiz",
+                error_message=_serialize_http_detail(exc.detail),
+            )
+        except Exception as exc:
+            logger.error("Quiz generation job %s failed: %s", job_id, exc)
+            # [QUIZ BATCH FIX] — await async update
+            await _update_quiz_generation_job(
+                sb,
+                job_id,
+                status="failed",
+                progress=100,
+                current_step="Could not generate quiz",
+                error_message=_serialize_http_detail({"code": _classify_quiz_generation_exception(exc), "message": "Unable to generate quiz. Please try again."}),
+            )
+    finally:
+        background_task_tracker.decrement() # [GRACEFUL SHUTDOWN]
 
 
 def _normalize_quiz_generation_job(row: dict) -> dict:
@@ -3537,3 +3543,35 @@ async def share_quiz(quiz_id: str):
     except Exception as e:
         logger.error(f"Share quiz error: {e}")
         raise HTTPException(status_code=500, detail="Unable to load this quiz. Please try again.")
+
+# [GRACEFUL SHUTDOWN]
+async def recover_orphaned_quiz_jobs(sb) -> int:
+    """
+    On startup, query quiz_generation_jobs for any rows with status in 
+    ('queued', 'retrieving', 'generating', 'saving') where updated_at 
+    is older than 10 minutes. Mark them as 'failed' with an error message 
+    'Interrupted by server restart'.
+    """
+    from datetime import timedelta
+    threshold = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    try:
+        res = await asyncio.to_thread(
+            lambda: sb.table("quiz_generation_jobs")
+            .update({
+                "status": "failed",
+                "error_message": "Interrupted by server restart",
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "progress": 100,
+                "current_step": "Failed",
+            })
+            .in_("status", ["queued", "retrieving", "generating", "saving"])
+            .lt("updated_at", threshold)
+            .execute()
+        )
+        count = len(res.data or [])
+        if count > 0:
+            logger.info(f"[GRACEFUL SHUTDOWN] Recovered {count} stale quiz generation jobs.")
+        return count
+    except Exception as exc:
+        logger.error(f"[GRACEFUL SHUTDOWN] Failed to recover stale quiz jobs: {exc}")
+        return 0

@@ -1115,45 +1115,47 @@ async def process_document_background(
     file_name: str = "document.pdf",
     uploaded_by: Optional[str] = None,
 ) -> None:
-    """
-    Background task wrapper for heavy document parsing/chunking/embedding work.
-    Guarantees a terminal status update on failure.
-    """
-    queued_worker_id = ingestion_worker_id
-    ingestion_worker_id = str(uuid4())
+    # [GRACEFUL SHUTDOWN]
+    from utils import background_task_tracker
+    background_task_tracker.increment()
     try:
-        claimed = await _claim_document_ingestion_worker(document_id, ingestion_run_id, ingestion_worker_id)
-        if not claimed:
-            logger.info(
-                "[INFO] Duplicate ingestion worker skipped for document %s run %s worker %s queued_worker %s",
-                document_id,
-                ingestion_run_id,
-                ingestion_worker_id,
-                queued_worker_id,
-            )
-            return
-        state = await _get_document_ingestion_state(document_id)
-        current_status = state.get("embedding_status") if state else None
-        current_run_id = state.get("ingestion_run_id") if state else None
-        current_worker_id = state.get("ingestion_worker_id") if state else None
-        if current_status != "processing" or current_run_id != ingestion_run_id or current_worker_id != ingestion_worker_id:
-            logger.info(
-                "[INFO] Skipping ingestion worker for %s because status/run/worker is %s/%s/%s, worker run/id is %s/%s queued_worker %s",
-                document_id,
-                current_status or "missing",
-                current_run_id or "missing",
-                current_worker_id or "missing",
-                ingestion_run_id,
-                ingestion_worker_id,
-                queued_worker_id,
-            )
-            return
-        await process_and_embed(file_content, document_id, ingestion_run_id, ingestion_worker_id, file_name)
-    except StaleIngestionRun as e:
-        logger.info("[INFO] %s", e)
-    except Exception as e:
-        logger.error(f"[ERROR] Background processing failed for {document_id}: {e}")
-        await _mark_document_failed(document_id, str(e), ingestion_run_id, ingestion_worker_id)
+        queued_worker_id = ingestion_worker_id
+        ingestion_worker_id = str(uuid4())
+        try:
+            claimed = await _claim_document_ingestion_worker(document_id, ingestion_run_id, ingestion_worker_id)
+            if not claimed:
+                logger.info(
+                    "[INFO] Duplicate ingestion worker skipped for document %s run %s worker %s queued_worker %s",
+                    document_id,
+                    ingestion_run_id,
+                    ingestion_worker_id,
+                    queued_worker_id,
+                )
+                return
+            state = await _get_document_ingestion_state(document_id)
+            current_status = state.get("embedding_status") if state else None
+            current_run_id = state.get("ingestion_run_id") if state else None
+            current_worker_id = state.get("ingestion_worker_id") if state else None
+            if current_status != "processing" or current_run_id != ingestion_run_id or current_worker_id != ingestion_worker_id:
+                logger.info(
+                    "[INFO] Skipping ingestion worker for %s because status/run/worker is %s/%s/%s, worker run/id is %s/%s queued_worker %s",
+                    document_id,
+                    current_status or "missing",
+                    current_run_id or "missing",
+                    current_worker_id or "missing",
+                    ingestion_run_id,
+                    ingestion_worker_id,
+                    queued_worker_id,
+                )
+                return
+            await process_and_embed(file_content, document_id, ingestion_run_id, ingestion_worker_id, file_name)
+        except StaleIngestionRun as e:
+            logger.info("[INFO] %s", e)
+        except Exception as e:
+            logger.error(f"[ERROR] Background processing failed for {document_id}: {e}")
+            await _mark_document_failed(document_id, str(e), ingestion_run_id, ingestion_worker_id)
+    finally:
+        background_task_tracker.decrement() # [GRACEFUL SHUTDOWN]
 
 # --- Endpoints ---
 @router.post("/upload", dependencies=[Depends(verify_api_key)])
@@ -1877,3 +1879,64 @@ def set_dependencies(drive_svc, supabase, api_key_verifier, folder_id, supabase_
         logger.info("[INFO] Library router using service-role Supabase client for admin/background operations.")
     else:
         logger.warning("[WARNING] Library router running without service-role Supabase client; RLS may block some writes.")
+
+# [GRACEFUL SHUTDOWN]
+async def recover_orphaned_document_ingestions(sb) -> int:
+    """
+    On startup, query pans_library for any rows with embedding_status = 'processing'
+    where ingestion_worker_heartbeat_at (or ingestion_worker_claimed_at if heartbeat is null)
+    is older than 10 minutes. Mark them as 'failed' with an error message
+    'Interrupted by server restart'.
+    """
+    from datetime import timedelta
+    try:
+        res = await asyncio.to_thread(
+            lambda: sb.table("pans_library")
+            .select("id, ingestion_worker_heartbeat_at, ingestion_worker_claimed_at, last_updated_at")
+            .eq("embedding_status", "processing")
+            .execute()
+        )
+        processing_docs = res.data or []
+        if not processing_docs:
+            return 0
+        
+        stale_ids = []
+        now_dt = datetime.now(timezone.utc)
+        ten_mins = timedelta(minutes=10)
+        
+        for doc in processing_docs:
+            heartbeat_str = doc.get("ingestion_worker_heartbeat_at")
+            claimed_str = doc.get("ingestion_worker_claimed_at")
+            updated_str = doc.get("last_updated_at")
+            
+            ref_str = heartbeat_str or claimed_str or updated_str
+            if ref_str:
+                try:
+                    ref_dt = datetime.fromisoformat(ref_str.replace("Z", "+00:00"))
+                    if now_dt - ref_dt > ten_mins:
+                        stale_ids.append(doc["id"])
+                except Exception:
+                    stale_ids.append(doc["id"])
+            else:
+                stale_ids.append(doc["id"])
+                
+        if not stale_ids:
+            return 0
+            
+        update_res = await asyncio.to_thread(
+            lambda: sb.table("pans_library")
+            .update({
+                "embedding_status": "failed",
+                "embedding_error": "Interrupted by server restart",
+                "last_updated_at": datetime.now(timezone.utc).isoformat(),
+            })
+            .in_("id", stale_ids)
+            .execute()
+        )
+        count = len(update_res.data or [])
+        if count > 0:
+            logger.info(f"[GRACEFUL SHUTDOWN] Recovered {count} stale document ingestions.")
+        return count
+    except Exception as exc:
+        logger.error(f"[GRACEFUL SHUTDOWN] Failed to recover stale document ingestions: {exc}")
+        return 0
