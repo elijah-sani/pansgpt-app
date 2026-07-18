@@ -74,7 +74,7 @@ export default function ProfileSidebar({
 
                         <div className="px-5 pt-6 pb-5 flex flex-col items-center text-center relative z-10">
                             <div className="w-[72px] h-[72px] rounded-full bg-muted shadow-sm overflow-hidden ring-2 ring-primary/30 relative"> {/* [IMG OPTIMIZATION] */}
-                                <Image src={currentAvatar} alt="Avatar" fill className="w-full h-full object-cover rounded-full" /> {/* [IMG OPTIMIZATION] */}
+                                <Image src={currentAvatar} alt="Avatar" fill sizes="72px" className="w-full h-full object-cover rounded-full" /> {/* [IMG OPTIMIZATION] */}
                             </div>
 
                             <h3 className="text-lg font-bold text-foreground mt-3 leading-tight">{user.name || 'User'}</h3>

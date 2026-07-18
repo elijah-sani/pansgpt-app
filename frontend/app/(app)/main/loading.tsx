@@ -33,6 +33,18 @@ export default function MainLoading() {
           <WelcomeSkeleton />
         )}
       </div>
+
+      {hasSession === false && (
+        <div className="sm:hidden w-full px-4 pb-6 shrink-0">
+          <div className="relative flex flex-col bg-card rounded-[28px] border border-border/40 p-4 shadow-lg shadow-black/5 h-[128px] w-full animate-pulse">
+            <div className="h-4 bg-accent/20 rounded-md w-1/3 mt-1" />
+            <div className="flex items-center justify-between mt-auto">
+              <div className="h-9 w-9 rounded-full bg-accent/15" />
+              <div className="h-9 w-9 rounded-full bg-accent/15" />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

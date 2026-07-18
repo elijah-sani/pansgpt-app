@@ -994,8 +994,17 @@ export function MainConversation({
 
         {isLoadingChat ? (
           !activeSessionId && (
-            <div className="sm:hidden w-full px-4 pb-4">
-              <div className="h-11 rounded-2xl bg-accent/20 border border-border/40 w-full animate-pulse" />
+            <div className="sm:hidden w-full px-4 pb-6">
+              <div className="relative flex flex-col bg-card rounded-[28px] border border-border/40 p-4 shadow-lg shadow-black/5 h-[128px] w-full animate-pulse">
+                {/* Input text placeholder line */}
+                <div className="h-4 bg-accent/20 rounded-md w-1/3 mt-1" />
+                
+                {/* Controls row */}
+                <div className="flex items-center justify-between mt-auto">
+                  <div className="h-9 w-9 rounded-full bg-accent/15" />
+                  <div className="h-9 w-9 rounded-full bg-accent/15" />
+                </div>
+              </div>
             </div>
           )
         ) : activeCard !== null ? (

@@ -59,7 +59,7 @@ export function MainHeader({
             title="Profile"
           >
             {user.avatarUrl ? (
-              <Image src={user.avatarUrl} alt="Avatar" fill className="w-full h-full object-cover" />
+              <Image src={user.avatarUrl} alt="Avatar" fill sizes="28px" className="w-full h-full object-cover" />
             ) : (
               <User size={18} className="text-muted-foreground" />
             )}

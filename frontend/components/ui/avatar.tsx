@@ -10,9 +10,9 @@ export function Avatar({ className = "", children, ...props }: React.HTMLAttribu
     );
 }
 
-export function AvatarImage({ src, alt, className = "", ...props }: Omit<React.ComponentProps<typeof Image>, 'src'> & { src?: string }) { // [IMG OPTIMIZATION]
+export function AvatarImage({ src, alt, className = "", sizes = "40px", ...props }: Omit<React.ComponentProps<typeof Image>, 'src'> & { src?: string }) { // [IMG OPTIMIZATION]
     if (!src) return null;
-    return <Image src={src} alt={alt || ""} fill className={`aspect-square h-full w-full object-cover ${className}`} {...props} />; // [IMG OPTIMIZATION]
+    return <Image src={src} alt={alt || ""} fill sizes={sizes} className={`aspect-square h-full w-full object-cover ${className}`} {...props} />; // [IMG OPTIMIZATION]
 }
 
 export function AvatarFallback({ className = "", children, ...props }: React.HTMLAttributes<HTMLSpanElement>) {

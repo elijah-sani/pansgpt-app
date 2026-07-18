@@ -788,7 +788,7 @@ export default function AppSidebar({
                 className="p-2 text-foreground hover:bg-accent active:bg-accent/80 active:scale-95 rounded-lg transition-colors flex items-center justify-center"
                 style={{ WebkitTapHighlightColor: 'transparent' }}
               >
-                {isOnReader && isIconOnly ? (
+                {(isOnReader || isOnQuiz || isOnMain) && isIconOnly ? (
                   isToggleHovered ? (
                     <PanelLeft size={20} />
                   ) : (
