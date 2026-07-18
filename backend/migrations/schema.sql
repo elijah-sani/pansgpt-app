@@ -668,6 +668,13 @@ on public.document_embeddings
 using ivfflat (embedding vector_cosine_ops)
 with (lists = 100);
 
+-- Create metadata table to track index builds
+create table if not exists public.vector_index_metadata (
+  id integer primary key default 1 check (id = 1),
+  last_reindex_at timestamp with time zone not null default timezone('utc'::text, now()),
+  rows_at_last_reindex bigint not null default 0
+);
+
 create or replace function public.prevent_stale_document_embedding_write()
 returns trigger
 language plpgsql
@@ -2095,3 +2102,101 @@ $$;
 
 revoke all on function public.prepare_document_reembed(uuid, boolean) from public;
 grant execute on function public.prepare_document_reembed(uuid, boolean) to service_role;
+
+-- Function to check vector index health
+create or replace function public.get_vector_index_health(
+  out total_rows bigint,
+  out rows_at_last_reindex bigint,
+  out rows_added bigint,
+  out last_reindex_at timestamp with time zone,
+  out needs_reindex boolean
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_current_count bigint;
+  v_last_count bigint;
+  v_last_time timestamp with time zone;
+begin
+  select count(*) into v_current_count from public.document_embeddings;
+  
+  select m.rows_at_last_reindex, m.last_reindex_at
+  into v_last_count, v_last_time
+  from public.vector_index_metadata m
+  where m.id = 1;
+  
+  if not found then
+    v_last_count := 0;
+    v_last_time := null;
+  end if;
+
+  total_rows := v_current_count;
+  rows_at_last_reindex := v_last_count;
+  rows_added := greatest(0, v_current_count - v_last_count);
+  last_reindex_at := v_last_time;
+  
+  if v_last_count > 0 then
+    needs_reindex := (rows_added::double precision / v_last_count::double precision) > 0.30;
+  else
+    needs_reindex := v_current_count > 0;
+  end if;
+end;
+$$;
+
+revoke execute on function public.get_vector_index_health() from public;
+grant execute on function public.get_vector_index_health() to service_role;
+grant execute on function public.get_vector_index_health() to postgres;
+
+-- Function to trigger manual reindexing concurrently via pg_cron
+create or replace function public.trigger_vector_index_reindex()
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_job_id bigint;
+begin
+  if not exists (
+    select 1 
+    from pg_extension 
+    where extname = 'pg_cron'
+  ) then
+    raise exception 'pg_cron extension is not enabled in this database. Please enable it by running "create extension pg_cron;" in the SQL Editor.';
+  end if;
+
+  perform cron.unschedule(jobname) 
+  from cron.job 
+  where jobname = 'manual_vector_reindex';
+
+  select cron.schedule(
+    'manual_vector_reindex',
+    '* * * * *',
+    'REINDEX INDEX CONCURRENTLY public.document_embeddings_embedding_idx; UPDATE public.vector_index_metadata SET last_reindex_at = now(), rows_at_last_reindex = (SELECT count(*) FROM public.document_embeddings) WHERE id = 1; SELECT cron.unschedule(''manual_vector_reindex'');'
+  ) into v_job_id;
+
+  return 'Reindexing scheduled concurrently in the background via pg_cron. Job ID: ' || v_job_id;
+end;
+$$;
+
+revoke execute on function public.trigger_vector_index_reindex() from public;
+grant execute on function public.trigger_vector_index_reindex() to service_role;
+grant execute on function public.trigger_vector_index_reindex() to postgres;
+
+-- RLS gap fixes from fix_rls_gaps.sql
+alter table public.chat_messages enable row level security;
+alter table public.chat_sessions enable row level security;
+alter table public.document_embeddings enable row level security;
+alter table public.faculty_knowledge enable row level security;
+
+-- activity_logs and vector_index_metadata row level security and privileges
+alter table public.activity_logs enable row level security;
+alter table public.vector_index_metadata enable row level security;
+
+revoke all on public.activity_logs from anon, authenticated;
+grant all on public.activity_logs to service_role;
+
+revoke all on public.vector_index_metadata from anon, authenticated;
+grant all on public.vector_index_metadata to service_role;
