@@ -541,11 +541,11 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     // [LEARN MODE UI] Synchronize sidebar open state with active tab view modes
     useEffect(() => {
         if (activeTab === 'chat' || activeTab === 'learn') {
-            if (!isSidebarOpen) setIsSidebarOpen(true);
+            setIsSidebarOpen(true);
         } else if (activeTab === 'document') {
-            if (isSidebarOpen) setIsSidebarOpen(false);
+            setIsSidebarOpen(false);
         }
-    }, [activeTab, isSidebarOpen]);
+    }, [activeTab]);
 
     useEffect(() => {
         if (isSidebarOpen) {
@@ -557,7 +557,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 setActiveTab('document');
             }
         }
-    }, [isSidebarOpen, activeTab]);
+    }, [isSidebarOpen]);
 
     // Snipping State
     const [isSnippingMode, setIsSnippingMode] = useState(false);
