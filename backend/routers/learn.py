@@ -17,7 +17,7 @@ import logging
 import re
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks  # [LEARN RETEST]
 from pydantic import BaseModel, Field
 
 from dependencies import get_current_user, User
@@ -200,6 +200,88 @@ _FOLLOWUP_SYSTEM = (
     "Explain in 2-3 sentences why the correct answer is right and briefly clarify the concept. "
     "Be direct and educational."
 )
+
+_RETEST_QUESTION_SYSTEM = (  # [LEARN RETEST]
+    "You are a pharmacy study tutor. A student has answered a question incorrectly. "  # [LEARN RETEST]
+    "Based on the original question, their incorrect choice, the correct answer, and the explanation, "  # [LEARN RETEST]
+    "identify the specific sub-concept the mistake reveals and generate exactly ONE new multiple-choice check question "  # [LEARN RETEST]
+    "testing that same concept from a different angle (do not create a reworded duplicate of the original question). "  # [LEARN RETEST]
+    "Respond ONLY with a JSON object. The object must have exactly these keys: "  # [LEARN RETEST]
+    "question_text (string), options (object with keys A, B, C, D; each a string), "  # [LEARN RETEST]
+    "correct_answer (string, one of A/B/C/D), explanation (string, one sentence). "  # [LEARN RETEST]
+    "No preamble, no markdown, only the JSON object."  # [LEARN RETEST]
+)  # [LEARN RETEST]
+
+
+async def _generate_retest_question(question: dict, selected: str, correct_answer: str, base_explanation: str) -> Optional[dict]:  # [LEARN RETEST]
+    """Generate ONE targeted retest question testing the same concept from a different angle."""  # [LEARN RETEST]
+    retest_messages = [  # [LEARN RETEST]
+        {"role": "system", "content": _RETEST_QUESTION_SYSTEM},  # [LEARN RETEST]
+        {  # [LEARN RETEST]
+            "role": "user",  # [LEARN RETEST]
+            "content": (  # [LEARN RETEST]
+                f"Original Question: {question.get('question_text', '')}\n"  # [LEARN RETEST]
+                f"Options: {json.dumps(question.get('options', {}))}\n"  # [LEARN RETEST]
+                f"Correct answer: {correct_answer}\n"  # [LEARN RETEST]
+                f"Student's incorrect choice: {selected}\n"  # [LEARN RETEST]
+                f"Explanation: {base_explanation}"  # [LEARN RETEST]
+            ),  # [LEARN RETEST]
+        },  # [LEARN RETEST]
+    ]  # [LEARN RETEST]
+    try:  # [LEARN RETEST]
+        resp = await llm_engine.generate_small_completion_with_failover(  # [LEARN RETEST]
+            messages=retest_messages,  # [LEARN RETEST]
+            temperature=0.3,  # [LEARN RETEST]
+            max_tokens=512,  # [LEARN RETEST]
+        )  # [LEARN RETEST]
+        if resp and getattr(resp, 'choices', None):  # [LEARN RETEST]
+            raw_text = (resp.choices[0].message.content or "").strip()  # [LEARN RETEST]
+            raw_text = re.sub(r"<thought>.*?(?:</thought>|$)", "", raw_text, flags=re.DOTALL).strip()  # [LEARN RETEST]
+            if raw_text.startswith("```"):  # [LEARN RETEST]
+                raw_text = "\n".join(raw_text.split("\n")[1:])  # [LEARN RETEST]
+                raw_text = raw_text.rsplit("```", 1)[0].strip()  # [LEARN RETEST]
+            try:  # [LEARN RETEST]
+                parsed = json.loads(raw_text)  # [LEARN RETEST]
+                if isinstance(parsed, dict) and "question_text" in parsed and "options" in parsed:  # [LEARN RETEST]
+                    return parsed  # [LEARN RETEST]
+            except json.JSONDecodeError:  # [LEARN RETEST]
+                logger.warning("[LEARN RETEST] Failed to parse retest question JSON: %s", raw_text)  # [LEARN RETEST]
+    except Exception as exc:  # [LEARN RETEST]
+        logger.warning("[LEARN RETEST] Failed to generate retest question: %s", exc)  # [LEARN RETEST]
+    return None  # [LEARN RETEST]
+
+
+async def _background_generate_and_save_retest(  # [LEARN RETEST]
+    user_id: str,  # [LEARN RETEST]
+    document_id: str,  # [LEARN RETEST]
+    section_index: int,  # [LEARN RETEST]
+    question: dict,  # [LEARN RETEST]
+    selected: str,  # [LEARN RETEST]
+    correct_answer: str,  # [LEARN RETEST]
+    base_explanation: str,  # [LEARN RETEST]
+):  # [LEARN RETEST]
+    """Generate and insert retest question in background without blocking response."""  # [LEARN RETEST]
+    retest_q = await _generate_retest_question(question, selected, correct_answer, base_explanation)  # [LEARN RETEST]
+    if retest_q:  # [LEARN RETEST]
+        db = _db()  # [LEARN RETEST]
+        payload = {  # [LEARN RETEST]
+            "user_id": user_id,  # [LEARN RETEST]
+            "document_id": document_id,  # [LEARN RETEST]
+            "origin_section_index": section_index,  # [LEARN RETEST]
+            "target_section_index": section_index + 1,  # [LEARN RETEST]
+            "question": retest_q,  # [LEARN RETEST]
+            "resolved": False,  # [LEARN RETEST]
+        }  # [LEARN RETEST]
+        try:  # [LEARN RETEST]
+            await _run(  # [LEARN RETEST]
+                lambda: db.table("document_learn_pending_retests")  # [LEARN RETEST]
+                .insert(payload)  # [LEARN RETEST]
+                .execute(),  # [LEARN RETEST]
+                "insert pending retest"  # [LEARN RETEST]
+            )  # [LEARN RETEST]
+        except Exception as exc:  # [LEARN RETEST]
+            logger.error("[LEARN RETEST] Failed to insert pending retest to DB: %s", exc)  # [LEARN RETEST]
+
 
 
 async def _generate_section_content(section: dict, chunks: list) -> tuple[str, list]:
@@ -386,6 +468,7 @@ class AnswerResponse(BaseModel):
     correct_answer: str
     explanation: str
     followup_feedback: Optional[str] = None
+    immediate_retest_question: Optional[dict] = None  # [LEARN RETEST]
 
 
 class CompleteRequest(BaseModel):
@@ -520,6 +603,28 @@ async def get_learn_section(
         )
         current_status = "in_progress"
 
+    # Query unresolved pending retests for target_section_index = section_index
+    db = _db()  # [LEARN RETEST]
+    retests_res = await _run(  # [LEARN RETEST]
+        lambda: db.table("document_learn_pending_retests")  # [LEARN RETEST]
+        .select("id,origin_section_index,question")  # [LEARN RETEST]
+        .eq("user_id", current_user.id)  # [LEARN RETEST]
+        .eq("document_id", document_id)  # [LEARN RETEST]
+        .eq("target_section_index", section_index)  # [LEARN RETEST]
+        .eq("resolved", False)  # [LEARN RETEST]
+        .order("id")  # [LEARN RETEST]
+        .execute(),  # [LEARN RETEST]
+        "fetch pending retests for section",  # [LEARN RETEST]
+    )  # [LEARN RETEST]
+    retests = retests_res.data or []  # [LEARN RETEST]
+
+    questions_list = list(section.get("check_questions") or [])  # [LEARN RETEST]
+    for r in retests:  # [LEARN RETEST]
+        q_data = dict(r.get("question") or {})  # [LEARN RETEST]
+        q_data["is_retest"] = True  # [LEARN RETEST]
+        q_data["origin_section_index"] = r.get("origin_section_index")  # [LEARN RETEST]
+        questions_list.append(q_data)  # [LEARN RETEST]
+
     return SectionDetailResponse(
         section_index=section_index,
         title=section.get("title") or f"Section {section_index + 1}",
@@ -527,7 +632,7 @@ async def get_learn_section(
         page_start=section.get("page_start"),
         page_end=section.get("page_end"),
         explanation=section.get("explanation") or "",
-        check_questions=section.get("check_questions") or [],
+        check_questions=questions_list,  # [LEARN RETEST]
         status=current_status,
         last_score=(progress or {}).get("last_score"),
     )
@@ -538,6 +643,7 @@ async def submit_section_answer(
     document_id: str,
     section_index: int,
     body: AnswerRequest,
+    background_tasks: BackgroundTasks,                                                         # [LEARN RETEST]
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -551,18 +657,70 @@ async def submit_section_answer(
         raise HTTPException(status_code=404, detail=f"Section {section_index} not found.")
 
     questions = section.get("check_questions") or []
-    if not questions:
+
+    # Fetch unresolved pending retests for target_section_index = section_index to align question indices
+    db = _db()                                                                                  # [LEARN RETEST]
+    retests_res = await _run(                                                                   # [LEARN RETEST]
+        lambda: db.table("document_learn_pending_retests")                                      # [LEARN RETEST]
+        .select("id,origin_section_index,question")                                             # [LEARN RETEST]
+        .eq("user_id", current_user.id)                                                         # [LEARN RETEST]
+        .eq("document_id", document_id)                                                         # [LEARN RETEST]
+        .eq("target_section_index", section_index)                                              # [LEARN RETEST]
+        .eq("resolved", False)                                                                  # [LEARN RETEST]
+        .order("id")                                                                            # [LEARN RETEST]
+        .execute(),                                                                             # [LEARN RETEST]
+        "fetch pending retests to grade",                                                       # [LEARN RETEST]
+    )                                                                                           # [LEARN RETEST]
+    retests = retests_res.data or []                                                            # [LEARN RETEST]
+
+    total_regular = len(questions)                                                              # [LEARN RETEST]
+    total_total = total_regular + len(retests)                                                  # [LEARN RETEST]
+
+    if not questions and not retests:                                                           # [LEARN RETEST]
         raise HTTPException(
             status_code=404,
             detail="This section has no check questions yet. Visit the section detail endpoint first to generate them.",
         )
 
-    if body.question_index >= len(questions):
+    if body.question_index >= total_total:                                                      # [LEARN RETEST]
         raise HTTPException(
             status_code=400,
-            detail=f"question_index {body.question_index} is out of range (section has {len(questions)} questions).",
+            detail=f"question_index {body.question_index} is out of range (section has {total_regular} regular and {len(retests)} retest questions).",
         )
 
+    is_retest_q = (body.question_index >= total_regular)                                        # [LEARN RETEST]
+
+    if is_retest_q:                                                                             # [LEARN RETEST]
+        # RETEST RESOLUTION BRANCH                                                              # [LEARN RETEST]
+        retest_item = retests[body.question_index - total_regular]                              # [LEARN RETEST]
+        question = retest_item.get("question") or {}                                            # [LEARN RETEST]
+        correct_answer = (question.get("correct_answer") or "").strip().upper()                 # [LEARN RETEST]
+        selected = (body.selected_option or "").strip().upper()                                 # [LEARN RETEST]
+        is_correct = (selected == correct_answer)                                               # [LEARN RETEST]
+        base_explanation = question.get("explanation") or "No explanation available."           # [LEARN RETEST]
+
+        from datetime import datetime, timezone                                                 # [LEARN RETEST]
+        await _run(                                                                             # [LEARN RETEST]
+            lambda: db.table("document_learn_pending_retests")                                  # [LEARN RETEST]
+            .update({                                                                           # [LEARN RETEST]
+                "resolved": True,                                                               # [LEARN RETEST]
+                "resolved_correct": is_correct,                                                 # [LEARN RETEST]
+                "resolved_at": datetime.now(timezone.utc).isoformat(),                           # [LEARN RETEST]
+            })                                                                                  # [LEARN RETEST]
+            .eq("id", retest_item.get("id"))                                                    # [LEARN RETEST]
+            .execute(),                                                                         # [LEARN RETEST]
+            "resolve retest question",                                                          # [LEARN RETEST]
+        )                                                                                       # [LEARN RETEST]
+
+        return AnswerResponse(                                                                  # [LEARN RETEST]
+            correct=is_correct,                                                                 # [LEARN RETEST]
+            correct_answer=correct_answer,                                                      # [LEARN RETEST]
+            explanation=base_explanation,                                                       # [LEARN RETEST]
+            followup_feedback=None,                                                             # [LEARN RETEST]
+            immediate_retest_question=None,                                                     # [LEARN RETEST]
+        )                                                                                       # [LEARN RETEST]
+
+    # REGULAR QUESTION BRANCH
     question = questions[body.question_index]
     correct_answer = (question.get("correct_answer") or "").strip().upper()
     selected = (body.selected_option or "").strip().upper()
@@ -570,6 +728,7 @@ async def submit_section_answer(
     is_correct = (selected == correct_answer)
     base_explanation = question.get("explanation") or "No explanation available."
     followup = None
+    immediate_retest = None                                                                     # [LEARN RETEST]
 
     if not is_correct:
         # Generate a short diagnostic follow-up for wrong answers
@@ -604,11 +763,33 @@ async def submit_section_answer(
                            document_id, section_index, body.question_index, exc)
             followup = None  # non-fatal: still return correct/explanation
 
+        # DEFERRED RETEST GENERATION BRANCH                                                     # [LEARN RETEST]
+        all_sections = await _get_sections(document_id)                                         # [LEARN RETEST]
+        max_section_idx = max((s.get("section_index", 0) for s in all_sections), default=0)     # [LEARN RETEST]
+        if section_index >= max_section_idx:                                                     # [LEARN RETEST]
+            # EDGE CASE: Last section, generate retest question inline                         # [LEARN RETEST]
+            immediate_retest = await _generate_retest_question(                                 # [LEARN RETEST]
+                question, selected, correct_answer, base_explanation                            # [LEARN RETEST]
+            )                                                                                   # [LEARN RETEST]
+        else:                                                                                   # [LEARN RETEST]
+            # Defer: Generate and store retest question in the background                      # [LEARN RETEST]
+            background_tasks.add_task(                                                          # [LEARN RETEST]
+                _background_generate_and_save_retest,                                           # [LEARN RETEST]
+                current_user.id,                                                                # [LEARN RETEST]
+                document_id,                                                                    # [LEARN RETEST]
+                section_index,                                                                  # [LEARN RETEST]
+                question,                                                                       # [LEARN RETEST]
+                selected,                                                                       # [LEARN RETEST]
+                correct_answer,                                                                 # [LEARN RETEST]
+                base_explanation,                                                               # [LEARN RETEST]
+            )                                                                                   # [LEARN RETEST]
+
     return AnswerResponse(
         correct=is_correct,
         correct_answer=correct_answer,
         explanation=base_explanation,
         followup_feedback=followup,
+        immediate_retest_question=immediate_retest,                                             # [LEARN RETEST]
     )
 
 
