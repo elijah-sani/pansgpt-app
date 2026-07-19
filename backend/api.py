@@ -339,6 +339,8 @@ from routers.admin import router as admin_router
 from routers.feedback import router as feedback_router
 from routers.notes import router as notes_router
 from routers.lecturer import router as lecturer_router
+from routers import learn as learn_router_module  # [LEARN MODE]
+from routers.learn import router as learn_router  # [LEARN MODE]
 
 # Initialize Rate Limiter
 def _get_rate_limit_key(request: Request) -> str:
@@ -458,6 +460,7 @@ async def lifespan(app: FastAPI):  # [GRACEFUL SHUTDOWN]
     settings.set_dependencies(supabase_client, verify_api_key, supabase_service_client)  # [GRACEFUL SHUTDOWN]
     quiz.set_dependencies(supabase_client, verify_api_key, supabase_service_client)  # [GRACEFUL SHUTDOWN]
     lecturer.set_dependencies(supabase_client, verify_api_key, supabase_service_client, drive_service, GOOGLE_DRIVE_FOLDER_ID)  # [GRACEFUL SHUTDOWN]
+    learn_router_module.set_dependencies(supabase_client, supabase_service_client)  # [LEARN MODE]
     ai_usage_tracker.set_dependencies(supabase_service_client)  # [GRACEFUL SHUTDOWN]
       # [GRACEFUL SHUTDOWN]
     # Stale Job Recovery Checks  # [GRACEFUL SHUTDOWN]
@@ -511,7 +514,6 @@ else:  # [GRACEFUL SHUTDOWN]
 app.add_middleware(  # [GRACEFUL SHUTDOWN]
     CORSMiddleware,  # [GRACEFUL SHUTDOWN]
     allow_origins=origins,  # [GRACEFUL SHUTDOWN]
-    allow_origin_regex=r"^https://pansgpt(?:-app)?-[a-zA-Z0-9]+-elijah-sanis-projects\.vercel\.app$",  # [CORS PREVIEW FIX]
     allow_credentials=True,  # [GRACEFUL SHUTDOWN]
     allow_methods=["*"],  # [GRACEFUL SHUTDOWN]
     allow_headers=["*"],  # [GRACEFUL SHUTDOWN]
@@ -527,6 +529,7 @@ app.include_router(feedback_router)
 app.include_router(quiz.router)
 app.include_router(notes_router)
 app.include_router(lecturer_router)
+app.include_router(learn_router)  # [LEARN MODE]
 
 # --- Routes ---
 @app.get("/health")
