@@ -583,6 +583,8 @@ create table if not exists public.pans_library (
   replaces_document_id uuid references public.pans_library(id) on delete set null,
   embedding_status text not null default 'pending' check (embedding_status in ('pending', 'processing', 'completed', 'failed')),
   embedding_progress integer not null default 0 check (embedding_progress >= 0 and embedding_progress <= 100),
+  sections_status text not null default 'pending' check (sections_status in ('pending', 'processing', 'completed', 'failed')),
+  sections_error text,
   total_chunks integer not null default 0 check (total_chunks >= 0),
   embedding_error text,
   failed_chunks_count integer not null default 0 check (failed_chunks_count >= 0),
@@ -657,6 +659,8 @@ create table if not exists public.document_embeddings (
   ingestion_worker_id uuid,
   content text not null,
   embedding vector(768) not null,
+  page_start integer,
+  page_end integer,
   created_at timestamp with time zone not null default timezone('utc'::text, now())
 );
 
@@ -667,6 +671,55 @@ create index if not exists document_embeddings_embedding_idx
 on public.document_embeddings
 using ivfflat (embedding vector_cosine_ops)
 with (lists = 100);
+
+-- Create document_sections table
+create table if not exists public.document_sections (
+  id bigserial primary key,
+  document_id uuid not null references public.pans_library(id) on delete cascade,
+  section_index integer not null,
+  title text not null,
+  page_start integer not null,
+  page_end integer not null,
+  summary text not null,
+  created_at timestamp with time zone not null default timezone('utc'::text, now())
+);
+
+-- Index for document_id
+create index if not exists document_sections_document_id_idx on public.document_sections(document_id);
+
+-- Enable RLS
+alter table public.document_sections enable row level security;
+
+-- Select policy: Allow authenticated users to view sections if they match target_levels and university scoping
+drop policy if exists "document_sections_select_policy" on public.document_sections;
+create policy "document_sections_select_policy"
+on public.document_sections for select
+to authenticated
+using (
+  exists (
+    select 1 from public.pans_library pl
+    join public.profiles p on p.id = auth.uid()
+    where pl.id = document_sections.document_id
+      and (
+        public.is_super_admin()
+        or (
+          pl.university_id = p.university_id
+          and (
+            pl.target_levels = '{}'
+            or p.level = any(pl.target_levels)
+          )
+        )
+      )
+  )
+);
+
+-- Service role policy: Allow backend full control
+drop policy if exists "document_sections_service_role_policy" on public.document_sections;
+create policy "document_sections_service_role_policy"
+on public.document_sections for all
+to service_role
+using (true)
+with check (true);
 
 -- Create metadata table to track index builds
 create table if not exists public.vector_index_metadata (

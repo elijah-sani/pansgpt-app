@@ -32,10 +32,18 @@ from google.genai import types
 import fitz  # PyMuPDF
 from PIL import Image
 # from groq import Groq  <-- Removed
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+try:
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+except ImportError:
+    try:
+        from langchain.text_splitter import RecursiveCharacterTextSplitter
+    except ImportError:
+        # dummy fallback for type checkers / static analysis in IDE
+        RecursiveCharacterTextSplitter = None  # type: ignore
 from services.pdf_conversion import convert_office_file_to_pdf, detect_admin_upload_file_type
 from services.policy_guard import contains_prompt_leak
 from services.security_logging import log_security_event
+from services import llm_engine  # [SECTION OUTLINE]
 from utils.thinking_token_utils import strip_thinking_tokens
 from .shared import get_current_academic_context
 
@@ -184,7 +192,9 @@ async def _execute_with_retry_async(execute_fn, operation_name: str, max_attempt
                 await asyncio.sleep(1)
                 continue
             raise
-    raise last_error
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError(f"{operation_name} failed after {max_attempts} attempts without recording last_error")
 
 def _execute_with_retry_sync(execute_fn, operation_name: str, max_attempts: int = 3):
     """
@@ -203,7 +213,9 @@ def _execute_with_retry_sync(execute_fn, operation_name: str, max_attempts: int 
                 time.sleep(1)
                 continue
             raise
-    raise last_error
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError(f"{operation_name} failed after {max_attempts} attempts without recording last_error")
 
 
 def extract_drive_file_id(value: Optional[str]) -> Optional[str]:
@@ -569,7 +581,7 @@ async def _get_document_ingestion_state(document_id: str) -> Optional[dict]:
     try:
         response = await _execute_with_retry_async(
             lambda: db.table("pans_library")
-            .select("embedding_status,ingestion_run_id,ingestion_worker_id,ingestion_worker_heartbeat_at")
+            .select("embedding_status,ingestion_run_id,ingestion_worker_id,ingestion_worker_heartbeat_at,sections_status")
             .eq("id", document_id)
             .limit(1)
             .execute(),
@@ -584,6 +596,7 @@ async def _get_document_ingestion_state(document_id: str) -> Optional[dict]:
             "ingestion_run_id": str(row.get("ingestion_run_id") or "").strip() or None,
             "ingestion_worker_id": str(row.get("ingestion_worker_id") or "").strip() or None,
             "ingestion_worker_heartbeat_at": row.get("ingestion_worker_heartbeat_at"),
+            "sections_status": str(row.get("sections_status") or "").strip().lower() or None,
         }
     except Exception as exc:
         logger.warning("Could not read ingestion state for %s: %s", document_id, exc)
@@ -832,7 +845,7 @@ def extract_hybrid_content(file_content: bytes, document_id: str, ingestion_run_
     """
     doc = fitz.open(stream=file_content, filetype="pdf")
     total_pages = len(doc)
-    full_content = ""
+    page_segments = []  # [PAGE TRACKING]
 
     # --- Pre-scan: Count total images to know denominator ---
     total_images = 0
@@ -848,7 +861,7 @@ def extract_hybrid_content(file_content: bytes, document_id: str, ingestion_run_
     # --- PHASE 1: Text Extraction (fast) ---
     for page_num, page in enumerate(doc):
         text = page.get_text()
-        full_content += f"\n--- Page {page_num + 1} ---\n{text}"
+        page_segments.append([page_num + 1, text])  # [PAGE TRACKING]
 
         # Update progress per page
         steps_done += 1
@@ -869,7 +882,198 @@ def extract_hybrid_content(file_content: bytes, document_id: str, ingestion_run_
             logger.info(f"[INFO] Queued image from page {page_num + 1}")
 
     doc.close()
-    return full_content, pending_images, steps_done, total_steps
+    return page_segments, pending_images, steps_done, total_steps  # [PAGE TRACKING]
+
+
+# [SECTION OUTLINE]
+async def _ensure_current_sectioning_run(
+    document_id: str,
+    ingestion_run_id: str,
+    phase: str,
+    ingestion_worker_id: Optional[str] = None,
+) -> None:
+    state = await _get_document_ingestion_state(document_id)
+    if not state:
+        raise StaleIngestionRun(f"Document {document_id} no longer exists during sectioning phase {phase}")
+    current_status = state.get("sections_status")
+    current_run_id = state.get("ingestion_run_id")
+    current_worker_id = state.get("ingestion_worker_id")
+    if (
+        current_status != "processing"
+        or current_run_id != ingestion_run_id
+        or (ingestion_worker_id and current_worker_id != ingestion_worker_id)
+    ):
+        raise StaleIngestionRun(
+            f"Stale ingestion worker for {document_id} stopped during sectioning phase {phase}; "
+            f"sections_status={current_status}, current_run_id={current_run_id}, "
+            f"current_worker_id={current_worker_id}, worker_run_id={ingestion_run_id}, worker_id={ingestion_worker_id}"
+        )
+
+
+# [SECTION OUTLINE]
+async def generate_document_sections(
+    document_id: str,
+    page_tagged_chunks: list[dict],
+    ingestion_run_id: str,
+    ingestion_worker_id: str,
+) -> bool:
+    """
+    Asynchronously generates a logical, topic-based section outline for the document
+    using the TEXT_PRIMARY LLM and saves it to the document_sections table.
+    Ensures heartbeats are sent so recovery worker does not reap the job.
+    """
+    try:
+        db = _db_client()
+        if not db:
+            raise RuntimeError("Database client not configured")
+
+        # 1. Update sections_status to 'processing'
+        await _execute_with_retry_async(
+            lambda: db.table('pans_library').update({
+                'sections_status': 'processing',
+                'last_updated_at': datetime.now(timezone.utc).isoformat(),
+            })
+            .eq('id', document_id)
+            .eq('ingestion_run_id', ingestion_run_id)
+            .eq('ingestion_worker_id', ingestion_worker_id)
+            .execute(),
+            f"Set sections_status to processing for {document_id}",
+        )
+
+        await _ensure_current_sectioning_run(document_id, ingestion_run_id, "start", ingestion_worker_id)
+        await _heartbeat_document_ingestion_worker(document_id, ingestion_run_id, ingestion_worker_id)
+
+        # 2. Format the chunks for the prompt
+        formatted_chunks = []
+        for idx, chunk in enumerate(page_tagged_chunks):
+            formatted_chunks.append(
+                f"--- Chunk {idx + 1} (Pages {chunk['page_start']}-{chunk['page_end']}) ---\n"
+                f"{chunk['content']}"
+            )
+        
+        chunks_input = "\n\n".join(formatted_chunks)
+        
+        system_prompt = (
+            "You are an expert system that analyzes a document's sequential chunks and generates a high-level logical section outline.\n"
+            "Your task is to divide the document into logical topic-based sections (NOT fixed page ranges, but real conceptual boundaries).\n"
+            "Each section must cover a range of pages, and together the sections must cover the entire document from page 1 to the last page with no gaps.\n"
+            "Make sure the page ranges are continuous (e.g., section 1: pages 1-3, section 2: pages 4-7, etc.).\n"
+            "You must respond ONLY with a JSON object containing a key 'sections' which is an array of objects. "
+            "Do not include any explanation or markdown formatting, just the raw JSON."
+        )
+
+        user_prompt = (
+            f"Here are the sequential chunks of the document:\n\n{chunks_input}\n\n"
+            "Please generate the section outline. "
+            "Respond with a JSON object of this structure:\n"
+            "{\n"
+            "  \"sections\": [\n"
+            "    {\n"
+            "      \"section_title\": \"descriptive title of the topic block\",\n"
+            "      \"page_start\": 1,\n"
+            "      \"page_end\": 3,\n"
+            "      \"summary\": \"Brief summary of this conceptual section.\"\n"
+            "    }\n"
+            "  ]\n"
+            "}"
+        )
+
+        messages = merge_system_into_user_sync([
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ])
+
+        logger.info(f"[SECTION OUTLINE] Generating section outline for document {document_id}")
+        
+        await _ensure_current_sectioning_run(document_id, ingestion_run_id, "llm_call", ingestion_worker_id)
+        await _heartbeat_document_ingestion_worker(document_id, ingestion_run_id, ingestion_worker_id)
+
+        response = await llm_engine.generate_completion_with_failover(
+            messages=messages,
+            temperature=0.2,
+            max_tokens=4000,
+            has_images=False,
+            stream=False,
+            force_google=False,
+            requested_model=llm_engine.TEXT_PRIMARY,
+            response_format={"type": "json_object"},
+            audit_meta={"document_id": document_id, "action": "generate_document_sections"}
+        )
+
+        if not response:
+            raise RuntimeError("LLM returned no response for document sections")
+
+        choice = response.choices[0] if response.choices else None
+        content = choice.message.content if choice else None
+        if not content:
+            raise RuntimeError("LLM returned empty content for document sections")
+
+        content = strip_thinking_tokens(content)
+        data = json.loads(content)
+        sections = data.get("sections", [])
+        
+        if not isinstance(sections, list) or len(sections) == 0:
+            raise ValueError("Parsed JSON does not contain a list of sections")
+
+        await _ensure_current_sectioning_run(document_id, ingestion_run_id, "db_insert", ingestion_worker_id)
+        await _heartbeat_document_ingestion_worker(document_id, ingestion_run_id, ingestion_worker_id)
+
+        await _execute_with_retry_async(
+            lambda: db.table("document_sections").delete().eq("document_id", document_id).execute(),
+            f"Delete existing document sections for {document_id}"
+        )
+
+        for idx, sec in enumerate(sections):
+            section_data = {
+                "document_id": document_id,
+                "section_index": idx,
+                "title": sec.get("section_title") or sec.get("title") or f"Section {idx + 1}",
+                "page_start": int(sec.get("page_start", 1)),
+                "page_end": int(sec.get("page_end", 1)),
+                "summary": sec.get("summary", "")
+            }
+            await _execute_with_retry_async(
+                lambda: db.table("document_sections").insert(section_data).execute(),
+                f"Insert document section {idx} for {document_id}"
+            )
+        
+        await _ensure_current_sectioning_run(document_id, ingestion_run_id, "finalize", ingestion_worker_id)
+        await _execute_with_retry_async(
+            lambda: db.table('pans_library').update({
+                'sections_status': 'completed',
+                'sections_error': None,
+                'last_updated_at': datetime.now(timezone.utc).isoformat(),
+            })
+            .eq('id', document_id)
+            .eq('ingestion_run_id', ingestion_run_id)
+            .eq('ingestion_worker_id', ingestion_worker_id)
+            .execute(),
+            f"Finalize sections_status to completed for {document_id}",
+        )
+        
+        logger.info(f"[SECTION OUTLINE] Successfully generated and stored sections for document {document_id}")
+        return True
+
+    except Exception as e:
+        logger.error(f"[SECTION OUTLINE] Failed to generate sections for {document_id}: {e}", exc_info=True)
+        try:
+            db = _db_client()
+            if db:
+                await _execute_with_retry_async(
+                    lambda: db.table('pans_library').update({
+                        'sections_status': 'failed',
+                        'sections_error': str(e),
+                        'last_updated_at': datetime.now(timezone.utc).isoformat(),
+                    })
+                    .eq('id', document_id)
+                    .eq('ingestion_run_id', ingestion_run_id)
+                    .eq('ingestion_worker_id', ingestion_worker_id)
+                    .execute(),
+                    f"Set sections_status to failed for {document_id}",
+                )
+        except Exception as db_err:
+            logger.error(f"[SECTION OUTLINE] Failed to update sections_status to failed for {document_id}: {db_err}")
+        return False
 
 
 # --- RAG Processing Function ---
@@ -901,7 +1105,7 @@ async def process_and_embed(
         # We run the ENTIRE function in a separate thread.
         try:
             logger.info("[INFO] Starting extraction in separate thread...")
-            full_text, pending_images, steps_done, total_steps = await asyncio.to_thread(
+            page_segments, pending_images, steps_done, total_steps = await asyncio.to_thread(  # [PAGE TRACKING]
                 extract_hybrid_content,
                 file_content,
                 document_id,
@@ -920,7 +1124,11 @@ async def process_and_embed(
                     ingestion_worker_id,
                 )
                 if description:
-                    full_text += f"\n[From Page {page_num}] {description}"
+                    # [PAGE TRACKING] Append image analysis description directly to matching page
+                    for segment in page_segments:
+                        if segment[0] == page_num:
+                            segment[1] += f"\n[From Page {page_num}] {description}"
+                            break
 
                 steps_done += 1
                 extraction_pct = int((steps_done / max(total_steps, 1)) * 40)  # 0-40%
@@ -939,7 +1147,16 @@ async def process_and_embed(
                 # Throttle to stay under provider rate limits without blocking the event loop.
                 await asyncio.sleep(VISION_REQUEST_THROTTLE_SECONDS)
 
-            
+            # [PAGE TRACKING] Reconstruct full_text and track ranges for chunk-to-page mapping
+            full_text = ""
+            page_ranges = []
+            for page_num, page_text in page_segments:
+                start_idx = len(full_text)
+                page_content = f"\n--- Page {page_num} ---\n{page_text}"
+                full_text += page_content
+                end_idx = len(full_text)
+                page_ranges.append((page_num, start_idx, end_idx))
+
             if not full_text.strip():
                 raise ValueError("No text or visual content could be extracted from PDF")
                 
@@ -977,6 +1194,8 @@ async def process_and_embed(
         # 4. Embedding Loop  42%  100%
         failed_chunks_count = 0
         error_log = ""
+        cursor = 0  # [PAGE TRACKING]
+        page_tagged_chunks = []  # [SECTION OUTLINE]
         
         for idx, chunk_text in enumerate(chunks):
             # Check if admin cancelled this ingestion
@@ -990,6 +1209,39 @@ async def process_and_embed(
                     ingestion_worker_id,
                 )
                 return
+
+            # [PAGE TRACKING] Find position of the chunk to determine page range
+            chunk_start = full_text.find(chunk_text, cursor)
+            if chunk_start == -1:
+                chunk_start = full_text.find(chunk_text)
+                if chunk_start == -1:
+                    logger.warning(f"[PAGE TRACKING] Could not locate chunk {idx+1}/{len(chunks)} text in full_text for document {document_id} — falling back to cursor position. Page mapping for this chunk may be inaccurate.")  # [PAGE TRACKING]
+                    chunk_start = cursor
+            
+            chunk_end = chunk_start + len(chunk_text)
+            cursor = chunk_start + 1
+
+            # [PAGE TRACKING] Determine starting and ending pages for this chunk
+            overlapping_pages = []
+            for p_num, p_start, p_end in page_ranges:
+                if p_start < chunk_end and chunk_start < p_end:
+                    overlapping_pages.append(p_num)
+
+            if overlapping_pages:
+                page_start = min(overlapping_pages)
+                page_end = max(overlapping_pages)
+            else:
+                logger.warning(f"[PAGE TRACKING] No overlapping page range found for chunk {idx+1}/{len(chunks)} in document {document_id} (chunk_start={chunk_start}, chunk_end={chunk_end}) — defaulting to page 1. Page mapping for this chunk is likely inaccurate.")  # [PAGE TRACKING]
+                page_start = 1
+                page_end = 1
+
+            # [SECTION OUTLINE] Save chunk with its page tracking metadata
+            page_tagged_chunks.append({
+                "content": chunk_text,
+                "page_start": page_start,
+                "page_end": page_end
+            })
+
             # --- Rate-limit aware embedding with 429 retry ---
             MAX_EMBED_RETRIES = 5
             embed_success = False
@@ -1018,7 +1270,9 @@ async def process_and_embed(
                             'ingestion_run_id': ingestion_run_id,
                             'ingestion_worker_id': ingestion_worker_id,
                             'content': chunk_text,
-                            'embedding': embedding
+                            'embedding': embedding,
+                            'page_start': page_start,  # [PAGE TRACKING]
+                            'page_end': page_end  # [PAGE TRACKING]
                         }).execute(),
                         f"Insert document embedding chunk {idx+1}",
                     )
@@ -1096,6 +1350,17 @@ async def process_and_embed(
         )
         
         logger.info(f"[INFO] RAG ingestion finished for {document_id}. Status: {final_status}")
+
+        # [SECTION OUTLINE] If embedding succeeded, generate section outline asynchronously
+        if final_status == 'completed':
+            asyncio.create_task(
+                generate_document_sections(
+                    document_id=document_id,
+                    page_tagged_chunks=page_tagged_chunks,
+                    ingestion_run_id=ingestion_run_id,
+                    ingestion_worker_id=ingestion_worker_id,
+                )
+            )
         
     except StaleIngestionRun as e:
         logger.info("[INFO] %s", e)
@@ -1884,23 +2149,24 @@ def set_dependencies(drive_svc, supabase, api_key_verifier, folder_id, supabase_
 async def recover_orphaned_document_ingestions(sb) -> int:
     """
     On startup, query pans_library for any rows with embedding_status = 'processing'
-    where ingestion_worker_heartbeat_at (or ingestion_worker_claimed_at if heartbeat is null)
-    is older than 10 minutes. Mark them as 'failed' with an error message
-    'Interrupted by server restart'.
+    or sections_status = 'processing' where ingestion_worker_heartbeat_at (or
+    ingestion_worker_claimed_at if heartbeat is null) is older than 10 minutes.
+    Mark them as 'failed' with appropriate error message.
     """
     from datetime import timedelta
     try:
         res = await asyncio.to_thread(
             lambda: sb.table("pans_library")
-            .select("id, ingestion_worker_heartbeat_at, ingestion_worker_claimed_at, last_updated_at")
-            .eq("embedding_status", "processing")
+            .select("id, embedding_status, sections_status, ingestion_worker_heartbeat_at, ingestion_worker_claimed_at, last_updated_at")
+            .or_("embedding_status.eq.processing,sections_status.eq.processing")
             .execute()
         )
         processing_docs = res.data or []
         if not processing_docs:
             return 0
         
-        stale_ids = []
+        stale_embeddings = []
+        stale_sections = []
         now_dt = datetime.now(timezone.utc)
         ten_mins = timedelta(minutes=10)
         
@@ -1910,33 +2176,53 @@ async def recover_orphaned_document_ingestions(sb) -> int:
             updated_str = doc.get("last_updated_at")
             
             ref_str = heartbeat_str or claimed_str or updated_str
+            is_stale = False
             if ref_str:
                 try:
                     ref_dt = datetime.fromisoformat(ref_str.replace("Z", "+00:00"))
                     if now_dt - ref_dt > ten_mins:
-                        stale_ids.append(doc["id"])
+                        is_stale = True
                 except Exception:
-                    stale_ids.append(doc["id"])
+                    is_stale = True
             else:
-                stale_ids.append(doc["id"])
+                is_stale = True
                 
-        if not stale_ids:
-            return 0
+            if is_stale:
+                if doc.get("embedding_status") == "processing":
+                    stale_embeddings.append(doc["id"])
+                if doc.get("sections_status") == "processing":
+                    stale_sections.append(doc["id"])
+                
+        recovered_count = 0
+        if stale_embeddings:
+            update_res = await asyncio.to_thread(
+                lambda: sb.table("pans_library")
+                .update({
+                    "embedding_status": "failed",
+                    "embedding_error": "Interrupted by server restart",
+                    "last_updated_at": now_dt.isoformat(),
+                })
+                .in_("id", stale_embeddings)
+                .execute()
+            )
+            recovered_count += len(update_res.data or [])
             
-        update_res = await asyncio.to_thread(
-            lambda: sb.table("pans_library")
-            .update({
-                "embedding_status": "failed",
-                "embedding_error": "Interrupted by server restart",
-                "last_updated_at": datetime.now(timezone.utc).isoformat(),
-            })
-            .in_("id", stale_ids)
-            .execute()
-        )
-        count = len(update_res.data or [])
-        if count > 0:
-            logger.info(f"[GRACEFUL SHUTDOWN] Recovered {count} stale document ingestions.")
-        return count
+        if stale_sections:
+            update_res = await asyncio.to_thread(
+                lambda: sb.table("pans_library")
+                .update({
+                    "sections_status": "failed",
+                    "sections_error": "Interrupted by server restart",
+                    "last_updated_at": now_dt.isoformat(),
+                })
+                .in_("id", stale_sections)
+                .execute()
+            )
+            recovered_count += len(update_res.data or [])
+            
+        if recovered_count > 0:
+            logger.info(f"[GRACEFUL SHUTDOWN] Recovered {recovered_count} stale document ingestion phases.")
+        return recovered_count
     except Exception as exc:
         logger.error(f"[GRACEFUL SHUTDOWN] Failed to recover stale document ingestions: {exc}")
         return 0
