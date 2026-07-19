@@ -14,6 +14,7 @@ by the rest of the application (_can_user_access_library_document from api.py).
 import asyncio
 import json
 import logging
+import re
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -254,10 +255,12 @@ async def _generate_section_content(section: dict, chunks: list) -> tuple[str, l
             return str(resp)  # last-resort fallback if shape is unexpected
 
     explanation = _extract(explain_resp).strip()
+    explanation = re.sub(r"<thought>.*?(?:</thought>|$)", "", explanation, flags=re.DOTALL).strip()
 
     # Parse questions JSON robustly
     questions: list = []
     raw_q = _extract(questions_resp).strip()
+    raw_q = re.sub(r"<thought>.*?(?:</thought>|$)", "", raw_q, flags=re.DOTALL).strip()
     # Strip markdown fences if the model wrapped the JSON
     if raw_q.startswith("```"):
         raw_q = "\n".join(raw_q.split("\n")[1:])
@@ -591,7 +594,9 @@ async def submit_section_answer(
             )
             # Extract text from completion object (.choices[0].message.content)
             if followup_resp and getattr(followup_resp, 'choices', None):
-                followup = (followup_resp.choices[0].message.content or "").strip() or None
+                followup_text = (followup_resp.choices[0].message.content or "").strip()
+                followup_text = re.sub(r"<thought>.*?(?:</thought>|$)", "", followup_text, flags=re.DOTALL).strip()
+                followup = followup_text or None
             else:
                 followup = None
         except Exception as exc:
