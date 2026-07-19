@@ -40,11 +40,11 @@ async def backfill_documents():
     # 1. Initialize Clients
     drive_service = get_drive_service(allow_upload=True)
     supabase_url = os.environ.get("SUPABASE_URL")
-    supabase_service_key = os.environ.get("SUPABASE_SERVICE_KEY")
+    supabase_service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_SERVICE_KEY")
     folder_id = os.environ.get("GOOGLE_DRIVE_FOLDER_ID")
     
     if not supabase_url or not supabase_service_key:
-        logger.error("SUPABASE_URL and SUPABASE_SERVICE_KEY environment variables are required.")
+        logger.error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SERVICE_KEY environment variables are required.")
         return
         
     supabase_client = create_client(supabase_url, supabase_service_key)

@@ -1214,6 +1214,7 @@ async def process_and_embed(
             if chunk_start == -1:
                 chunk_start = full_text.find(chunk_text)
                 if chunk_start == -1:
+                    logger.warning(f"[PAGE TRACKING] Could not locate chunk {idx+1}/{len(chunks)} text in full_text for document {document_id} — falling back to cursor position. Page mapping for this chunk may be inaccurate.")  # [PAGE TRACKING]
                     chunk_start = cursor
             
             chunk_end = chunk_start + len(chunk_text)
@@ -1229,6 +1230,7 @@ async def process_and_embed(
                 page_start = min(overlapping_pages)
                 page_end = max(overlapping_pages)
             else:
+                logger.warning(f"[PAGE TRACKING] No overlapping page range found for chunk {idx+1}/{len(chunks)} in document {document_id} (chunk_start={chunk_start}, chunk_end={chunk_end}) — defaulting to page 1. Page mapping for this chunk is likely inaccurate.")  # [PAGE TRACKING]
                 page_start = 1
                 page_end = 1
 
