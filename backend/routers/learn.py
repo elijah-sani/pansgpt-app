@@ -88,7 +88,7 @@ async def _assert_document_access(document_id: str, current_user: User) -> dict:
 
     row = rows[0]
 
-    # Lazy import to avoid circular reference (same pattern as library.py:129)
+    # Lazy import to avoid circular reference (defined in api.py; same lazy-import pattern used by library.py:129)
     from api import _can_user_access_library_document
     if not await _can_user_access_library_document(db, current_user, row):
         raise HTTPException(status_code=403, detail="You do not have access to this document")
@@ -227,7 +227,7 @@ async def _generate_section_content(section: dict, chunks: list) -> tuple[str, l
     ]
 
     try:
-        explain_result, questions_result = await asyncio.gather(
+        explain_resp, questions_resp = await asyncio.gather(
             llm_engine.generate_small_completion_with_failover(
                 messages=explain_messages,
                 temperature=0.3,
@@ -244,11 +244,20 @@ async def _generate_section_content(section: dict, chunks: list) -> tuple[str, l
                      section.get("document_id"), section.get("section_index"), exc)
         raise HTTPException(status_code=502, detail="Failed to generate section content. Please try again.")
 
-    explanation = (explain_result or "").strip()
+    # Extract text from completion objects (.choices[0].message.content pattern, same as quiz.py)
+    def _extract(resp) -> str:
+        if resp is None:
+            return ""
+        try:
+            return (resp.choices[0].message.content or "") if resp.choices else ""
+        except Exception:
+            return str(resp)  # last-resort fallback if shape is unexpected
+
+    explanation = _extract(explain_resp).strip()
 
     # Parse questions JSON robustly
     questions: list = []
-    raw_q = (questions_result or "").strip()
+    raw_q = _extract(questions_resp).strip()
     # Strip markdown fences if the model wrapped the JSON
     if raw_q.startswith("```"):
         raw_q = "\n".join(raw_q.split("\n")[1:])
@@ -575,12 +584,16 @@ async def submit_section_answer(
             },
         ]
         try:
-            followup = await llm_engine.generate_small_completion_with_failover(
+            followup_resp = await llm_engine.generate_small_completion_with_failover(
                 messages=followup_messages,
                 temperature=0.2,
                 max_tokens=256,
             )
-            followup = (followup or "").strip() or None
+            # Extract text from completion object (.choices[0].message.content)
+            if followup_resp and getattr(followup_resp, 'choices', None):
+                followup = (followup_resp.choices[0].message.content or "").strip() or None
+            else:
+                followup = None
         except Exception as exc:
             logger.warning("[LEARN] Follow-up generation failed for section %s/%s q%s: %s",
                            document_id, section_index, body.question_index, exc)
