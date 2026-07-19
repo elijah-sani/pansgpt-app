@@ -1055,14 +1055,15 @@ async def generate_document_sections(
         return True
 
     except Exception as e:
-        logger.error(f"[SECTION OUTLINE] Failed to generate sections for {document_id}: {e}", exc_info=True)
+        err_msg = str(e)
+        logger.error(f"[SECTION OUTLINE] Failed to generate sections for {document_id}: {err_msg}", exc_info=True)
         try:
             db = _db_client()
             if db:
                 await _execute_with_retry_async(
                     lambda: db.table('pans_library').update({
                         'sections_status': 'failed',
-                        'sections_error': str(e),
+                        'sections_error': err_msg,
                         'last_updated_at': datetime.now(timezone.utc).isoformat(),
                     })
                     .eq('id', document_id)
