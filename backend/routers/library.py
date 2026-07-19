@@ -581,7 +581,7 @@ async def _get_document_ingestion_state(document_id: str) -> Optional[dict]:
     try:
         response = await _execute_with_retry_async(
             lambda: db.table("pans_library")
-            .select("embedding_status,ingestion_run_id,ingestion_worker_id,ingestion_worker_heartbeat_at")
+            .select("embedding_status,ingestion_run_id,ingestion_worker_id,ingestion_worker_heartbeat_at,sections_status")
             .eq("id", document_id)
             .limit(1)
             .execute(),
@@ -596,6 +596,7 @@ async def _get_document_ingestion_state(document_id: str) -> Optional[dict]:
             "ingestion_run_id": str(row.get("ingestion_run_id") or "").strip() or None,
             "ingestion_worker_id": str(row.get("ingestion_worker_id") or "").strip() or None,
             "ingestion_worker_heartbeat_at": row.get("ingestion_worker_heartbeat_at"),
+            "sections_status": str(row.get("sections_status") or "").strip().lower() or None,
         }
     except Exception as exc:
         logger.warning("Could not read ingestion state for %s: %s", document_id, exc)
