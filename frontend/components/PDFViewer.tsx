@@ -19,6 +19,7 @@ import { PDFViewerSelectedImageModal } from './pdf/PDFViewerSelectedImageModal';
 import type { PDFNote } from './pdf/types';
 import { useOfflineStatus } from '../hooks/useOfflineStatus';
 import { toast } from 'sonner';
+import LearnModeView from './LearnModeView'; // [LEARN MODE UI]
 
 // Dynamic import for react-pdf: pdfjs-dist v5 ships only .mjs files which
 // use import.meta internally. Webpack's transpilePackages corrupts the ESM
@@ -230,7 +231,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     const [error, setError] = useState<string | null>(null);
 
     // Responsive State
-    const [activeTab, setActiveTab] = useState<'document' | 'chat'>('document');
+    const [activeTab, setActiveTab] = useState<'document' | 'chat' | 'learn'>('document'); // [LEARN MODE UI]
     const [containerWidth] = useState<number>(600);
     const [zoomLevel, setZoomLevel] = useState<number>(100);
     const [baseScale, setBaseScale] = useState<number>(1.0);
@@ -536,6 +537,27 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         source?: SelectionSource | null;
     } | null>(null);
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+    // [LEARN MODE UI] Synchronize sidebar open state with active tab view modes
+    useEffect(() => {
+        if (activeTab === 'chat' || activeTab === 'learn') {
+            if (!isSidebarOpen) setIsSidebarOpen(true);
+        } else if (activeTab === 'document') {
+            if (isSidebarOpen) setIsSidebarOpen(false);
+        }
+    }, [activeTab, isSidebarOpen]);
+
+    useEffect(() => {
+        if (isSidebarOpen) {
+            if (activeTab === 'document') {
+                setActiveTab('chat');
+            }
+        } else {
+            if (activeTab !== 'document') {
+                setActiveTab('document');
+            }
+        }
+    }, [isSidebarOpen, activeTab]);
 
     // Snipping State
     const [isSnippingMode, setIsSnippingMode] = useState(false);
@@ -2352,7 +2374,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 <>
 
 
-                    <div className={`md:hidden fixed top-0 w-full h-14 bg-background/80 backdrop-blur-md border-b border-border z-50 flex items-center justify-around shadow-sm transition-transform duration-300 ${mobileHeaderVisible || activeTab === 'chat' ? 'translate-y-0' : '-translate-y-full'}`}>
+                    <div className={`md:hidden fixed top-0 w-full h-14 bg-background/80 backdrop-blur-md border-b border-border z-50 flex items-center justify-around shadow-sm transition-transform duration-300 ${mobileHeaderVisible || activeTab === 'chat' || activeTab === 'learn' ? 'translate-y-0' : '-translate-y-full'}`}>
                         <button
                             onClick={() => { setActiveTab('document'); }}
                             className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-colors ${activeTab === 'document' ? 'text-primary' : 'text-muted-foreground'}`}
@@ -2367,6 +2389,13 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                             <MessageSquare className="w-4 h-4" />
                             Chat
                             {unreadMessages && <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full animate-pulse" />}
+                        </button>
+                        <button
+                            onClick={() => { setActiveTab('learn'); }}
+                            className={`relative flex items-center gap-2 px-4 py-2 text-sm font-medium transition-colors ${activeTab === 'learn' ? 'text-primary' : 'text-muted-foreground'}`}
+                        >
+                            <BookOpen className="w-4 h-4" />
+                            Learn
                         </button>
                         <button
                             onClick={() => setShowTutorial(true)}
@@ -2415,14 +2444,36 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
                         <div className="flex items-center gap-3">
                             <button
-                                onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-                                className={`flex items-center justify-center w-10 h-10 rounded-lg transition-all duration-200 ${isSidebarOpen
+                                onClick={() => {
+                                    if (activeTab === 'chat') {
+                                        setActiveTab('document');
+                                    } else {
+                                        setActiveTab('chat');
+                                    }
+                                }}
+                                className={`flex items-center justify-center w-10 h-10 rounded-lg transition-all duration-200 ${activeTab === 'chat'
                                     ? 'bg-muted/50 text-primary shadow-lg shadow-black/5'
                                     : 'bg-card hover:bg-muted/50 text-muted-foreground shadow-sm'
                                     }`}
                                 title="AI Assistant"
                             >
                                 <MessageSquare className="w-5 h-5" />
+                            </button>
+                            <button
+                                onClick={() => {
+                                    if (activeTab === 'learn') {
+                                        setActiveTab('document');
+                                    } else {
+                                        setActiveTab('learn');
+                                    }
+                                }}
+                                className={`flex items-center justify-center w-10 h-10 rounded-lg transition-all duration-200 ${activeTab === 'learn'
+                                    ? 'bg-muted/50 text-primary shadow-lg shadow-black/5'
+                                    : 'bg-card hover:bg-muted/50 text-muted-foreground shadow-sm'
+                                    }`}
+                                title="Learn Mode"
+                            >
+                                <BookOpen className="w-5 h-5" />
                             </button>
                         </div>
                     </div>
@@ -2898,6 +2949,11 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                             {renderChatUI(true)}
                         </div>
 
+                        {/* Learn Mode Container (Mobile) */}
+                        <div className={`flex-1 h-full bg-background ${activeTab === 'learn' ? 'block' : 'hidden'} md:hidden`}>
+                            <LearnModeView documentId={resolvedDocumentId} onJumpToSource={handleJumpToSource} onClose={() => setActiveTab('document')} />
+                        </div>
+
                         {/* Chat Sidebar (Desktop) - flex-based, pushes PDF */}
                         <div 
                             className={`hidden md:flex h-full border-l border-border bg-card transition-all duration-300 ease-in-out overflow-hidden ${
@@ -2905,7 +2961,11 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                             }`}
                         >
                             <div className="w-96 h-full flex-shrink-0">
-                                {renderChatUI(false)}
+                                {activeTab === 'learn' ? (
+                                    <LearnModeView documentId={resolvedDocumentId} onJumpToSource={handleJumpToSource} onClose={() => setIsSidebarOpen(false)} />
+                                ) : (
+                                    renderChatUI(false)
+                                )}
                             </div>
                         </div>
 
