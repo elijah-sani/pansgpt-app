@@ -230,9 +230,12 @@ async def _create_completion_with_audit(
         if not kwargs.get("stream", False):
             _usage = getattr(res, "usage", None)
             if _usage is not None:
-                _pt = getattr(_usage, "prompt_tokens", 0) or 0
-                _ct = getattr(_usage, "completion_tokens", 0) or 0
-                _tt = getattr(_usage, "total_tokens", 0) or (_pt + _ct)
+                try:
+                    _pt = int(getattr(_usage, "prompt_tokens", 0) or 0)
+                    _ct = int(getattr(_usage, "completion_tokens", 0) or 0)
+                    _tt = int(getattr(_usage, "total_tokens", 0) or (_pt + _ct))
+                except (TypeError, ValueError):
+                    _pt = _ct = _tt = 0
             else:
                 _pt = _ct = _tt = 0
             _meta = audit_meta or {}
