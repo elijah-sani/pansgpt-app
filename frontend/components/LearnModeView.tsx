@@ -400,32 +400,34 @@ export default function LearnModeView({
             background: rgba(16,185,129,0.06);
           }
           .lm-option-dismissed {
-            animation: lm-shrink-out 0.35s cubic-bezier(0.4,0,1,1) forwards;
+            animation: lm-shrink-out 0.4s cubic-bezier(0.4,0,1,1) forwards;
+            animation-delay: 1.5s; /* Delay disappearance by 1.5s */
             overflow: hidden;
             pointer-events: none;
           }
           .lm-cta-enter {
             animation: lm-slide-up-cta 0.4s cubic-bezier(0.22,1,0.36,1) both;
+            animation-delay: 2.0s; /* CTA appears after cards fade out */
           }
         `}</style>
 
         <div className="flex flex-col h-full bg-background overflow-hidden px-6 py-8">
-          {/* Top Bar with Logo and Greeting */}
-          <div className="flex items-center gap-2 mb-4 shrink-0 lm-option-enter" style={{ animationDelay: '0ms' }}>
-            <Logo className="h-6 w-6 shrink-0" />
-            <span className="text-sm font-bold text-foreground">Hi, {studentFirstName}</span>
-          </div>
-
           {/* Centered Content Area */}
           <div className="flex-1 flex flex-col justify-center min-h-0 overflow-y-auto py-4">
             <div className="max-w-md w-full mx-auto space-y-6">
-              {/* Question text */}
-              <p className="text-sm font-bold text-foreground leading-snug text-center lm-option-enter" style={{ animationDelay: '50ms' }}>
-                Before we start —{' '}
-                <span className="text-muted-foreground font-normal">
-                  what brings you here today?
-                </span>
-              </p>
+              {/* Logo and Greeting + Question prompt group — positioned close together and left-aligned */}
+              <div className="space-y-4 lm-option-enter" style={{ animationDelay: '0ms' }}>
+                <div className="flex items-center gap-2">
+                  <Logo className="h-6 w-6 shrink-0 text-[#2f9e1c]" style={{ color: '#2f9e1c' }} />
+                  <span className="text-sm font-bold text-foreground">Hi, {studentFirstName}</span>
+                </div>
+                <p className="text-sm font-bold text-foreground leading-snug text-left">
+                  Before we start —{' '}
+                  <span className="text-muted-foreground font-normal">
+                    what brings you here today?
+                  </span>
+                </p>
+              </div>
 
               {/* Option cards */}
               <div className="flex flex-col gap-3">
@@ -438,16 +440,16 @@ export default function LearnModeView({
                       key={opt.key}
                       onClick={() => setSelectedConfidence(opt.key)}
                       className={[
-                        'lm-option-enter w-full text-left p-4 rounded-2xl border transition-colors duration-200',
+                        'lm-option-enter w-full text-left p-4 rounded-xl border transition-colors duration-200',
                         'border-border bg-card focus:outline-none',
                         isSelected ? 'lm-option-selected' : 'hover:border-primary/40 hover:bg-muted/30',
                         isDismissed ? 'lm-option-dismissed' : '',
                       ].join(' ')}
                       style={{ animationDelay: `${100 + i * 90}ms` }}
                     >
-                      <div className="flex items-start gap-3.5">
-                        {/* Radio circle */}
-                        <div className="mt-1 shrink-0 flex items-center justify-center">
+                      <div className="flex items-center gap-3.5">
+                        {/* Radio circle — vertically centered */}
+                        <div className="shrink-0 flex items-center justify-center">
                           <div className={`w-4 h-4 rounded-full border flex items-center justify-center transition-all ${
                             isSelected ? 'border-emerald-500 bg-emerald-500/10' : 'border-border bg-card'
                           }`}>
@@ -482,7 +484,7 @@ export default function LearnModeView({
                 <div className="mt-6 lm-cta-enter flex items-center gap-3">
                   <button
                     onClick={() => setSelectedConfidence(null)}
-                    className="flex-1 py-3.5 rounded-2xl border border-border bg-card hover:bg-muted/40 text-foreground text-sm font-semibold transition-all"
+                    className="flex-1 py-3.5 rounded-xl border border-border bg-card hover:bg-muted/40 text-foreground text-sm font-semibold transition-all"
                   >
                     Back
                   </button>
@@ -490,7 +492,7 @@ export default function LearnModeView({
                     onClick={() => {
                       if (selectedConfidence) handleStartLearn(selectedConfidence);
                     }}
-                    className="flex-[2] py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white text-sm font-bold transition-all shadow-md shadow-emerald-500/30"
+                    className="flex-[2] py-3.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white text-sm font-bold transition-all shadow-md shadow-emerald-500/30"
                   >
                     Start Learning →
                   </button>

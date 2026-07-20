@@ -1,4 +1,4 @@
-export default function Logo({ className }: { className?: string }) {
+export default function Logo({ className, style }: { className?: string; style?: React.CSSProperties }) {
     const svgClassName = `${className ?? ""} text-[#2f9e1c] dark:text-white`.trim();
 
     return (
@@ -8,6 +8,7 @@ export default function Logo({ className }: { className?: string }) {
             xmlns="http://www.w3.org/2000/svg"
             viewBox="0 0 291.7 312.9"
             className={svgClassName}
+            style={style}
         >
             <g id="Layer_1-2" data-name="Layer 1">
                 <g>
