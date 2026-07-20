@@ -2451,7 +2451,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                         setActiveTab('learn');
                                     }
                                 }}
-                                className={`flex items-center justify-center px-4 h-10 rounded-lg text-sm font-medium transition-all duration-200 ${activeTab === 'learn'
+                                className={`flex items-center justify-center px-4 h-10 rounded-md text-sm font-medium transition-all duration-200 ${activeTab === 'learn'
                                     ? 'bg-muted/50 text-primary shadow-lg shadow-black/5'
                                     : 'bg-card hover:bg-muted/50 text-muted-foreground shadow-sm'
                                     }`}
