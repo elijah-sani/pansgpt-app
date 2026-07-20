@@ -65,11 +65,24 @@ interface LearnModeViewProps {
   documentId: string;
   onJumpToSource: (source: { page: number; rect?: any }) => void;
   onClose?: () => void;
+  sections?: SectionProgressItem[]; // [LEARN MODE UI]
+  onSectionsLoaded?: (sections: SectionProgressItem[]) => void; // [LEARN MODE UI]
 }
 
-export default function LearnModeView({ documentId, onJumpToSource, onClose }: LearnModeViewProps) {
+export default function LearnModeView({ 
+  documentId, 
+  onJumpToSource, 
+  onClose,
+  sections: parentSections, // [LEARN MODE UI]
+  onSectionsLoaded // [LEARN MODE UI]
+}: LearnModeViewProps) {
   const [view, setView] = useState<'loading' | 'start' | 'list' | 'detail'>('loading');
-  const [sections, setSections] = useState<SectionProgressItem[]>([]);
+  const [localSections, setLocalSections] = useState<SectionProgressItem[]>([]); // [LEARN MODE UI]
+  const sections = parentSections || localSections; // [LEARN MODE UI]
+  const setSections = (newSections: SectionProgressItem[]) => { // [LEARN MODE UI]
+    setLocalSections(newSections); // [LEARN MODE UI]
+    if (onSectionsLoaded) onSectionsLoaded(newSections); // [LEARN MODE UI]
+  }; // [LEARN MODE UI]
   const [activeSectionIndex, setActiveSectionIndex] = useState<number | null>(null);
   const [sectionDetail, setSectionDetail] = useState<SectionDetailResponse | null>(null);
   

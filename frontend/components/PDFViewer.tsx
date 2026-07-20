@@ -232,6 +232,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
     // Responsive State
     const [activeTab, setActiveTab] = useState<'document' | 'chat' | 'learn'>('document'); // [LEARN MODE UI]
+    const [learnSections, setLearnSections] = useState<any[]>([]); // [LEARN MODE UI]
     const [containerWidth] = useState<number>(600);
     const [zoomLevel, setZoomLevel] = useState<number>(100);
     const [baseScale, setBaseScale] = useState<number>(1.0);
@@ -2583,37 +2584,55 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                             }
                                             className="flex flex-col items-center w-full"
                                         >
-                                            {Array.from(new Array(numPages), (el, index) => (
-                                                <div
-                                                    key={`page_${index + 1}`}
-                                                    id={`page-container-${index + 1}`}
-                                                    data-page-number={index + 1}
-                                                    className="relative mb-6 shadow-2xl rounded-sm w-full flex justify-center transition-transform duration-200"
-                                                >
-                                                    <Page
-                                                        pageNumber={index + 1}
-                                                        renderTextLayer={!isSnippingMode}
-                                                        renderAnnotationLayer={false}
-                                                        width={Math.min(containerWidth - 48, 800) * ((zoomLevel / 100) * baseScale)}
-                                                        className="bg-card"
-                                                        loading={<div className="h-[800px] w-full bg-card animate-pulse" />}
-                                                        error={<div className="p-4 text-destructive text-sm">Failed to load page</div>}
-                                                    />
-                                                    {focusPulseTarget && focusPulseTarget.page === index + 1 && (
+                                            {Array.from(new Array(numPages), (el, index) => {
+                                                const pageNum = index + 1; // [LEARN MODE UI]
+                                                const matchingSection = (activeTab === 'learn' || (activeTab === 'document' && learnSections.length > 0)) && learnSections?.find( // [LEARN MODE UI]
+                                                    (sec) => sec.page_start === pageNum && !(sec.section_index === 0 && pageNum === 1) // [LEARN MODE UI]
+                                                ); // [LEARN MODE UI]
+                                                return (
+                                                    <React.Fragment key={`page_wrapper_${pageNum}`}>
+                                                        {matchingSection ? (
+                                                            <div className="w-full flex items-center my-8 gap-4 select-none px-4 py-2" key={`section_divider_${matchingSection.section_index}`}>
+                                                                <div className="flex-1 border-t border-emerald-500/20" />
+                                                                <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-widest bg-background px-3 py-1 border border-emerald-500/30 rounded-full shadow-[0_0_12px_rgba(16,185,129,0.25)] animate-pulse">
+                                                                    {typeof window !== 'undefined' && window.innerWidth < 768 
+                                                                        ? `Section ${matchingSection.section_index + 1}` 
+                                                                        : `Section ${matchingSection.section_index + 1} — ${matchingSection.title}`}
+                                                                </span>
+                                                                <div className="flex-1 border-t border-emerald-500/20" />
+                                                            </div>
+                                                        ) : null}
                                                         <div
-                                                            key={`pulse-${focusPulseTarget.pulseId}`}
-                                                            className="pointer-events-none absolute bg-green-400/30 rounded-sm shadow-[0_0_0_4px_rgba(34,197,94,0.26)] animate-pulse"
-                                                            style={{
-                                                                left: `${focusPulseTarget.rect.x * 100}%`,
-                                                                top: `${focusPulseTarget.rect.y * 100}%`,
-                                                                width: `${focusPulseTarget.rect.w * 100}%`,
-                                                                height: `${focusPulseTarget.rect.h * 100}%`,
-                                                                zIndex: 25,
-                                                            }}
-                                                        />
-                                                    )}
-                                                </div>
-                                            ))}
+                                                            id={`page-container-${pageNum}`}
+                                                            data-page-number={pageNum}
+                                                            className="relative mb-6 shadow-2xl rounded-sm w-full flex justify-center transition-transform duration-200"
+                                                        >
+                                                            <Page
+                                                                pageNumber={pageNum}
+                                                                renderTextLayer={!isSnippingMode}
+                                                                renderAnnotationLayer={false}
+                                                                width={Math.min(containerWidth - 48, 800) * ((zoomLevel / 100) * baseScale)}
+                                                                className="bg-card"
+                                                                loading={<div className="h-[800px] w-full bg-card animate-pulse" />}
+                                                                error={<div className="p-4 text-destructive text-sm">Failed to load page</div>}
+                                                            />
+                                                            {focusPulseTarget && focusPulseTarget.page === pageNum && (
+                                                                <div
+                                                                    key={`pulse-${focusPulseTarget.pulseId}`}
+                                                                    className="pointer-events-none absolute bg-green-400/30 rounded-sm shadow-[0_0_0_4px_rgba(34,197,94,0.26)] animate-pulse"
+                                                                    style={{
+                                                                        left: `${focusPulseTarget.rect.x * 100}%`,
+                                                                        top: `${focusPulseTarget.rect.y * 100}%`,
+                                                                        width: `${focusPulseTarget.rect.w * 100}%`,
+                                                                        height: `${focusPulseTarget.rect.h * 100}%`,
+                                                                        zIndex: 25,
+                                                                    }}
+                                                                />
+                                                            )}
+                                                        </div>
+                                                    </React.Fragment>
+                                                );
+                                            })}
                                         </Document>
                                     )}
 
@@ -2951,7 +2970,13 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
                         {/* Learn Mode Container (Mobile) */}
                         <div className={`flex-1 h-full bg-background ${activeTab === 'learn' ? 'block' : 'hidden'} md:hidden`}>
-                            <LearnModeView documentId={resolvedDocumentId} onJumpToSource={handleJumpToSource} onClose={() => setActiveTab('document')} />
+                            <LearnModeView 
+                                documentId={resolvedDocumentId} 
+                                onJumpToSource={handleJumpToSource} 
+                                onClose={() => setActiveTab('document')} 
+                                sections={learnSections} // [LEARN MODE UI]
+                                onSectionsLoaded={setLearnSections} // [LEARN MODE UI]
+                            />
                         </div>
 
                         {/* Chat Sidebar (Desktop) - flex-based, pushes PDF */}
@@ -2962,7 +2987,13 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                         >
                             <div className="w-96 h-full flex-shrink-0">
                                 {activeTab === 'learn' ? (
-                                    <LearnModeView documentId={resolvedDocumentId} onJumpToSource={handleJumpToSource} onClose={() => setIsSidebarOpen(false)} />
+                                    <LearnModeView 
+                                        documentId={resolvedDocumentId} 
+                                        onJumpToSource={handleJumpToSource} 
+                                        onClose={() => setIsSidebarOpen(false)} 
+                                        sections={learnSections} // [LEARN MODE UI]
+                                        onSectionsLoaded={setLearnSections} // [LEARN MODE UI]
+                                    />
                                 ) : (
                                     renderChatUI(false)
                                 )}
