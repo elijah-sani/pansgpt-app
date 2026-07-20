@@ -23,7 +23,8 @@ import {
   Sparkles,
   Award,
   AlertTriangle,
-  HelpCircle
+  HelpCircle,
+  Lightbulb
 } from 'lucide-react';
 
 interface Question {
@@ -102,6 +103,10 @@ export default function LearnModeView({
 
   // Immediate retests appended dynamically
   const [extraRetests, setExtraRetests] = useState<Question[]>([]);
+
+  // Focus Quiz Modal & Hint state
+  const [showQuizModal, setShowQuizModal] = useState<boolean>(false);
+  const [activeHints, setActiveHints] = useState<Record<number, boolean>>({});
 
   // Page tracking to prevent redundant auto-navigation
   const lastNavigatedPageRef = useRef<number | null>(null);
@@ -191,6 +196,8 @@ export default function LearnModeView({
       setGradedResults({});
       setScoreMessage(null);
       setExtraRetests([]);
+      setShowQuizModal(false);
+      setActiveHints({});
 
       const res = await api.get(`/api/learn/documents/${documentId}/sections/${index}`);
       if (res.ok) {
@@ -566,7 +573,6 @@ export default function LearnModeView({
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${scoreBadgeStyle}`}>
                       {pct}
                     </span>
-                    <ChevronDown className="w-3.5 h-3.5 text-muted-foreground/50 group-hover:text-foreground transition-colors" />
                   </div>
                 </div>
               </div>
@@ -603,230 +609,319 @@ export default function LearnModeView({
   const allAnswered = allQuestions.every((_, i) => selectedAnswers[i] !== undefined);
 
   return (
-    <div className="flex flex-col h-full bg-background overflow-hidden">
-      {/* Header bar */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-card shrink-0">
-        <button
-          onClick={() => setView('list')}
-          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground font-medium transition-colors"
-        >
-          <ChevronLeft className="w-4 h-4" />
-          Back to list
-        </button>
-        <span className="text-[10px] font-bold text-muted-foreground uppercase">
-          Section {activeSectionIndex! + 1} / {sections.length}
-        </span>
-      </div>
-
-      {/* Main detail content area */}
-      <div className="flex-1 overflow-y-auto px-5 py-6 space-y-6">
-        <div className="space-y-1">
-          <h2 className="text-base font-bold text-foreground leading-tight">{sectionDetail?.title}</h2>
-          {sectionDetail?.page_start && (
-            <p className="text-xs text-muted-foreground font-medium">
-              Source: Pages {sectionDetail.page_start}–{sectionDetail.page_end}
-            </p>
-          )}
-        </div>
-
-        {/* Markdown explanation */}
-        <div className="prose prose-sm dark:prose-invert max-w-full text-foreground border-b border-border/50 pb-6 leading-relaxed">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm, remarkMath]}
-            rehypePlugins={[rehypeRaw, rehypeKatex]}
-            components={{
-              table: ({ node, ...props }) => (
-                <div className="my-3 w-full overflow-hidden overflow-x-auto rounded-xl border border-border bg-card">
-                  <table className="w-full m-0 border-collapse text-xs text-left border-hidden" {...props} />
-                </div>
-              ),
-              thead: ({ node, ...props }) => <thead className="bg-muted text-foreground" {...props} />,
-              th: ({ node, ...props }) => <th className="px-3 py-3 border border-border/70 font-semibold" {...props} />,
-              td: ({ node, ...props }) => <td className="px-3 py-2 border border-border/50 align-top text-foreground" {...props} />,
-              tr: ({ node, ...props }) => <tr className="hover:bg-muted/30 transition-colors" {...props} />
-            }}
+    <>
+      {/* ── Sidebar Section View ────────────────────────────────────────── */}
+      <div className="flex flex-col h-full bg-background overflow-hidden">
+        {/* Header bar */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-card shrink-0">
+          <button
+            onClick={() => setView('list')}
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground font-medium transition-colors"
           >
-            {sectionDetail?.explanation || ''}
-          </ReactMarkdown>
+            <ChevronLeft className="w-4 h-4" />
+            Back to list
+          </button>
+          <span className="text-[10px] font-bold text-muted-foreground uppercase">
+            Section {activeSectionIndex! + 1} / {sections.length}
+          </span>
         </div>
 
-        {/* Challenge Section */}
-        <div className="space-y-5">
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-primary" />
-            <h3 className="text-sm font-bold text-foreground">Check Your Understanding</h3>
+        {/* Main detail content area */}
+        <div className="flex-1 overflow-y-auto px-5 py-6 space-y-6">
+          <div className="space-y-1">
+            <h2 className="text-base font-bold text-foreground leading-tight">{sectionDetail?.title}</h2>
+            {sectionDetail?.page_start && (
+              <p className="text-xs text-muted-foreground font-medium">
+                Source: Pages {sectionDetail.page_start}–{sectionDetail.page_end}
+              </p>
+            )}
           </div>
 
-          <div className="space-y-6">
-            {allQuestions.map((q, qIdx) => {
-              const selected = selectedAnswers[qIdx];
-              const grading = gradedResults[qIdx];
-              const isRetest = q.is_retest;
+          {/* Markdown explanation */}
+          <div className="prose prose-sm dark:prose-invert max-w-full text-foreground border-b border-border/50 pb-6 leading-relaxed">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm, remarkMath]}
+              rehypePlugins={[rehypeRaw, rehypeKatex]}
+              components={{
+                table: ({ node, ...props }) => (
+                  <div className="my-3 w-full overflow-hidden overflow-x-auto rounded-xl border border-border bg-card">
+                    <table className="w-full m-0 border-collapse text-xs text-left border-hidden" {...props} />
+                  </div>
+                ),
+                thead: ({ node, ...props }) => <thead className="bg-muted text-foreground" {...props} />,
+                th: ({ node, ...props }) => <th className="px-3 py-3 border border-border/70 font-semibold" {...props} />,
+                td: ({ node, ...props }) => <td className="px-3 py-2 border border-border/50 align-top text-foreground" {...props} />,
+                tr: ({ node, ...props }) => <tr className="hover:bg-muted/30 transition-colors" {...props} />
+              }}
+            >
+              {sectionDetail?.explanation || ''}
+            </ReactMarkdown>
+          </div>
 
-              return (
-                <div 
-                  key={qIdx} 
-                  className={`p-4 rounded-xl border transition-all ${
-                    grading 
-                      ? grading.correct 
-                        ? 'border-emerald-500/30 bg-emerald-500/5' 
-                        : 'border-destructive/30 bg-destructive/5'
-                      : 'border-border bg-card'
-                  }`}
-                >
-                  {/* Retest indicator badge */}
-                  {isRetest && (
-                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full border border-amber-500/20 bg-amber-500/10 text-[9px] font-bold text-amber-500 uppercase tracking-wide mb-3">
-                      Revisiting Section {q.origin_section_index! + 1}
+          {/* Active Recall Quiz CTA Container */}
+          <div className="p-4 rounded-xl border border-primary/20 bg-primary/5 space-y-3 shadow-sm">
+            <div className="flex items-center gap-2 text-primary font-bold text-xs">
+              <Sparkles className="w-4 h-4" />
+              <span>Closed-Book Active Recall</span>
+            </div>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Test your retrieval strength without peeking at the source text. Complete the section check quiz to unlock mastery.
+            </p>
+
+            {scoreMessage ? (
+              <div className="space-y-3 pt-1">
+                <div className="flex items-center justify-between p-3 bg-card rounded-lg border border-border">
+                  <div className="flex items-center gap-2">
+                    <Award className={`w-4 h-4 ${scoreMessage.passed ? 'text-emerald-500' : 'text-amber-500'}`} />
+                    <span className="text-xs font-bold text-foreground">
+                      {scoreMessage.passed ? 'Section Mastered' : 'Needs Review'} ({scoreMessage.score}%)
                     </span>
-                  )}
-
-                  <div className="flex gap-2">
-                    <span className="text-xs font-bold text-primary shrink-0">Q{qIdx + 1}.</span>
-                    <h4 className="text-xs font-semibold text-foreground leading-tight">{q.question_text}</h4>
                   </div>
-
-                  {/* Radio options stack */}
-                  <div className="mt-3.5 space-y-2">
-                    {Object.entries(q.options || {}).map(([key, optText]) => {
-                      const isOptionSelected = selected === key;
-                      const isOptionCorrect = q.correct_answer === key;
-                      
-                      let optBtnClass = "w-full text-left flex items-center px-4 py-2.5 rounded-lg border text-xs transition-all ";
-                      let dotClass = "mr-2.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ";
-
-                      if (grading) {
-                        // Post-submission style
-                        if (isOptionCorrect) {
-                          optBtnClass += "border-emerald-500 bg-emerald-500/15 text-foreground";
-                          dotClass += "border-emerald-500 bg-emerald-500";
-                        } else if (isOptionSelected) {
-                          optBtnClass += "border-destructive bg-destructive/15 text-foreground";
-                          dotClass += "border-destructive bg-destructive";
-                        } else {
-                          optBtnClass += "border-border/60 bg-muted/10 text-muted-foreground/60 cursor-default";
-                          dotClass += "border-muted-foreground/30 bg-transparent";
-                        }
-                      } else {
-                        // Pre-submission style
-                        if (isOptionSelected) {
-                          optBtnClass += "border-primary bg-primary/10 text-foreground cursor-pointer";
-                          dotClass += "border-primary bg-primary";
-                        } else {
-                          optBtnClass += "border-border hover:border-primary/30 hover:bg-muted/40 cursor-pointer";
-                          dotClass += "border-muted-foreground bg-transparent";
-                        }
-                      }
-
-                      return (
-                        <button
-                          key={key}
-                          disabled={grading !== undefined || isSubmitting}
-                          onClick={() => handleAnswerSelect(qIdx, key)}
-                          className={optBtnClass}
-                        >
-                          <span className={dotClass}>
-                            {isOptionSelected && <span className="w-1.5 h-1.5 bg-background rounded-full" />}
-                          </span>
-                          <span className="leading-snug">{optText}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {/* Sequential submission indicator */}
-                  {isSubmitting && submittingIndex === qIdx && (
-                    <div className="mt-3 flex items-center gap-2 text-[10px] text-muted-foreground font-medium">
-                      <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
-                      Evaluating response...
-                    </div>
-                  )}
-
-                  {/* Feedback explanation for incorrect answers */}
-                  {grading && !grading.correct && (
-                    <div className="mt-4 p-3 bg-destructive/10 border-l-2 border-destructive rounded text-[11px] leading-relaxed text-foreground space-y-2">
-                      <p className="font-bold flex items-center gap-1 text-destructive">
-                        <AlertTriangle className="w-3.5 h-3.5" /> Incorrect
-                      </p>
-                      <p><span className="font-semibold text-foreground">Explanation:</span> {grading.explanation}</p>
-                      {grading.followup_feedback && (
-                        <p><span className="font-semibold text-foreground">Diagnostic Follow-up:</span> {grading.followup_feedback}</p>
-                      )}
-                    </div>
-                  )}
+                  <button
+                    onClick={() => setShowQuizModal(true)}
+                    className="text-[11px] font-semibold text-primary hover:underline"
+                  >
+                    View Quiz Results
+                  </button>
                 </div>
-              );
-            })}
+                <button
+                  disabled={isCompleting}
+                  onClick={handleNextSection}
+                  className="w-full py-3 px-4 rounded-xl bg-primary hover:opacity-90 active:opacity-95 text-primary-foreground font-bold text-xs shadow-md shadow-primary/20 flex items-center justify-center gap-2 transition-all"
+                >
+                  {isCompleting ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <>
+                      Next Section
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowQuizModal(true)}
+                className="w-full py-3 px-4 rounded-xl bg-primary hover:opacity-90 active:opacity-95 text-primary-foreground font-bold text-xs shadow-md shadow-primary/20 flex items-center justify-center gap-2 transition-all"
+              >
+                Test My Knowledge →
+              </button>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Footer grading panel */}
-      <div className="p-4 border-t border-border bg-card shrink-0 space-y-4">
-        {scoreMessage ? (
-          <div className="space-y-3">
-            <div className="flex items-center gap-3 p-3 bg-muted rounded-xl border border-border/80 justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className={`p-2 rounded-lg ${scoreMessage.passed ? 'bg-emerald-500/10 text-emerald-500' : 'bg-amber-500/10 text-amber-500'}`}>
-                  <Award className="w-5 h-5" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-foreground">
-                    {scoreMessage.passed ? 'Section Mastered!' : 'Needs Review'}
-                  </h4>
-                  <p className="text-[10px] text-muted-foreground">Score: {scoreMessage.score}%</p>
-                </div>
+      {/* ── Focus Quiz Modal Overlay (Closed-Book Mode) ────────────────── */}
+      {showQuizModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="w-full max-w-2xl max-h-[90vh] bg-card border border-border/80 rounded-2xl shadow-2xl flex flex-col overflow-hidden relative">
+            
+            {/* Modal Header Bar */}
+            <div className="px-6 py-4 border-b border-border/60 flex items-center justify-between bg-card/60">
+              <div>
+                <span className="text-[10px] font-bold text-primary uppercase tracking-wider">
+                  Section {activeSectionIndex! + 1} Quiz • Closed-Book Recall
+                </span>
+                <h3 className="text-sm font-bold text-foreground truncate max-w-md">
+                  {sectionDetail?.title}
+                </h3>
               </div>
-              <span className={`text-xs font-bold ${scoreMessage.passed ? 'text-emerald-500' : 'text-amber-500'}`}>
-                {scoreMessage.passed ? 'Passed' : 'Study Again'}
+              <button
+                onClick={() => setShowQuizModal(false)}
+                className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                title="Pause Quiz"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Progress Indicator */}
+            <div className="px-6 py-2.5 bg-muted/30 border-b border-border/40 flex items-center justify-between text-xs font-semibold text-muted-foreground">
+              <span>
+                Question {Math.min(Object.keys(selectedAnswers).length + 1, allQuestions.length)} of {allQuestions.length}
+              </span>
+              <span>
+                {Math.round((Object.keys(selectedAnswers).length / Math.max(1, allQuestions.length)) * 100)}% Answered
               </span>
             </div>
+            <div className="w-full h-1.5 bg-muted">
+              <div 
+                className="h-full bg-primary transition-all duration-300"
+                style={{ width: `${(Object.keys(selectedAnswers).length / Math.max(1, allQuestions.length)) * 100}%` }}
+              />
+            </div>
 
-            <div className="flex gap-3">
-              <button
-                disabled={isCompleting}
-                onClick={handleCompleteSection}
-                className="flex-1 py-2.5 text-xs font-medium text-foreground bg-background hover:bg-muted border border-border rounded-lg transition-all"
-              >
-                Section List
-              </button>
-              <button
-                disabled={isCompleting}
-                onClick={handleNextSection}
-                className="flex-1 py-2.5 text-xs font-semibold text-white bg-primary hover:bg-primary-hover rounded-lg shadow transition-all flex items-center justify-center gap-1.5"
-              >
-                {isCompleting ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <>
-                    Next Section
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </>
-                )}
-              </button>
+            {/* Questions Scroll Area */}
+            <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+              {allQuestions.map((q, qIdx) => {
+                const selected = selectedAnswers[qIdx];
+                const grading = gradedResults[qIdx];
+                const isRetest = q.is_retest;
+                const isHintOpen = !!activeHints[qIdx];
+
+                return (
+                  <div key={qIdx} className="p-5 rounded-xl border border-border bg-card/60 shadow-sm space-y-4">
+                    {isRetest && (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full border border-amber-500/20 bg-amber-500/10 text-[9px] font-bold text-amber-500 uppercase tracking-wide">
+                        Revisiting Section {q.origin_section_index! + 1}
+                      </span>
+                    )}
+
+                    {/* Question Stem */}
+                    <div className="flex gap-2.5">
+                      <span className="text-sm font-bold text-primary shrink-0">Q{qIdx + 1}.</span>
+                      <h4 className="text-sm font-semibold text-foreground leading-relaxed">{q.question_text}</h4>
+                    </div>
+
+                    {/* Options Stack (Quiz Page Styling: A. B. C. D.) */}
+                    <div className="space-y-2.5 mt-3">
+                      {Object.entries(q.options || {}).map(([key, optText], optIdx) => {
+                        const isOptionSelected = selected === key;
+                        const isOptionCorrect = q.correct_answer === key;
+                        const letterLabel = String.fromCharCode(65 + optIdx); // A, B, C, D
+                        
+                        let optBtnClass = "w-full text-left flex items-center px-4 py-3 rounded-lg border text-xs font-medium transition-all min-h-[3rem] ";
+
+                        if (grading) {
+                          if (isOptionCorrect) {
+                            optBtnClass += "border-emerald-500 bg-emerald-500/15 text-foreground font-semibold";
+                          } else if (isOptionSelected) {
+                            optBtnClass += "border-destructive bg-destructive/15 text-foreground";
+                          } else {
+                            optBtnClass += "border-border/50 bg-muted/10 text-muted-foreground/50 cursor-default";
+                          }
+                        } else {
+                          if (isOptionSelected) {
+                            optBtnClass += "border-primary bg-primary/10 text-foreground shadow-sm cursor-pointer";
+                          } else {
+                            optBtnClass += "border-border bg-card text-foreground hover:border-primary/40 hover:bg-muted/30 cursor-pointer";
+                          }
+                        }
+
+                        return (
+                          <button
+                            key={key}
+                            disabled={grading !== undefined || isSubmitting}
+                            onClick={() => handleAnswerSelect(qIdx, key)}
+                            className={optBtnClass}
+                          >
+                            <span className="mr-3 font-bold text-primary shrink-0">{letterLabel}.</span>
+                            <span className="leading-snug">{optText}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* 💡 HINT Toggle */}
+                    {!grading && (
+                      <div className="pt-1">
+                        <button
+                          onClick={() => setActiveHints(prev => ({ ...prev, [qIdx]: !prev[qIdx] }))}
+                          className="inline-flex items-center gap-1.5 text-xs text-amber-500 hover:text-amber-400 font-medium transition-colors"
+                        >
+                          <Lightbulb className="w-3.5 h-3.5" />
+                          {isHintOpen ? 'Hide Hint' : 'Need a hint?'}
+                        </button>
+                        {isHintOpen && (
+                          <div className="mt-2.5 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300/90 leading-relaxed animate-in fade-in duration-200">
+                            💡 <strong>Hint:</strong> Focus on core concepts and key terms presented in this section explanation.
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Feedback explanation if answer evaluated */}
+                    {grading && !grading.correct && (
+                      <div className="mt-4 p-3.5 bg-destructive/10 border-l-2 border-destructive rounded-lg text-xs leading-relaxed text-foreground space-y-2">
+                        <p className="font-bold flex items-center gap-1 text-destructive text-xs">
+                          <AlertTriangle className="w-4 h-4" /> Incorrect
+                        </p>
+                        <p><span className="font-semibold text-foreground">Explanation:</span> {grading.explanation}</p>
+                        {grading.followup_feedback && (
+                          <p><span className="font-semibold text-foreground">Diagnostic Follow-up:</span> {grading.followup_feedback}</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-5 border-t border-border bg-card/90 shrink-0">
+              {scoreMessage ? (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between p-3.5 bg-muted/60 rounded-xl border border-border/80">
+                    <div className="flex items-center gap-3">
+                      <div className={`p-2 rounded-lg ${scoreMessage.passed ? 'bg-emerald-500/10 text-emerald-500' : 'bg-amber-500/10 text-amber-500'}`}>
+                        <Award className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-foreground">
+                          {scoreMessage.passed ? 'Section Mastered!' : 'Needs Review'}
+                        </h4>
+                        <p className="text-[10px] text-muted-foreground">Score: {scoreMessage.score}%</p>
+                      </div>
+                    </div>
+                    <span className={`text-xs font-bold ${scoreMessage.passed ? 'text-emerald-500' : 'text-amber-500'}`}>
+                      {scoreMessage.passed ? 'Passed' : 'Study Again'}
+                    </span>
+                  </div>
+
+                  <div className="flex gap-3">
+                    <button
+                      disabled={isCompleting}
+                      onClick={() => {
+                        setShowQuizModal(false);
+                        handleCompleteSection();
+                      }}
+                      className="flex-1 py-3 text-xs font-semibold text-foreground bg-background hover:bg-muted border border-border rounded-xl transition-all"
+                    >
+                      Section List
+                    </button>
+                    <button
+                      disabled={isCompleting}
+                      onClick={() => {
+                        setShowQuizModal(false);
+                        handleNextSection();
+                      }}
+                      className="flex-1 py-3 text-xs font-bold text-primary-foreground bg-primary hover:opacity-90 rounded-xl shadow-md shadow-primary/20 transition-all flex items-center justify-center gap-1.5"
+                    >
+                      {isCompleting ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <>
+                          Continue to Next Section
+                          <ArrowRight className="w-4 h-4" />
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  disabled={!allAnswered || isSubmitting}
+                  onClick={handleSubmitSectionAnswers}
+                  className={`w-full py-3.5 text-xs font-bold text-center rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 ${
+                    allAnswered && !isSubmitting
+                      ? 'bg-primary text-primary-foreground hover:opacity-90 shadow-md shadow-primary/20'
+                      : 'bg-muted text-muted-foreground cursor-not-allowed border border-border/80'
+                  }`}
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Evaluating answers...
+                    </>
+                  ) : (
+                    'Submit Answers'
+                  )}
+                </button>
+              )}
             </div>
           </div>
-        ) : (
-          <button
-            disabled={!allAnswered || isSubmitting}
-            onClick={handleSubmitSectionAnswers}
-            className={`w-full py-2.5 text-xs font-semibold text-center rounded-lg shadow-sm transition-all flex items-center justify-center gap-2 ${
-              allAnswered && !isSubmitting
-                ? 'bg-primary text-white hover:bg-primary-hover'
-                : 'bg-muted text-muted-foreground cursor-not-allowed border border-border/80'
-            }`}
-          >
-            {isSubmitting ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                Evaluating answers...
-              </>
-            ) : (
-              'Submit Answers'
-            )}
-          </button>
-        )}
-      </div>
-    </div>
+        </div>
+      )}
+    </>
   );
 }
