@@ -72,71 +72,7 @@ interface LearnModeViewProps {
   onSectionsLoaded?: (sections: SectionProgressItem[]) => void; // [LEARN MODE UI]
 }
 
-// ── MasteredAccordion: collapsed zone shown at the top of the list ──────────
-function MasteredAccordion({
-  sections,
-  statusMeta,
-  onOpen,
-}: {
-  sections: SectionProgressItem[];
-  statusMeta: Record<string, { accent: string; glow: string; pctColor: string; pctBg: string; label: string }>;
-  onOpen: (index: number) => void;
-}) {
-  const [open, setOpen] = React.useState(false);
-  const meta = statusMeta.mastered;
 
-  return (
-    <div className="mb-4">
-      {/* Toggle row */}
-      <button
-        onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-[#16a34a]/8 hover:bg-[#16a34a]/12 transition-colors mb-1"
-      >
-        <div className="flex items-center gap-2">
-          <Check className="w-3 h-3 text-[#16a34a]" />
-          <span className="text-[10px] font-bold text-[#16a34a] uppercase tracking-widest">
-            {sections.length} section{sections.length !== 1 ? 's' : ''} mastered
-          </span>
-        </div>
-        <ChevronDown
-          className={`w-3.5 h-3.5 text-[#16a34a]/60 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
-        />
-      </button>
-
-      {/* Expandable list */}
-      <div
-        className={`overflow-hidden transition-all duration-250 ease-out space-y-1.5 ${
-          open ? 'max-h-[600px] opacity-100 pt-1' : 'max-h-0 opacity-0'
-        }`}
-      >
-        {sections.map((sec, i) => {
-          const pct = sec.last_score !== null ? `${sec.last_score}%` : '—';
-          return (
-            <div key={sec.section_index} className="lm-row-enter" style={{ animationDelay: `${i * 35}ms` }}>
-              <div
-                className={`w-full text-left bg-card border border-border/40 border-l-4 ${meta.accent} rounded-lg py-2.5 px-4 flex items-center justify-between gap-3 cursor-pointer hover:bg-muted/20 transition-colors`}
-                onClick={() => onOpen(sec.section_index)}
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <span className="text-[10px] font-bold text-muted-foreground/60 shrink-0">{sec.section_index + 1}</span>
-                  <h4 className="text-[11px] font-semibold text-foreground/70 truncate">{sec.title}</h4>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${meta.pctBg} ${meta.pctColor}`}>{pct}</span>
-                  <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Divider below mastered zone */}
-      {open && <div className="border-t border-border/30 mt-3 mb-3" />}
-      {!open && <div className="border-t border-border/20 mt-2 mb-3" />}
-    </div>
-  );
-}
 
 export default function LearnModeView({ 
   documentId, 
@@ -573,169 +509,70 @@ export default function LearnModeView({
   }
 
   if (view === 'list') {
-    // ── Partition sections into three zones ──────────────────────────────
-    const masteredSections  = sections.filter(s => s.status === 'mastered');
-    const activeSections    = sections.filter(s => s.status === 'in_progress' || s.status === 'needs_review');
-    const upcomingSections  = sections.filter(s => s.status === 'not_started');
-
-    // ── Per-status visual config ──────────────────────────────────────────
-    const statusMeta: Record<string, {
-      accent: string;         // left border colour (Tailwind border-* class)
-      glow: string;           // subtle box-shadow for "Now" rows
-      pctColor: string;       // percentage badge text colour
-      pctBg: string;          // percentage badge bg
-      label: string;
-    }> = {
-      mastered:    { accent: 'border-l-[#16a34a]', glow: '',                              pctColor: 'text-[#16a34a]', pctBg: 'bg-[#16a34a]/10', label: 'Mastered'     },
-      in_progress: { accent: 'border-l-blue-500',  glow: 'shadow-[0_0_0_1px_rgba(59,130,246,0.15)]', pctColor: 'text-blue-400',      pctBg: 'bg-blue-500/10',  label: 'In Progress'  },
-      needs_review:{ accent: 'border-l-amber-400', glow: 'shadow-[0_0_0_1px_rgba(251,191,36,0.15)]',  pctColor: 'text-amber-400',     pctBg: 'bg-amber-400/10', label: 'Needs Review' },
-      not_started: { accent: 'border-l-border',    glow: '',                              pctColor: 'text-muted-foreground', pctBg: 'bg-muted/60', label: 'Not Started'  },
-    };
-
-    // ── A single reusable row ─────────────────────────────────────────────
-    const SectionRow = ({
-      sec,
-      isActive,
-      animIndex,
-    }: {
-      sec: SectionProgressItem;
-      isActive: boolean;
-      animIndex: number;
-    }) => {
-      const [expanded, setExpanded] = React.useState(false);
-      const meta = statusMeta[sec.status] ?? statusMeta.not_started;
-      const pct  = sec.last_score !== null ? `${sec.last_score}%` : '—';
-
-      return (
-        <div
-          className="lm-row-enter"
-          style={{ animationDelay: `${animIndex * 45}ms` }}
-        >
-          {/* Main clickable row */}
-          <div
-            className={[
-              'w-full text-left bg-card border-l-4 rounded-lg transition-all cursor-pointer',
-              'border border-border/40',
-              meta.accent,
-              isActive ? meta.glow : '',
-              isActive ? 'py-3.5 px-4' : 'py-2.5 px-4',
-              expanded ? 'rounded-b-none border-b-0' : '',
-            ].join(' ')}
-            onClick={() => setExpanded(v => !v)}
-          >
-            <div className="flex items-center justify-between gap-3">
-              {/* Left: number + title */}
-              <div className="flex items-center gap-3 min-w-0">
-                <span
-                  className={[
-                    'text-[10px] font-bold shrink-0',
-                    isActive ? 'text-foreground/60' : 'text-muted-foreground/60',
-                  ].join(' ')}
-                >
-                  {sec.section_index + 1}
-                </span>
-                <div className="min-w-0">
-                  {isActive && (
-                    <p className="text-[9px] font-bold uppercase tracking-wider mb-0.5"
-                       style={{ color: meta.pctColor.replace('text-', '') }}>
-                      {meta.label}
-                    </p>
-                  )}
-                  <h4 className={[
-                    'font-semibold truncate',
-                    isActive ? 'text-xs text-foreground' : 'text-[11px] text-foreground/70',
-                  ].join(' ')}>
-                    {sec.title}
-                  </h4>
-                </div>
-              </div>
-
-              {/* Right: pct badge + chevron */}
-              <div className="flex items-center gap-2 shrink-0">
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${meta.pctBg} ${meta.pctColor}`}>
-                  {pct}
-                </span>
-                <ChevronDown
-                  className={`w-3.5 h-3.5 text-muted-foreground/50 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Expanded detail panel */}
-          <div
-            className={[
-              'overflow-hidden transition-all duration-200 ease-out',
-              'bg-card border border-border/40 border-l-4 border-t-0 rounded-b-lg',
-              meta.accent,
-              expanded ? 'max-h-24 opacity-100' : 'max-h-0 opacity-0',
-            ].join(' ')}
-          >
-            <div className="px-4 pb-3 pt-2 flex items-center justify-between gap-3">
-              <p className="text-[10px] text-muted-foreground">
-                {sec.page_start
-                  ? `Pages ${sec.page_start}–${sec.page_end}`
-                  : 'Pages not yet available'}
-              </p>
-              <button
-                onClick={(e) => { e.stopPropagation(); handleOpenSection(sec.section_index); }}
-                className="flex items-center gap-1.5 text-[10px] font-semibold text-primary hover:text-primary/80 transition-colors shrink-0"
-              >
-                Open Section <ArrowRight className="w-3 h-3" />
-              </button>
-            </div>
-          </div>
-        </div>
-      );
-    };
+    const masteredCount = sections.filter(s => s.status === 'mastered').length;
+    const totalCount = sections.length;
+    const progressPct = totalCount > 0 ? Math.round((masteredCount / totalCount) * 100) : 0;
 
     return (
       <div className="flex flex-col h-full bg-background overflow-y-auto px-4 py-5">
-        {/* ── Header ─────────────────────────────────────────────────────── */}
-        <div className="flex items-center justify-between mb-5">
-          <div className="flex items-center gap-2">
-            <BookOpen className="w-4 h-4 text-primary" />
-            <h2 className="text-sm font-bold text-foreground">Study Sections</h2>
+        {/* ── Top Progress Stat Bar (No Header Title/X) ──────────────────── */}
+        {totalCount > 0 && (
+          <div className="mb-5 space-y-2">
+            <div className="flex items-center justify-between text-xs font-semibold text-muted-foreground px-1">
+              <span>{masteredCount} of {totalCount} sections mastered</span>
+              <span className="text-primary font-bold">{progressPct}%</span>
+            </div>
+            <div className="w-full h-1.5 bg-muted/60 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-primary transition-all duration-500 rounded-full"
+                style={{ width: `${progressPct}%` }}
+              />
+            </div>
           </div>
-          {onClose && (
-            <button onClick={onClose} className="p-1 hover:bg-muted rounded-lg text-muted-foreground">
-              <X className="w-4 h-4" />
-            </button>
-          )}
+        )}
+
+        {/* ── Flat Rows Container (Inspired by target image) ─────────────── */}
+        <div className="divide-y divide-border/40 border-t border-b border-border/40">
+          {sections.map((sec, i) => {
+            const pct = sec.last_score !== null ? `${sec.last_score}%` : '0%';
+            const isMastered = sec.status === 'mastered';
+            const isNeedsReview = sec.status === 'needs_review';
+            const isInProgress = sec.status === 'in_progress';
+
+            const scoreBadgeStyle = isMastered
+              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500'
+              : isNeedsReview
+              ? 'border-amber-500/40 bg-amber-500/10 text-amber-500'
+              : isInProgress
+              ? 'border-blue-500/30 bg-blue-500/10 text-blue-400'
+              : 'border-border/60 bg-muted/30 text-muted-foreground';
+
+            return (
+              <div key={sec.section_index} className="lm-row-enter" style={{ animationDelay: `${i * 30}ms` }}>
+                <div
+                  onClick={() => handleOpenSection(sec.section_index)}
+                  className="w-full text-left py-3.5 px-3 flex items-center justify-between gap-3 hover:bg-muted/20 cursor-pointer transition-colors group"
+                >
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <span className="text-xs font-semibold text-muted-foreground/60 w-5 shrink-0 text-center">
+                      {sec.section_index + 1}
+                    </span>
+                    <h4 className="text-xs font-semibold text-foreground truncate group-hover:text-primary transition-colors">
+                      {sec.title}
+                    </h4>
+                  </div>
+
+                  <div className="flex items-center gap-2.5 shrink-0">
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${scoreBadgeStyle}`}>
+                      {pct}
+                    </span>
+                    <ChevronDown className="w-3.5 h-3.5 text-muted-foreground/50 group-hover:text-foreground transition-colors" />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
-
-        {/* ── Zone 1: Mastered (collapsed accordion) ─────────────────────── */}
-        {masteredSections.length > 0 && <MasteredAccordion sections={masteredSections} statusMeta={statusMeta} onOpen={handleOpenSection} />}
-
-        {/* ── Zone 2: Now — In Progress / Needs Review ───────────────────── */}
-        {activeSections.length > 0 && (
-          <div className="mb-4">
-            <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground/50 mb-2 px-1">
-              Continue
-            </p>
-            <div className="space-y-2">
-              {activeSections.map((sec, i) => (
-                <SectionRow key={sec.section_index} sec={sec} isActive={true} animIndex={masteredSections.length > 0 ? i + 1 : i} />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* ── Zone 3: Upcoming — Not Started ─────────────────────────────── */}
-        {upcomingSections.length > 0 && (
-          <div>
-            {activeSections.length > 0 && (
-              <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground/50 mb-2 px-1 mt-1">
-                Upcoming
-              </p>
-            )}
-            <div className="space-y-1.5">
-              {upcomingSections.map((sec, i) => (
-                <SectionRow key={sec.section_index} sec={sec} isActive={false} animIndex={activeSections.length + i} />
-              ))}
-            </div>
-          </div>
-        )}
 
         {/* ── Empty state ─────────────────────────────────────────────────── */}
         {sections.length === 0 && (
@@ -747,11 +584,11 @@ export default function LearnModeView({
 
         <style>{`
           @keyframes lm-row-in {
-            from { opacity: 0; transform: translateY(8px); }
+            from { opacity: 0; transform: translateY(6px); }
             to   { opacity: 1; transform: translateY(0);   }
           }
           .lm-row-enter {
-            animation: lm-row-in 0.28s ease-out both;
+            animation: lm-row-in 0.2s ease-out both;
           }
         `}</style>
       </div>
