@@ -13,12 +13,22 @@ load_dotenv(dotenv_path=dotenv_path)
 SUPABASE_URL = os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or os.environ.get("SUPABASE_URL")
 ANON_KEY     = os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY")
 SERVICE_KEY  = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-API_KEY      = os.environ.get("API_KEYS").split(",")[0].strip()
+API_KEYS_RAW = os.environ.get("API_KEYS")
+
+if not API_KEYS_RAW or not SUPABASE_URL or not SERVICE_KEY:
+    if "pytest" in sys.modules or any("pytest" in arg for arg in sys.argv):
+        import pytest
+        pytest.skip("Skipping live database E2E tests: missing credentials", allow_module_level=True)
+    else:
+        print("[SKIP] Skipping live database E2E tests: missing credentials in environment.")
+        sys.exit(0)
+
+API_KEY      = API_KEYS_RAW.split(",")[0].strip()
 BACKEND      = "http://localhost:8000"
 DOC_ID       = "b7bc27cb-4489-4033-8ed6-22c179d596f7"
 
-STUDENT_EMAIL    = "carerouteng@gmail.com"
-STUDENT_PASSWORD = "Ojonugwa"
+STUDENT_EMAIL    = "[EMAIL_ADDRESS]"
+STUDENT_PASSWORD = "[PASSWORD]"
 
 print("======================================================================")
 print("[AUTH] Signing in via Supabase password auth...")
