@@ -4,6 +4,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '@/lib/api';
+import { supabase } from '@/lib/supabase'; // [LEARN MODE UI]
+import Logo from '@/components/Logo'; // [LEARN MODE UI]
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -101,9 +103,35 @@ export default function LearnModeView({
   // Page tracking to prevent redundant auto-navigation
   const lastNavigatedPageRef = useRef<number | null>(null);
 
-  // Load initial progress and verify start status
+  const [studentFirstName, setStudentFirstName] = useState<string>('there'); // [LEARN MODE UI]
+
+  // Load initial progress, verify start status and fetch student name
   useEffect(() => {
     fetchSectionsList();
+
+    async function loadStudentName() { // [LEARN MODE UI]
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          const fullName = session.user.user_metadata?.full_name || '';
+          let name = fullName.trim().split(/\s+/)[0] || '';
+          const res = await api.get('/me/bootstrap');
+          if (res.ok) {
+            const data = await res.json();
+            const fetchedName = data?.profile?.first_name || data?.profile?.full_name?.trim().split(/\s+/)[0];
+            if (fetchedName) {
+              name = fetchedName;
+            }
+          }
+          if (name) {
+            setStudentFirstName(name);
+          }
+        }
+      } catch (err) {
+        console.error('[LEARN MODE UI] Error loading student name:', err);
+      }
+    }
+    loadStudentName();
   }, [documentId]);
 
   const fetchSectionsList = async () => {
@@ -324,28 +352,24 @@ export default function LearnModeView({
   if (view === 'start') {
     const confidenceOptions: Array<{
       key: string;
-      emoji: string;
       label: string;
       sub: string;
       preview: string;
     }> = [
       {
         key: 'new',
-        emoji: '🌱',
         label: "I'm reading this for the first time",
         sub: 'Fresh start — no prior exposure.',
         preview: "We'll build your foundation from scratch, section by section.",
       },
       {
         key: 'familiar',
-        emoji: '📖',
         label: "I've read it but it's not sticking",
         sub: 'Seen it before, but the concepts slip away.',
         preview: "We'll reinforce the gaps and deepen your recall.",
       },
       {
         key: 'confident',
-        emoji: '🎯',
         label: 'I need to test myself before an exam',
         sub: 'Know the basics — time to prove it.',
         preview: "We'll put your retrieval strength to the test immediately.",
@@ -368,17 +392,12 @@ export default function LearnModeView({
             from { opacity: 1; max-height: 200px; transform: scale(1); margin-bottom: 12px; }
             to   { opacity: 0; max-height: 0px; transform: scale(0.96); margin-bottom: 0; padding-top: 0; padding-bottom: 0; }
           }
-          @keyframes lm-glow-pulse {
-            0%, 100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); }
-            50%       { box-shadow: 0 0 0 4px rgba(16,185,129,0.25); }
-          }
           .lm-option-enter {
             animation: lm-fade-up 0.45s cubic-bezier(0.22,1,0.36,1) both;
           }
           .lm-option-selected {
             border-color: rgb(16,185,129) !important;
             background: rgba(16,185,129,0.06);
-            animation: lm-glow-pulse 1.8s ease-in-out infinite;
           }
           .lm-option-dismissed {
             animation: lm-shrink-out 0.35s cubic-bezier(0.4,0,1,1) forwards;
@@ -390,107 +409,95 @@ export default function LearnModeView({
           }
         `}</style>
 
-        <div className="flex flex-col h-full bg-background overflow-y-auto px-6 py-8">
-          {/* Header — fades in */}
-          <div
-            className="mb-8 lm-option-enter"
-            style={{ animationDelay: '0ms' }}
-          >
-            <div className="flex items-center gap-3 mb-5">
-              <div className="p-2.5 bg-primary/10 rounded-xl text-primary">
-                <BookOpen className="w-6 h-6" />
-              </div>
-              <div>
-                <h2 className="text-base font-bold text-foreground">Learn Mode</h2>
-                <p className="text-xs text-muted-foreground">Let's personalise your study path</p>
-              </div>
-            </div>
-
-            <p className="text-sm font-semibold text-foreground leading-snug">
-              Before we start —{' '}
-              <span className="text-muted-foreground font-normal">
-                what brings you here today?
-              </span>
-            </p>
+        <div className="flex flex-col h-full bg-background overflow-hidden px-6 py-8">
+          {/* Top Bar with Logo and Greeting */}
+          <div className="flex items-center gap-2 mb-4 shrink-0 lm-option-enter" style={{ animationDelay: '0ms' }}>
+            <Logo className="h-6 w-6 shrink-0" />
+            <span className="text-sm font-bold text-foreground">Hi, {studentFirstName}</span>
           </div>
 
-          {/* Option cards */}
-          <div className="flex flex-col gap-3 flex-1">
-            {confidenceOptions.map((opt, i) => {
-              const isSelected = selectedConfidence === opt.key;
-              const isDismissed =
-                selectedConfidence !== null && selectedConfidence !== opt.key;
-              return (
-                <button
-                  key={opt.key}
-                  onClick={() => setSelectedConfidence(opt.key)}
-                  className={[
-                    'lm-option-enter w-full text-left p-4 rounded-2xl border transition-colors duration-200',
-                    'border-border bg-card focus:outline-none',
-                    isSelected ? 'lm-option-selected' : 'hover:border-primary/40 hover:bg-muted/30',
-                    isDismissed ? 'lm-option-dismissed' : '',
-                  ].join(' ')}
-                  style={{ animationDelay: `${80 + i * 90}ms` }}
-                >
-                  <div className="flex items-start gap-3">
-                    <span className="text-xl mt-0.5 shrink-0">{opt.emoji}</span>
-                    <div className="min-w-0">
-                      <p className="text-[13px] font-semibold text-foreground leading-snug">
-                        {opt.label}
-                      </p>
-                      <p className="text-[11px] text-muted-foreground mt-0.5">{opt.sub}</p>
-                      {isSelected && (
-                        <p
-                          className="text-[11px] text-emerald-500 font-medium mt-2 lm-option-enter"
-                          style={{ animationDelay: '0ms' }}
-                        >
-                          ✦ {opt.preview}
-                        </p>
-                      )}
-                    </div>
-                    {isSelected && (
-                      <span className="ml-auto shrink-0 text-emerald-500">
-                        <Check className="w-4 h-4" />
-                      </span>
-                    )}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+          {/* Centered Content Area */}
+          <div className="flex-1 flex flex-col justify-center min-h-0 overflow-y-auto py-4">
+            <div className="max-w-md w-full mx-auto space-y-6">
+              {/* Question text */}
+              <p className="text-sm font-bold text-foreground leading-snug text-center lm-option-enter" style={{ animationDelay: '50ms' }}>
+                Before we start —{' '}
+                <span className="text-muted-foreground font-normal">
+                  what brings you here today?
+                </span>
+              </p>
 
-          {/* CTA — only appears after selection */}
-          {selectedConfidence && (
-            <div className="mt-6 lm-cta-enter space-y-3">
-              <button
-                onClick={() => {
-                  if (selectedConfidence) handleStartLearn(selectedConfidence);
-                }}
-                className="w-full py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white text-sm font-bold transition-all shadow-md shadow-emerald-500/30"
-              >
-                Start Learning →
-              </button>
-              {onClose && (
-                <button
-                  onClick={onClose}
-                  className="w-full py-2.5 text-xs text-muted-foreground border border-border rounded-xl hover:bg-muted/30 transition-all"
-                >
-                  Close Learn Mode
-                </button>
+              {/* Option cards */}
+              <div className="flex flex-col gap-3">
+                {confidenceOptions.map((opt, i) => {
+                  const isSelected = selectedConfidence === opt.key;
+                  const isDismissed =
+                    selectedConfidence !== null && selectedConfidence !== opt.key;
+                  return (
+                    <button
+                      key={opt.key}
+                      onClick={() => setSelectedConfidence(opt.key)}
+                      className={[
+                        'lm-option-enter w-full text-left p-4 rounded-2xl border transition-colors duration-200',
+                        'border-border bg-card focus:outline-none',
+                        isSelected ? 'lm-option-selected' : 'hover:border-primary/40 hover:bg-muted/30',
+                        isDismissed ? 'lm-option-dismissed' : '',
+                      ].join(' ')}
+                      style={{ animationDelay: `${100 + i * 90}ms` }}
+                    >
+                      <div className="flex items-start gap-3.5">
+                        {/* Radio circle */}
+                        <div className="mt-1 shrink-0 flex items-center justify-center">
+                          <div className={`w-4 h-4 rounded-full border flex items-center justify-center transition-all ${
+                            isSelected ? 'border-emerald-500 bg-emerald-500/10' : 'border-border bg-card'
+                          }`}>
+                            {isSelected && (
+                              <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[13px] font-semibold text-foreground leading-snug">
+                            {opt.label}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">{opt.sub}</p>
+                          {isSelected && (
+                            <p
+                              className="text-[11px] text-emerald-500 font-medium mt-2 lm-option-enter"
+                              style={{ animationDelay: '0ms' }}
+                            >
+                              ✦ {opt.preview}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* CTA + Back Button — only appears after selection */}
+              {selectedConfidence && (
+                <div className="mt-6 lm-cta-enter flex items-center gap-3">
+                  <button
+                    onClick={() => setSelectedConfidence(null)}
+                    className="flex-1 py-3.5 rounded-2xl border border-border bg-card hover:bg-muted/40 text-foreground text-sm font-semibold transition-all"
+                  >
+                    Back
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (selectedConfidence) handleStartLearn(selectedConfidence);
+                    }}
+                    className="flex-[2] py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white text-sm font-bold transition-all shadow-md shadow-emerald-500/30"
+                  >
+                    Start Learning →
+                  </button>
+                </div>
               )}
             </div>
-          )}
-
-          {/* Fallback close when nothing selected yet */}
-          {!selectedConfidence && onClose && (
-            <button
-              onClick={onClose}
-              className="mt-6 w-full py-2.5 text-xs text-muted-foreground border border-border rounded-xl hover:bg-muted/30 transition-all lm-option-enter"
-              style={{ animationDelay: '350ms' }}
-            >
-              Close Learn Mode
-            </button>
-          )}
+          </div>
         </div>
       </>
     );
