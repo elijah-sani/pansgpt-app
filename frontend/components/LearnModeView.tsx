@@ -396,18 +396,18 @@ export default function LearnModeView({
             animation: lm-fade-up 0.45s cubic-bezier(0.22,1,0.36,1) both;
           }
           .lm-option-selected {
-            border-color: rgb(16,185,129) !important;
-            background: rgba(16,185,129,0.06);
+            border-color: var(--primary, #16a34a) !important;
+            background: rgba(22, 163, 74, 0.06);
           }
           .lm-option-dismissed {
             animation: lm-shrink-out 0.4s cubic-bezier(0.4,0,1,1) forwards;
-            animation-delay: 1.5s; /* Delay disappearance by 1.5s */
+            animation-delay: 0.5s; /* Snappy delay: 0.5s */
             overflow: hidden;
             pointer-events: none;
           }
           .lm-cta-enter {
             animation: lm-slide-up-cta 0.4s cubic-bezier(0.22,1,0.36,1) both;
-            animation-delay: 2.0s; /* CTA appears after cards fade out */
+            animation-delay: 0.8s; /* CTA appears right after cards fade out */
           }
         `}</style>
 
@@ -418,7 +418,7 @@ export default function LearnModeView({
               {/* Logo and Greeting + Question prompt group — positioned close together and left-aligned */}
               <div className="space-y-4 lm-option-enter" style={{ animationDelay: '0ms' }}>
                 <div className="flex items-center gap-2">
-                  <Logo className="h-6 w-6 shrink-0 text-[#2f9e1c]" style={{ color: '#2f9e1c' }} />
+                  <Logo className="h-6 w-6 shrink-0 text-[#2f9e1c] dark:text-[#2f9e1c]!" style={{ color: '#2f9e1c' }} />
                   <span className="text-sm font-bold text-foreground">Hi, {studentFirstName}</span>
                 </div>
                 <p className="text-sm font-bold text-foreground leading-snug text-left">
@@ -451,10 +451,10 @@ export default function LearnModeView({
                         {/* Radio circle — vertically centered */}
                         <div className="shrink-0 flex items-center justify-center">
                           <div className={`w-4 h-4 rounded-full border flex items-center justify-center transition-all ${
-                            isSelected ? 'border-emerald-500 bg-emerald-500/10' : 'border-border bg-card'
+                            isSelected ? 'border-primary bg-primary/10' : 'border-border bg-card'
                           }`}>
                             {isSelected && (
-                              <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                              <div className="w-2.5 h-2.5 rounded-full bg-primary" />
                             )}
                           </div>
                         </div>
@@ -466,7 +466,7 @@ export default function LearnModeView({
                           <p className="text-[11px] text-muted-foreground mt-0.5">{opt.sub}</p>
                           {isSelected && (
                             <p
-                              className="text-[11px] text-emerald-500 font-medium mt-2 lm-option-enter"
+                              className="text-[11px] text-primary font-medium mt-2 lm-option-enter"
                               style={{ animationDelay: '0ms' }}
                             >
                               ✦ {opt.preview}
@@ -492,7 +492,7 @@ export default function LearnModeView({
                     onClick={() => {
                       if (selectedConfidence) handleStartLearn(selectedConfidence);
                     }}
-                    className="flex-[2] py-3.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white text-sm font-bold transition-all shadow-md shadow-emerald-500/30"
+                    className="flex-[2] py-3.5 rounded-xl bg-primary hover:opacity-90 active:opacity-95 text-primary-foreground text-sm font-bold transition-all shadow-md shadow-primary/20"
                   >
                     Start Learning →
                   </button>
