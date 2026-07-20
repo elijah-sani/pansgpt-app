@@ -221,12 +221,49 @@ export default function LearnModeView({
     }
   };
 
-  const handleAnswerSelect = (qIdx: number, option: string) => {
-    if (isSubmitting || gradedResults[qIdx]) return;
-    setSelectedAnswers(prev => ({
-      ...prev,
-      [qIdx]: option
-    }));
+  const handleCheckSingleAnswer = async (qIdx: number) => {
+    const selected = selectedAnswers[qIdx];
+    if (!selected || isSubmitting || gradedResults[qIdx] || !sectionDetail) return;
+
+    setIsSubmitting(true);
+    setSubmittingIndex(qIdx);
+
+    try {
+      const res = await api.post(`/api/learn/documents/${documentId}/sections/${activeSectionIndex}/answer`, {
+        question_index: qIdx,
+        selected_option: selected
+      });
+
+      if (res.ok) {
+        const grading: AnswerResponse = await res.json();
+        const updatedGraded = { ...gradedResults, [qIdx]: grading };
+        setGradedResults(updatedGraded);
+
+        if (grading.immediate_retest_question) {
+          setExtraRetests(prev => [...prev, grading.immediate_retest_question!]);
+        }
+
+        const allQs = [...(sectionDetail.check_questions || []), ...extraRetests, ...(grading.immediate_retest_question ? [grading.immediate_retest_question] : [])];
+        const gradedCount = Object.keys(updatedGraded).length;
+
+        if (gradedCount >= allQs.length) {
+          let correctCount = 0;
+          allQs.forEach((_, idx) => {
+            if (updatedGraded[idx]?.correct) correctCount++;
+          });
+          const finalScore = Math.round((correctCount / allQs.length) * 100);
+          setScoreMessage({
+            score: finalScore,
+            passed: finalScore >= 70
+          });
+        }
+      }
+    } catch (err) {
+      console.error(`[LEARN MODE UI] Error grading single question ${qIdx}:`, err);
+    } finally {
+      setIsSubmitting(false);
+      setSubmittingIndex(null);
+    }
   };
 
   const handleSubmitSectionAnswers = async () => {
@@ -850,15 +887,33 @@ export default function LearnModeView({
                         </div>
                       )}
 
-                      {/* Feedback explanation if evaluated */}
-                      {grading && !grading.correct && (
-                        <div className="mt-4 p-4 bg-destructive/10 border-l-2 border-destructive rounded-xl text-xs leading-relaxed text-foreground space-y-2">
-                          <p className="font-bold flex items-center gap-1 text-destructive text-xs">
-                            <AlertTriangle className="w-4 h-4" /> Incorrect
-                          </p>
-                          <p><span className="font-semibold text-foreground">Explanation:</span> {grading.explanation}</p>
+                      {/* Feedback Badges & Detailed AI Explanation (Retains original sidebar behavior for BOTH Correct & Incorrect) */}
+                      {grading && (
+                        <div className={`mt-4 p-4 border-l-4 rounded-xl text-xs leading-relaxed space-y-2.5 animate-in fade-in duration-200 ${
+                          grading.correct 
+                            ? 'bg-emerald-500/10 border-emerald-500 text-foreground' 
+                            : 'bg-destructive/10 border-destructive text-foreground'
+                        }`}>
+                          <div className="flex items-center gap-1.5 font-bold">
+                            {grading.correct ? (
+                              <span className="text-emerald-500 flex items-center gap-1">
+                                <CheckCircle className="w-4 h-4" /> Correct!
+                              </span>
+                            ) : (
+                              <span className="text-destructive flex items-center gap-1">
+                                <AlertTriangle className="w-4 h-4" /> Incorrect
+                              </span>
+                            )}
+                          </div>
+                          
+                          {grading.explanation && (
+                            <p><span className="font-semibold text-foreground">Explanation:</span> {grading.explanation}</p>
+                          )}
+
                           {grading.followup_feedback && (
-                            <p><span className="font-semibold text-foreground">Diagnostic Follow-up:</span> {grading.followup_feedback}</p>
+                            <p className="pt-1 border-t border-border/40">
+                              <span className="font-semibold text-foreground">Diagnostic Follow-up:</span> {grading.followup_feedback}
+                            </p>
                           )}
                         </div>
                       )}
@@ -868,7 +923,7 @@ export default function LearnModeView({
               )}
             </div>
 
-            {/* Modal Footer Controls (Previous / Next / Submit Quiz) */}
+            {/* Modal Footer Controls */}
             <div className="p-5 border-t border-border bg-card/90 shrink-0">
               {scoreMessage ? (
                 <div className="flex gap-3">
@@ -910,33 +965,66 @@ export default function LearnModeView({
                     Previous
                   </button>
 
-                  {quizQuestionIndex < allQuestions.length - 1 ? (
-                    <button
-                      onClick={() => setQuizQuestionIndex(i => Math.min(allQuestions.length - 1, i + 1))}
-                      className="px-6 py-3 rounded-xl bg-primary hover:opacity-90 text-primary-foreground text-xs font-bold transition-all shadow-md shadow-primary/20 flex items-center gap-1.5"
-                    >
-                      {selectedAnswers[quizQuestionIndex] ? 'Next →' : 'Skip →'}
-                    </button>
-                  ) : (
-                    <button
-                      disabled={!allAnswered || isSubmitting}
-                      onClick={handleSubmitSectionAnswers}
-                      className={`px-7 py-3 rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-2 ${
-                        allAnswered && !isSubmitting
-                          ? 'bg-primary text-primary-foreground hover:opacity-90 shadow-primary/20'
-                          : 'bg-muted text-muted-foreground cursor-not-allowed border border-border/80'
-                      }`}
-                    >
-                      {isSubmitting ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          Evaluating Quiz...
-                        </>
-                      ) : (
-                        'Submit Quiz'
-                      )}
-                    </button>
-                  )}
+                  {/* Main Action Button for current question */}
+                  {(() => {
+                    const qIdx = quizQuestionIndex;
+                    const selected = selectedAnswers[qIdx];
+                    const grading = gradedResults[qIdx];
+
+                    if (!grading) {
+                      // Question not evaluated yet -> Show "Check Answer" button
+                      return (
+                        <button
+                          disabled={!selected || isSubmitting}
+                          onClick={() => handleCheckSingleAnswer(qIdx)}
+                          className={`px-7 py-3 rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-2 ${
+                            selected && !isSubmitting
+                              ? 'bg-primary text-primary-foreground hover:opacity-90 shadow-primary/20'
+                              : 'bg-muted text-muted-foreground cursor-not-allowed border border-border/80'
+                          }`}
+                        >
+                          {isSubmitting && submittingIndex === qIdx ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              Checking Answer...
+                            </>
+                          ) : (
+                            'Check Answer'
+                          )}
+                        </button>
+                      );
+                    }
+
+                    // Question IS graded
+                    if (qIdx < allQuestions.length - 1) {
+                      return (
+                        <button
+                          onClick={() => setQuizQuestionIndex(i => Math.min(allQuestions.length - 1, i + 1))}
+                          className="px-6 py-3 rounded-xl bg-primary hover:opacity-90 text-primary-foreground text-xs font-bold transition-all shadow-md shadow-primary/20 flex items-center gap-1.5"
+                        >
+                          Next Question →
+                        </button>
+                      );
+                    }
+
+                    // Last question and graded -> Show Finish Quiz
+                    return (
+                      <button
+                        onClick={handleSubmitSectionAnswers}
+                        disabled={isSubmitting}
+                        className="px-7 py-3 rounded-xl bg-primary hover:opacity-90 text-primary-foreground text-xs font-bold transition-all shadow-md shadow-primary/20 flex items-center gap-2"
+                      >
+                        {isSubmitting ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Finalizing Quiz...
+                          </>
+                        ) : (
+                          'View Quiz Summary'
+                        )}
+                      </button>
+                    );
+                  })()}
                 </div>
               )}
             </div>
