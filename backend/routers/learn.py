@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import re
+import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks  # [LEARN RETEST]
@@ -24,6 +25,13 @@ from dependencies import get_current_user, User
 from services import llm_engine
 
 logger = logging.getLogger("PansGPT")
+
+def _is_valid_uuid(val: str) -> bool:
+    try:
+        uuid.UUID(str(val))
+        return True
+    except ValueError:
+        return False
 
 # ─────────────────────────────────────────────────────────────
 # Module-level client references (injected at startup from api.py)
@@ -71,6 +79,9 @@ async def _assert_document_access(document_id: str, current_user: User) -> dict:
     Returns the pans_library row on success.
     Raises 404 if not found, 403 if the user cannot access it.
     """
+    if not _is_valid_uuid(document_id):
+        raise HTTPException(status_code=404, detail="Document not found")
+
     db = _db()
     if not db:
         raise HTTPException(status_code=503, detail="Database not available")
