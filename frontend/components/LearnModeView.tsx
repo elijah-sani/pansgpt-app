@@ -18,6 +18,7 @@ import {
   ChevronDown,
   BookOpen, 
   Check, 
+  CheckCircle,
   X, 
   ArrowRight,
   Sparkles,
@@ -219,6 +220,14 @@ export default function LearnModeView({
       console.error('[LEARN MODE UI] Error fetching section detail:', err);
       setView('list');
     }
+  };
+
+  const handleAnswerSelect = (qIdx: number, option: string) => {
+    if (isSubmitting || gradedResults[qIdx]) return;
+    setSelectedAnswers(prev => ({
+      ...prev,
+      [qIdx]: option
+    }));
   };
 
   const handleCheckSingleAnswer = async (qIdx: number) => {
