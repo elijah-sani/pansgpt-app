@@ -110,8 +110,16 @@ export default function LearnModeView({
   const [activeHints, setActiveHints] = useState<Record<number, boolean>>({});
   const [quizQuestionIndex, setQuizQuestionIndex] = useState<number>(0);
 
-  // Page tracking to prevent redundant auto-navigation
+  // Page tracking & detail scroll container ref
   const lastNavigatedPageRef = useRef<number | null>(null);
+  const detailScrollRef = useRef<HTMLDivElement | null>(null);
+
+  // Auto-scroll section detail view to top whenever active section changes
+  useEffect(() => {
+    if (view === 'detail' && detailScrollRef.current) {
+      detailScrollRef.current.scrollTop = 0;
+    }
+  }, [view, activeSectionIndex]);
 
   const [studentFirstName, setStudentFirstName] = useState<string>('there'); // [LEARN MODE UI]
 
@@ -207,6 +215,10 @@ export default function LearnModeView({
         const data: SectionDetailResponse = await res.json();
         setSectionDetail(data);
         setView('detail');
+
+        if (detailScrollRef.current) {
+          detailScrollRef.current.scrollTop = 0;
+        }
 
         // Auto-navigate document viewer to page_start on load
         if (data.page_start && lastNavigatedPageRef.current !== data.page_start) {
@@ -675,7 +687,7 @@ export default function LearnModeView({
         </div>
 
         {/* Main detail content area */}
-        <div className="flex-1 overflow-y-auto px-5 py-6 space-y-6">
+        <div ref={detailScrollRef} className="flex-1 overflow-y-auto px-5 py-6 space-y-6">
           <div className="space-y-1">
             <h2 className="text-base font-bold text-foreground leading-tight">{sectionDetail?.title}</h2>
             {sectionDetail?.page_start && (
@@ -706,53 +718,29 @@ export default function LearnModeView({
             </ReactMarkdown>
           </div>
 
-          {/* Active Recall Quiz CTA Container */}
-          <div className="p-4 rounded-xl border border-primary/20 bg-primary/5 space-y-3 shadow-sm">
-            <div className="flex items-center gap-2 text-primary font-bold text-xs">
-              <Sparkles className="w-4 h-4" />
-              <span>Closed-Book Active Recall</span>
-            </div>
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              Test your retrieval strength without peeking at the source text. Complete the section check quiz to unlock mastery.
-            </p>
-
+          {/* Next Section CTA Button Container (Replaces Callout Card) */}
+          <div className="pt-2">
             {scoreMessage ? (
-              <div className="space-y-3 pt-1">
-                <div className="flex items-center justify-between p-3 bg-card rounded-lg border border-border">
-                  <div className="flex items-center gap-2">
-                    <Award className={`w-4 h-4 ${scoreMessage.passed ? 'text-emerald-500' : 'text-amber-500'}`} />
-                    <span className="text-xs font-bold text-foreground">
-                      {scoreMessage.passed ? 'Section Mastered' : 'Needs Review'} ({scoreMessage.score}%)
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => setShowQuizModal(true)}
-                    className="text-[11px] font-semibold text-primary hover:underline"
-                  >
-                    View Quiz Results
-                  </button>
-                </div>
-                <button
-                  disabled={isCompleting}
-                  onClick={handleNextSection}
-                  className="w-full py-3 px-4 rounded-xl bg-primary hover:opacity-90 active:opacity-95 text-primary-foreground font-bold text-xs shadow-md shadow-primary/20 flex items-center justify-center gap-2 transition-all"
-                >
-                  {isCompleting ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <>
-                      Next Section
-                      <ArrowRight className="w-4 h-4" />
-                    </>
-                  )}
-                </button>
-              </div>
+              <button
+                disabled={isCompleting}
+                onClick={handleNextSection}
+                className="w-full py-3.5 px-4 rounded-xl bg-primary hover:opacity-90 active:opacity-95 text-primary-foreground font-bold text-xs shadow-md shadow-primary/20 flex items-center justify-center gap-2 transition-all"
+              >
+                {isCompleting ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    Next Section
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
+              </button>
             ) : (
               <button
                 onClick={() => setShowQuizModal(true)}
-                className="w-full py-3 px-4 rounded-xl bg-primary hover:opacity-90 active:opacity-95 text-primary-foreground font-bold text-xs shadow-md shadow-primary/20 flex items-center justify-center gap-2 transition-all"
+                className="w-full py-3.5 px-4 rounded-xl bg-primary hover:opacity-90 active:opacity-95 text-primary-foreground font-bold text-xs shadow-md shadow-primary/20 flex items-center justify-center gap-2 transition-all"
               >
-                Test My Knowledge →
+                Next Section →
               </button>
             )}
           </div>
@@ -764,23 +752,16 @@ export default function LearnModeView({
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
           <div className="w-full max-w-2xl max-h-[90vh] bg-card border border-border/80 rounded-2xl shadow-2xl flex flex-col overflow-hidden relative">
             
-            {/* Modal Header Bar */}
+            {/* Modal Header Bar (No X button - mandatory recall quiz) */}
             <div className="px-6 py-4 border-b border-border/60 flex items-center justify-between bg-card/60">
               <div>
                 <span className="text-[10px] font-bold text-primary uppercase tracking-wider">
-                  Section {activeSectionIndex! + 1} Quiz • Closed-Book Recall
+                  Before proceeding to the next section, answer the following questions
                 </span>
                 <h3 className="text-sm font-bold text-foreground truncate max-w-md">
                   {sectionDetail?.title}
                 </h3>
               </div>
-              <button
-                onClick={() => setShowQuizModal(false)}
-                className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                title="Pause Quiz"
-              >
-                <X className="w-4 h-4" />
-              </button>
             </div>
 
             {/* Modal Progress Indicator */}
