@@ -240,7 +240,7 @@ async def _generate_retest_question(question: dict, selected: str, correct_answe
         },  # [LEARN RETEST]
     ]  # [LEARN RETEST]
     try:  # [LEARN RETEST]
-        resp = await llm_engine.generate_small_completion_with_failover(  # [LEARN RETEST]
+        resp = await llm_engine.generate_learn_completion_with_failover(  # [LEARN RETEST]
             messages=retest_messages,  # [LEARN RETEST]
             temperature=0.3,  # [LEARN RETEST]
             max_tokens=512,  # [LEARN RETEST]
@@ -327,12 +327,12 @@ async def _generate_section_content(section: dict, chunks: list) -> tuple[str, l
 
     try:
         explain_resp, questions_resp = await asyncio.gather(
-            llm_engine.generate_small_completion_with_failover(
+            llm_engine.generate_learn_completion_with_failover(
                 messages=explain_messages,
                 temperature=0.3,
                 max_tokens=1024,
             ),
-            llm_engine.generate_small_completion_with_failover(
+            llm_engine.generate_learn_completion_with_failover(
                 messages=questions_messages,
                 temperature=0.15,
                 max_tokens=1024,

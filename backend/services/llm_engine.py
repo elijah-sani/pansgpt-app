@@ -16,14 +16,20 @@ TEXT_TERTIARY = "meta-llama/llama-4-scout-17b-16e-instruct"  # [GROQ TERTIARY FI
 # Compatibility alias for callers still referencing TEXT_FALLBACK.
 TEXT_FALLBACK = TEXT_SECONDARY
 
-SMALL_PRIMARY = "meta-llama/llama-3.3-70b-instruct:free"   # OpenRouter (Llama 3.3 70B Free)
-SMALL_SECONDARY = "llama-3.1-8b-instant"                  # Groq (Llama 3.1 8b)
-SMALL_TERTIARY = "qwen/qwen-2.5-72b-instruct:free"         # OpenRouter (Qwen 2.5 72B Free)
-TEXT_FAST = SMALL_SECONDARY                # Smaller and faster model for quick tasks (e.g. titles)
-FAST_TEXT_MODEL_ORDER = [TEXT_TERTIARY, SMALL_PRIMARY, SMALL_SECONDARY, TEXT_SECONDARY]
+# Small Tasks Stack (Chat Titles, Summaries, Quick Tasks)
+SMALL_PRIMARY = "llama-3.1-8b-instant"                                       # Groq (Llama 3.1 8B Instant)
+SMALL_SECONDARY = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"       # OpenRouter (Nemotron 30B Free)
+
+# Learn Mode Stack (Section Explanations, Check Questions, Diagnostic Retests)
+LEARN_PRIMARY = "llama-3.3-70b-versatile"                                    # Groq (Llama 3.3 70B Versatile)
+LEARN_SECONDARY = "meta-llama/llama-3.3-70b-instruct"                        # Groq (Llama 3.3 70B Instruct)
+LEARN_TERTIARY = "nvidia/nemotron-3-nano-30b-a3b:free"                       # OpenRouter (Nemotron 30B Free)
+
+TEXT_FAST = SMALL_PRIMARY                # Smaller and faster model for quick tasks (e.g. titles)
+FAST_TEXT_MODEL_ORDER = [TEXT_TERTIARY, LEARN_PRIMARY, SMALL_PRIMARY, SMALL_SECONDARY, TEXT_SECONDARY]
 THINK_TEXT_MODEL_ORDER = [TEXT_PRIMARY, TEXT_SECONDARY, SMALL_TERTIARY]
 FAST_TEXT_PRIMARY = FAST_TEXT_MODEL_ORDER[0]
-QUIZ_TEXT_MODEL_ORDER = [TEXT_TERTIARY, SMALL_PRIMARY, TEXT_SECONDARY, TEXT_PRIMARY]
+QUIZ_TEXT_MODEL_ORDER = [TEXT_TERTIARY, LEARN_PRIMARY, SMALL_PRIMARY, TEXT_SECONDARY, TEXT_PRIMARY]
 QUIZ_TEXT_PRIMARY = QUIZ_TEXT_MODEL_ORDER[0]
 
 VISION_PRIMARY = "meta-llama/llama-4-scout-17b-16e-instruct"
@@ -150,13 +156,13 @@ def _response_format_mode(response_format: Optional[dict]) -> str:
 
 
 def _client_for_text_model(model_name: str) -> Any:
-    if model_name == TEXT_TERTIARY:
-        return groq_text_client
+    if model_name in {TEXT_TERTIARY, SMALL_PRIMARY, LEARN_PRIMARY, LEARN_SECONDARY, "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "meta-llama/llama-3.3-70b-instruct"}:
+        return groq_text_client or groq_client
     if model_name in {TEXT_PRIMARY, TEXT_SECONDARY}:
         return google_client
-    if model_name == SMALL_SECONDARY:
-        return groq_client
-    if model_name in {SMALL_PRIMARY, SMALL_TERTIARY}:
+    if model_name in {SMALL_SECONDARY, LEARN_TERTIARY, "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "nvidia/nemotron-3-nano-30b-a3b:free"}:
+        return openrouter_client
+    if openrouter_client is not None:
         return openrouter_client
     return None
 
@@ -537,31 +543,18 @@ async def generate_small_completion_with_failover(
     stream: bool = False,
 ) -> Optional[Any]:
     """
-    Failover chain for small/fast tasks:
-    1. SMALL_SECONDARY (llama-3.1-8b-instant) using groq_client
-    2. SMALL_PRIMARY (meta-llama/llama-3.3-70b-instruct:free) using openrouter_client
-    3. SMALL_TERTIARY (qwen/qwen-2.5-72b-instruct:free) using openrouter_client
-    4. Fall back to the main generate_completion_with_failover chain if all small clients fail.
+    Failover chain for small/fast tasks (Chat Titles, Summaries):
+    1. SMALL_PRIMARY (llama-3.1-8b-instant) via Groq
+    2. SMALL_SECONDARY (nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free) via OpenRouter
+    3. Fall back to main generate_completion_with_failover if small providers fail.
     """
-    # 1. Try Groq (SMALL_SECONDARY)
-    if groq_client is not None:
-        try:
-            logger.info(f"[INFO] SMALL failover chain: attempting SMALL_SECONDARY ({SMALL_SECONDARY})")
-            return await groq_client.chat.completions.create(
-                model=SMALL_SECONDARY,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stream=stream,
-            )
-        except Exception as exc:
-            logger.warning(f"SMALL_SECONDARY failed ({SMALL_SECONDARY}), trying next: {exc}")
+    g_client = groq_text_client or groq_client
 
-    # 2. Try OpenRouter (SMALL_PRIMARY)
-    if openrouter_client is not None:
+    # 1. Try Groq Llama 3.1 8B (SMALL_PRIMARY)
+    if g_client is not None:
         try:
-            logger.info(f"[INFO] SMALL failover chain: attempting SMALL_PRIMARY ({SMALL_PRIMARY})")
-            return await openrouter_client.chat.completions.create(
+            logger.info(f"[INFO] SMALL failover chain: attempting Groq SMALL_PRIMARY ({SMALL_PRIMARY})")
+            return await g_client.chat.completions.create(
                 model=SMALL_PRIMARY,
                 messages=messages,
                 temperature=temperature,
@@ -571,22 +564,89 @@ async def generate_small_completion_with_failover(
         except Exception as exc:
             logger.warning(f"SMALL_PRIMARY failed ({SMALL_PRIMARY}), trying next: {exc}")
 
-    # 3. Try OpenRouter (SMALL_TERTIARY)
+    # 2. Try OpenRouter Nvidia Nemotron (SMALL_SECONDARY)
     if openrouter_client is not None:
         try:
-            logger.info(f"[INFO] SMALL failover chain: attempting SMALL_TERTIARY ({SMALL_TERTIARY})")
+            logger.info(f"[INFO] SMALL failover chain: attempting OpenRouter SMALL_SECONDARY ({SMALL_SECONDARY})")
             return await openrouter_client.chat.completions.create(
-                model=SMALL_TERTIARY,
+                model=SMALL_SECONDARY,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 stream=stream,
             )
         except Exception as exc:
-            logger.warning(f"SMALL_TERTIARY failed ({SMALL_TERTIARY}), falling back to main chain: {exc}")
+            logger.warning(f"SMALL_SECONDARY failed ({SMALL_SECONDARY}), trying next: {exc}")
+
+    # 3. Final fallback: Use main chain
+    logger.info("All small models failed or clients uninitialized, falling back to main failover chain.")
+    return await generate_completion_with_failover(
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        stream=stream,
+    )
+
+
+async def generate_learn_completion_with_failover(
+    messages: list[dict],
+    temperature: float,
+    max_tokens: int,
+    stream: bool = False,
+) -> Optional[Any]:
+    """
+    Failover chain for Learn Mode tasks (Section Explanations, Check Questions, Diagnostic Retests):
+    1. LEARN_PRIMARY (llama-3.3-70b-versatile) via Groq
+    2. LEARN_SECONDARY (meta-llama/llama-3.3-70b-instruct) via Groq
+    3. LEARN_TERTIARY (nvidia/nemotron-3-nano-30b-a3b:free) via OpenRouter
+    4. Fall back to main generate_completion_with_failover if all learn providers fail.
+    """
+    g_client = groq_text_client or groq_client
+
+    # 1. Try Groq Llama 3.3 70B Versatile (LEARN_PRIMARY)
+    if g_client is not None:
+        try:
+            logger.info(f"[INFO] LEARN failover chain: attempting Groq LEARN_PRIMARY ({LEARN_PRIMARY})")
+            return await g_client.chat.completions.create(
+                model=LEARN_PRIMARY,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=stream,
+            )
+        except Exception as exc:
+            logger.warning(f"LEARN_PRIMARY failed ({LEARN_PRIMARY}), trying next: {exc}")
+
+    # 2. Try Groq Llama 3.3 70B Instruct (LEARN_SECONDARY)
+    if g_client is not None:
+        try:
+            logger.info(f"[INFO] LEARN failover chain: attempting Groq LEARN_SECONDARY ({LEARN_SECONDARY})")
+            return await g_client.chat.completions.create(
+                model=LEARN_SECONDARY,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=stream,
+            )
+        except Exception as exc:
+            logger.warning(f"LEARN_SECONDARY failed ({LEARN_SECONDARY}), trying next: {exc}")
+
+    # 3. Try OpenRouter Nvidia Nemotron 30b (LEARN_TERTIARY)
+    if openrouter_client is not None:
+        try:
+            logger.info(f"[INFO] LEARN failover chain: attempting OpenRouter LEARN_TERTIARY ({LEARN_TERTIARY})")
+            return await openrouter_client.chat.completions.create(
+                model=LEARN_TERTIARY,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=stream,
+            )
+        except Exception as exc:
+            logger.warning(f"LEARN_TERTIARY failed ({LEARN_TERTIARY}), falling back to main chain: {exc}")
 
     # 4. Final fallback: Use main chain
-    logger.info("All small models failed or clients uninitialized, falling back to main failover chain.")
+    logger.info("All learn models failed or clients uninitialized, falling back to main failover chain.")
     return await generate_completion_with_failover(
         messages=messages,
         temperature=temperature,
