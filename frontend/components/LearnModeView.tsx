@@ -481,7 +481,7 @@ export default function LearnModeView({
           }
         `}</style>
 
-        <div className="flex flex-col h-full bg-background overflow-hidden px-6 py-8">
+        <div className="flex flex-col h-full bg-background overflow-hidden px-4 sm:px-6 py-6 sm:py-8">
           {/* Centered Content Area */}
           <div className="flex-1 flex flex-col justify-center min-h-0 overflow-y-auto py-4">
             <div className="max-w-md w-full mx-auto space-y-6">
@@ -510,7 +510,7 @@ export default function LearnModeView({
                       key={opt.key}
                       onClick={() => setSelectedConfidence(opt.key)}
                       className={[
-                        'lm-option-enter w-full text-left p-4 rounded-xl border transition-colors duration-200',
+                        'lm-option-enter w-full text-left p-3.5 sm:p-4 rounded-xl border transition-colors duration-200',
                         'border-border bg-card focus:outline-none',
                         isSelected ? 'lm-option-selected' : 'hover:border-primary/40 hover:bg-muted/30',
                         isDismissed ? 'lm-option-dismissed' : '',
@@ -530,13 +530,13 @@ export default function LearnModeView({
                         </div>
 
                         <div className="min-w-0 flex-1">
-                          <p className="text-[13px] font-semibold text-foreground leading-snug">
+                          <p className="text-[12px] sm:text-[13px] font-semibold text-foreground leading-snug">
                             {opt.label}
                           </p>
-                          <p className="text-[11px] text-muted-foreground mt-0.5">{opt.sub}</p>
+                          <p className="text-[10px] sm:text-[11px] text-muted-foreground mt-0.5">{opt.sub}</p>
                           {isSelected && (
                             <p
-                              className="text-[11px] text-primary font-medium mt-2 lm-option-enter"
+                              className="text-[10px] sm:text-[11px] text-primary font-medium mt-2 lm-option-enter"
                               style={{ animationDelay: '0ms' }}
                             >
                               ✦ {opt.preview}
@@ -554,7 +554,7 @@ export default function LearnModeView({
                 <div className="mt-6 lm-cta-enter flex items-center gap-3">
                   <button
                     onClick={() => setSelectedConfidence(null)}
-                    className="flex-1 py-3.5 rounded-xl border border-border bg-card hover:bg-muted/40 text-foreground text-sm font-semibold transition-all"
+                    className="flex-1 py-3 sm:py-3.5 rounded-xl border border-border bg-card hover:bg-muted/40 text-foreground text-xs sm:text-sm font-semibold transition-all"
                   >
                     Back
                   </button>
@@ -562,7 +562,7 @@ export default function LearnModeView({
                     onClick={() => {
                       if (selectedConfidence) handleStartLearn(selectedConfidence);
                     }}
-                    className="flex-[2] py-3.5 rounded-xl bg-primary hover:opacity-90 active:opacity-95 text-primary-foreground text-sm font-bold transition-all shadow-md shadow-primary/20"
+                    className="flex-[2] py-3 sm:py-3.5 rounded-xl bg-primary hover:opacity-90 active:opacity-95 text-primary-foreground text-xs sm:text-sm font-bold transition-all shadow-md shadow-primary/20"
                   >
                     Start Learning →
                   </button>
@@ -581,11 +581,11 @@ export default function LearnModeView({
     const progressPct = totalCount > 0 ? Math.round((masteredCount / totalCount) * 100) : 0;
 
     return (
-      <div className="flex flex-col h-full bg-background overflow-y-auto px-4 py-5">
+      <div className="flex flex-col h-full bg-background overflow-y-auto px-3.5 sm:px-4 py-4 sm:py-5 pb-24 sm:pb-8">
         {/* ── Top Progress Stat Bar (No Header Title/X) ──────────────────── */}
         {totalCount > 0 && (
-          <div className="mb-5 space-y-2">
-            <div className="flex items-center justify-between text-xs font-semibold text-muted-foreground px-1">
+          <div className="mb-4 sm:mb-5 space-y-2">
+            <div className="flex items-center justify-between text-xs font-semibold text-muted-foreground px-0.5">
               <span>{masteredCount} of {totalCount} sections mastered</span>
               <span className="text-primary font-bold">{progressPct}%</span>
             </div>
@@ -618,18 +618,18 @@ export default function LearnModeView({
               <div key={sec.section_index} className="lm-row-enter" style={{ animationDelay: `${i * 30}ms` }}>
                 <div
                   onClick={() => handleOpenSection(sec.section_index)}
-                  className="w-full text-left py-3.5 px-3 flex items-center justify-between gap-3 hover:bg-muted/20 cursor-pointer transition-colors group"
+                  className="w-full text-left py-3.5 px-2.5 sm:px-3 flex items-center justify-between gap-2.5 sm:gap-3 hover:bg-muted/20 cursor-pointer transition-colors group"
                 >
-                  <div className="flex items-center gap-3.5 min-w-0">
+                  <div className="flex items-center gap-2.5 sm:gap-3.5 min-w-0 flex-1">
                     <span className="text-xs font-semibold text-muted-foreground/60 w-5 shrink-0 text-center">
                       {sec.section_index + 1}
                     </span>
-                    <h4 className="text-xs font-semibold text-foreground truncate group-hover:text-primary transition-colors">
+                    <h4 className="text-xs font-semibold text-foreground truncate min-w-0 flex-1 group-hover:text-primary transition-colors">
                       {sec.title}
                     </h4>
                   </div>
 
-                  <div className="flex items-center gap-2.5 shrink-0">
+                  <div className="flex items-center gap-2 shrink-0">
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${scoreBadgeStyle}`}>
                       {pct}
                     </span>
@@ -687,18 +687,18 @@ export default function LearnModeView({
         </div>
 
         {/* Main detail content area */}
-        <div ref={detailScrollRef} className="flex-1 overflow-y-auto px-5 py-6 space-y-6">
+        <div ref={detailScrollRef} className="flex-1 overflow-y-auto px-4 sm:px-5 py-5 sm:py-6 space-y-5 sm:space-y-6 pb-24 sm:pb-8">
           <div className="space-y-1">
-            <h2 className="text-base font-bold text-foreground leading-tight">{sectionDetail?.title}</h2>
+            <h2 className="text-sm sm:text-base font-bold text-foreground leading-tight">{sectionDetail?.title}</h2>
             {sectionDetail?.page_start && (
-              <p className="text-xs text-muted-foreground font-medium">
+              <p className="text-[11px] sm:text-xs text-muted-foreground font-medium">
                 Source: Pages {sectionDetail.page_start}–{sectionDetail.page_end}
               </p>
             )}
           </div>
 
           {/* Markdown explanation */}
-          <div className="prose prose-sm dark:prose-invert max-w-full text-foreground border-b border-border/50 pb-6 leading-relaxed">
+          <div className="prose prose-sm dark:prose-invert max-w-full text-foreground border-b border-border/50 pb-6 leading-relaxed break-words overflow-hidden">
             <ReactMarkdown
               remarkPlugins={[remarkGfm, remarkMath]}
               rehypePlugins={[rehypeRaw, rehypeKatex]}
@@ -724,7 +724,7 @@ export default function LearnModeView({
               <button
                 disabled={isCompleting}
                 onClick={handleNextSection}
-                className="w-full py-3.5 px-4 rounded-xl bg-primary hover:opacity-90 active:opacity-95 text-primary-foreground font-bold text-xs shadow-md shadow-primary/20 flex items-center justify-center gap-2 transition-all"
+                className="w-full py-3 sm:py-3.5 px-4 rounded-xl bg-primary hover:opacity-90 active:opacity-95 text-primary-foreground font-bold text-xs shadow-md shadow-primary/20 flex items-center justify-center gap-2 transition-all"
               >
                 {isCompleting ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -738,7 +738,7 @@ export default function LearnModeView({
             ) : (
               <button
                 onClick={() => setShowQuizModal(true)}
-                className="w-full py-3.5 px-4 rounded-xl bg-primary hover:opacity-90 active:opacity-95 text-primary-foreground font-bold text-xs shadow-md shadow-primary/20 flex items-center justify-center gap-2 transition-all"
+                className="w-full py-3 sm:py-3.5 px-4 rounded-xl bg-primary hover:opacity-90 active:opacity-95 text-primary-foreground font-bold text-xs shadow-md shadow-primary/20 flex items-center justify-center gap-2 transition-all"
               >
                 Next Section →
               </button>
@@ -749,23 +749,23 @@ export default function LearnModeView({
 
       {/* ── Focus Quiz Modal Overlay (Closed-Book Mode: Single Question Flow) ── */}
       {showQuizModal && allQuestions.length > 0 && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
-          <div className="w-full max-w-2xl max-h-[90vh] bg-card border border-border/80 rounded-2xl shadow-2xl flex flex-col overflow-hidden relative">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 md:p-6 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="w-full max-w-2xl max-h-[92vh] sm:max-h-[90vh] bg-card border border-border/80 rounded-xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden relative">
             
             {/* Modal Header Bar (No X button - mandatory recall quiz) */}
-            <div className="px-6 py-4 border-b border-border/60 flex items-center justify-between bg-card/60">
-              <div>
-                <span className="text-[10px] font-bold text-primary uppercase tracking-wider">
+            <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-border/60 flex items-center justify-between bg-card/60 gap-2">
+              <div className="min-w-0 flex-1">
+                <span className="text-[9px] sm:text-[10px] font-bold text-primary uppercase tracking-wider block leading-tight">
                   Before proceeding to the next section, answer the following questions
                 </span>
-                <h3 className="text-sm font-bold text-foreground truncate max-w-md">
+                <h3 className="text-xs sm:text-sm font-bold text-foreground truncate max-w-[200px] sm:max-w-md mt-0.5">
                   {sectionDetail?.title}
                 </h3>
               </div>
             </div>
 
             {/* Modal Progress Indicator */}
-            <div className="px-6 py-2.5 bg-muted/30 border-b border-border/40 flex items-center justify-between text-xs font-semibold text-muted-foreground">
+            <div className="px-4 sm:px-6 py-2 sm:py-2.5 bg-muted/30 border-b border-border/40 flex items-center justify-between text-xs font-semibold text-muted-foreground">
               <span>
                 Question {quizQuestionIndex + 1} of {allQuestions.length}
               </span>
@@ -781,7 +781,7 @@ export default function LearnModeView({
             </div>
 
             {/* Questions Body Area */}
-            <div className="flex-1 overflow-y-auto px-6 py-6">
+            <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 sm:py-6">
               {scoreMessage ? (
                 /* Completion Result Card */
                 <div className="py-6 space-y-6 text-center">
@@ -789,10 +789,10 @@ export default function LearnModeView({
                     <Award className="w-10 h-10" />
                   </div>
                   <div className="space-y-1">
-                    <h3 className="text-lg font-bold text-foreground">
+                    <h3 className="text-base sm:text-lg font-bold text-foreground">
                       {scoreMessage.passed ? 'Section Mastered!' : 'Needs Review'}
                     </h3>
-                    <p className="text-sm text-muted-foreground">
+                    <p className="text-xs sm:text-sm text-muted-foreground">
                       You scored <strong className="text-primary">{scoreMessage.score}%</strong> on this recall quiz.
                     </p>
                   </div>
@@ -808,7 +808,7 @@ export default function LearnModeView({
                   const isHintOpen = !!activeHints[qIdx];
 
                   return (
-                    <div className="space-y-5">
+                    <div className="space-y-4 sm:space-y-5">
                       {isRetest && (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full border border-amber-500/20 bg-amber-500/10 text-[9px] font-bold text-amber-500 uppercase tracking-wide">
                           Revisiting Section {q.origin_section_index! + 1}
@@ -816,18 +816,18 @@ export default function LearnModeView({
                       )}
 
                       {/* Question Stem */}
-                      <p className="text-base font-semibold leading-relaxed text-foreground md:text-lg">
+                      <p className="text-sm sm:text-base font-semibold leading-relaxed text-foreground md:text-lg">
                         {q.question_text}
                       </p>
 
                       {/* Option Stack (A. B. C. D. styling matching QuizTaking.tsx) */}
-                      <div className="space-y-3 mt-4">
+                      <div className="space-y-2.5 sm:space-y-3 mt-4">
                         {Object.entries(q.options || {}).map(([key, optText], optIdx) => {
                           const isOptionSelected = selected === key;
                           const isOptionCorrect = q.correct_answer === key;
                           const letterLabel = String.fromCharCode(65 + optIdx); // A, B, C, D
 
-                          let optBtnClass = "w-full text-left flex items-center px-4 py-3.5 rounded-xl border text-sm font-medium transition-all min-h-[3.2rem] ";
+                          let optBtnClass = "w-full text-left flex items-start px-3.5 sm:px-4 py-3 sm:py-3.5 rounded-xl border text-xs sm:text-sm font-medium transition-all min-h-[3rem] sm:min-h-[3.2rem] ";
 
                           if (grading) {
                             if (isOptionCorrect) {
@@ -852,8 +852,8 @@ export default function LearnModeView({
                               onClick={() => handleAnswerSelect(qIdx, key)}
                               className={optBtnClass}
                             >
-                              <span className="mr-3 font-bold text-primary shrink-0">{letterLabel}.</span>
-                              <span className="leading-snug">{optText}</span>
+                              <span className="mr-2.5 sm:mr-3 font-bold text-primary shrink-0 text-xs sm:text-sm mt-0.5">{letterLabel}.</span>
+                              <span className="leading-snug flex-1 min-w-0">{optText}</span>
                             </button>
                           );
                         })}
