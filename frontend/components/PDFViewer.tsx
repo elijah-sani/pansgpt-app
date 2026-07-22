@@ -1157,11 +1157,10 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
         setSelectedText(textToProcess);
 
-        // Mobile: Switch to Chat tab
+        // Open AI Sidebar drawer and switch active tab to chat
+        setIsSidebarOpen(true);
         if (window.innerWidth < 768) {
             setActiveTab('chat');
-        } else {
-            setIsSidebarOpen(true);
         }
 
         setSelectionMenu(null);
@@ -1767,8 +1766,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
     const handleMenuSend = async ({ text, attachments, intent }: { text: string; attachments: string[], intent?: 'snippet_explain' }) => {
         // 1. Open Sidebar
+        setIsSidebarOpen(true);
         if (window.innerWidth < 768) setActiveTab('chat');
-        else setIsSidebarOpen(true);
 
         // 2. Clear Snip UI
         setIsSnippingMode(false);
@@ -1786,8 +1785,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
             return;
         }
         // 1. Open Sidebar
+        setIsSidebarOpen(true);
         if (window.innerWidth < 768) setActiveTab('chat');
-        else setIsSidebarOpen(true);
 
         // 2. Clear Snip UI
         setIsSnippingMode(false);
