@@ -481,9 +481,9 @@ export default function LearnModeView({
           }
         `}</style>
 
-        <div className="flex flex-col h-full bg-background overflow-hidden px-4 sm:px-6 py-6 sm:py-8">
-          {/* Centered Content Area */}
-          <div className="flex-1 flex flex-col justify-center min-h-0 overflow-y-auto py-4">
+        <div className="flex flex-col h-full bg-background overflow-hidden px-7 sm:px-10 py-6 sm:py-8">
+          {/* Top-Weighted Content Area */}
+          <div className="flex-1 flex flex-col justify-start pt-8 sm:pt-12 min-h-0 overflow-y-auto pb-4">
             <div className="max-w-md w-full mx-auto space-y-6">
               {/* Logo and Greeting + Question prompt group — positioned close together and left-aligned */}
               <div className="space-y-4 lm-option-enter" style={{ animationDelay: '0ms' }}>
