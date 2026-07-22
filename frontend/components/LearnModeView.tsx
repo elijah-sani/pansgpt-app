@@ -581,10 +581,10 @@ export default function LearnModeView({
     const progressPct = totalCount > 0 ? Math.round((masteredCount / totalCount) * 100) : 0;
 
     return (
-      <div className="flex flex-col h-full bg-background overflow-y-auto px-3.5 sm:px-4 py-4 sm:py-5 pb-24 sm:pb-8">
+      <div className="flex flex-col h-full w-full max-w-full bg-background overflow-y-auto overflow-x-hidden px-3.5 sm:px-4 py-4 sm:py-5 pb-24 sm:pb-8">
         {/* ── Top Progress Stat Bar (No Header Title/X) ──────────────────── */}
         {totalCount > 0 && (
-          <div className="mb-4 sm:mb-5 space-y-2">
+          <div className="mb-4 sm:mb-5 space-y-2 w-full max-w-full overflow-hidden">
             <div className="flex items-center justify-between text-xs font-semibold text-muted-foreground px-0.5">
               <span>{masteredCount} of {totalCount} sections mastered</span>
               <span className="text-primary font-bold">{progressPct}%</span>
@@ -599,7 +599,7 @@ export default function LearnModeView({
         )}
 
         {/* ── Flat Rows Container (Inspired by target image) ─────────────── */}
-        <div className="divide-y divide-border/40 border-t border-b border-border/40">
+        <div className="divide-y divide-border/40 border-t border-b border-border/40 w-full max-w-full overflow-hidden">
           {sections.map((sec, i) => {
             const pct = sec.last_score !== null ? `${sec.last_score}%` : '0%';
             const isMastered = sec.status === 'mastered';
@@ -615,21 +615,21 @@ export default function LearnModeView({
               : 'border-border/60 bg-muted/30 text-muted-foreground';
 
             return (
-              <div key={sec.section_index} className="lm-row-enter" style={{ animationDelay: `${i * 30}ms` }}>
+              <div key={sec.section_index} className="lm-row-enter w-full max-w-full overflow-hidden" style={{ animationDelay: `${i * 30}ms` }}>
                 <div
                   onClick={() => handleOpenSection(sec.section_index)}
-                  className="w-full text-left py-3.5 px-2.5 sm:px-3 flex items-center justify-between gap-2.5 sm:gap-3 hover:bg-muted/20 cursor-pointer transition-colors group"
+                  className="w-full max-w-full text-left py-3.5 px-2.5 sm:px-3 flex items-center justify-between gap-2.5 sm:gap-3 hover:bg-muted/20 cursor-pointer transition-colors group overflow-hidden"
                 >
-                  <div className="flex items-center gap-2.5 sm:gap-3.5 min-w-0 flex-1">
-                    <span className="text-xs font-semibold text-muted-foreground/60 w-5 shrink-0 text-center">
+                  <div className="flex items-center gap-2 sm:gap-3.5 min-w-0 flex-1 overflow-hidden">
+                    <span className="text-xs font-semibold text-muted-foreground/60 w-4 sm:w-5 shrink-0 text-center">
                       {sec.section_index + 1}
                     </span>
-                    <h4 className="text-xs font-semibold text-foreground truncate min-w-0 flex-1 group-hover:text-primary transition-colors">
+                    <h4 className="text-xs font-semibold text-foreground truncate min-w-0 flex-1 shrink group-hover:text-primary transition-colors">
                       {sec.title}
                     </h4>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-2 shrink-0 ml-1">
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${scoreBadgeStyle}`}>
                       {pct}
                     </span>

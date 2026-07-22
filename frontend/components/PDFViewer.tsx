@@ -2969,7 +2969,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                         </div>
 
                         {/* Learn Mode Container (Mobile) */}
-                        <div className={`flex-1 h-full bg-background ${activeTab === 'learn' ? 'block' : 'hidden'} md:hidden`}>
+                        <div className={`flex-1 h-full w-full max-w-full overflow-hidden bg-background ${activeTab === 'learn' ? 'block' : 'hidden'} md:hidden`}>
                             <LearnModeView 
                                 documentId={resolvedDocumentId} 
                                 onJumpToSource={handleJumpToSource} 
