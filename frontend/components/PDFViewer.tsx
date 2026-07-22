@@ -2455,7 +2455,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                     <div className={`flex-1 flex md:pt-16 h-full overflow-hidden transition-all duration-300 ${mobileHeaderVisible ? 'pt-14' : 'pt-0'}`}>
 
                         {/* PDF Area Wrapper */}
-                        <div className={`flex-1 min-w-0 relative h-full flex flex-col ${activeTab === 'document' ? 'flex' : 'hidden md:flex'}`}>
+                        <div className="flex-1 min-w-0 relative h-full flex flex-col">
                             
                             {/* Snipping Mode Banner */}
                             {isSnippingMode && (
@@ -2923,7 +2923,10 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                             <div className="h-14 border-b border-border bg-card px-4 flex items-center justify-between shrink-0 shadow-sm">
                                 <div className="flex items-center gap-3">
                                     <button
-                                        onClick={() => setIsSidebarOpen(false)}
+                                        onClick={() => {
+                                            setIsSidebarOpen(false);
+                                            setActiveTab('document');
+                                        }}
                                         className="p-1.5 hover:bg-muted/50 rounded-lg text-muted-foreground hover:text-foreground transition-colors"
                                         title="Close AI Assistant"
                                     >
@@ -2950,7 +2953,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                         </div>
 
                         {/* Mobile Floating Pill — Snip & Notes (appears on tap, fades after 3s) */}
-                        {activeTab === 'document' && (
+                        {!isSidebarOpen && (
                             <>
                                 {/* Mobile note save toast — floats above the pill */}
                                 {(noteSavedFlash || noteSaveError) && (
