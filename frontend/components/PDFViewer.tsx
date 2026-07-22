@@ -2418,7 +2418,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                     }`}
                                 title="AI Assistant"
                             >
-                                <MessageSquare className="w-4 h-4" />
+                                <Sparkles className="w-4 h-4 text-primary" />
                             </button>
                         </div>
                     </div>
@@ -3036,11 +3036,11 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                         )}
                                     </div>
                                 )}
-                            {/* Mobile Bottom Navigation Bar (Auto-fades after 3 seconds) */}
+                            {/* Mobile Floating Bottom Bar Container (Auto-fades after 3 seconds) */}
                             <div
-                                className={`md:hidden fixed bottom-0 left-0 right-0 w-full z-40 bg-background/95 backdrop-blur-md border-t border-border py-2 px-4 transition-all duration-500 shadow-2xl ${showMobilePill ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-4 pointer-events-none'}`}
+                                className={`md:hidden fixed bottom-3 left-3 right-3 z-40 transition-all duration-500 ${showMobilePill ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-4 pointer-events-none'}`}
                             >
-                                <div className="flex items-center justify-around max-w-md mx-auto">
+                                <div className="flex items-center justify-around w-full max-w-sm mx-auto bg-card/95 backdrop-blur-xl border border-border/80 rounded-2xl py-2 px-6 shadow-[0_10px_25px_-5px_rgba(0,0,0,0.5)]">
                                     {/* 1. Snip Action */}
                                     <button
                                         onClick={() => {
@@ -3050,7 +3050,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                             setSnipRect(null);
                                             setSnipPopup(null);
                                         }}
-                                        className={`flex flex-col items-center justify-center gap-1 px-4 py-1.5 rounded-xl transition-all active:scale-95 ${isSnippingMode
+                                        className={`flex flex-col items-center justify-center gap-1 transition-all active:scale-95 ${isSnippingMode
                                             ? 'text-primary font-semibold'
                                             : 'text-muted-foreground hover:text-foreground'
                                             }`}
@@ -3061,21 +3061,15 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                         </span>
                                     </button>
 
-                                    {/* 2. Page Indicator Action */}
-                                    <div className="flex flex-col items-center justify-center gap-1 px-4 py-1.5 text-muted-foreground">
-                                        <div className="flex items-center gap-1">
-                                            <FileText className="w-5 h-5" />
-                                            <span className="text-xs font-semibold text-foreground">
-                                                {currentPage}/{numPages || 1}
-                                            </span>
-                                        </div>
-                                        <span className="text-[11px] font-medium leading-none">Page</span>
+                                    {/* 2. Page Counter Pill (Matching desktop clean style, no extra icon/label) */}
+                                    <div className="flex items-center justify-center px-3 py-1 bg-muted/60 border border-border/50 rounded-lg text-xs font-bold text-foreground tracking-wide">
+                                        {currentPage}/{numPages || 1}
                                     </div>
 
                                     {/* 3. Help Action */}
                                     <button
                                         onClick={() => setShowTutorial(true)}
-                                        className="flex flex-col items-center justify-center gap-1 px-4 py-1.5 rounded-xl text-muted-foreground hover:text-foreground transition-all active:scale-95"
+                                        className="flex flex-col items-center justify-center gap-1 text-muted-foreground hover:text-foreground transition-all active:scale-95"
                                         title="How to use study mode"
                                     >
                                         <HelpCircle className="w-5 h-5" />
