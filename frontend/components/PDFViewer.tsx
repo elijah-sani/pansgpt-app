@@ -509,12 +509,9 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     useEffect(() => {
         const updateScale = () => {
             const width = window.innerWidth;
-            if (width < 640) {
-                // Mobile: Fit to screen (assuming standard PDF width is ~600px)
-                setBaseScale((width - 32) / 600);
-            } else if (width < 768) {
-                // Tablet
-                setBaseScale(1.2);
+            if (width < 768) {
+                // Mobile: Fit full width across screen with minimal side margins (~8px on each side)
+                setBaseScale((width - 16) / 552);
             } else {
                 // Desktop: Make the default massive (visually 200%)
                 setBaseScale(2.0);
@@ -2502,8 +2499,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                 </div>
                             )}
 
-                            <div className="flex justify-center p-4 md:p-8">
-                                <div className="relative">
+                            <div className="flex justify-center px-2 py-3 md:p-8 w-full">
+                                <div className="relative w-full flex flex-col items-center">
                                     {error ? (
                                         <div className="p-8 text-center bg-destructive/10 border border-destructive/20 rounded-xl flex flex-col items-center gap-4">
                                             <p className="text-destructive font-medium">{error}</p>
@@ -2537,14 +2534,14 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                                     key={`page_${index + 1}`}
                                                     id={`page-container-${index + 1}`}
                                                     data-page-number={index + 1}
-                                                    className="relative mb-6 shadow-2xl rounded-sm w-full flex justify-center transition-transform duration-200"
+                                                    className="relative mb-4 md:mb-6 shadow-none md:shadow-2xl rounded-2xl md:rounded-sm overflow-hidden w-full flex justify-center transition-transform duration-200"
                                                 >
                                                     <Page
                                                         pageNumber={index + 1}
                                                         renderTextLayer={!isSnippingMode}
                                                         renderAnnotationLayer={false}
                                                         width={Math.min(containerWidth - 48, 800) * ((zoomLevel / 100) * baseScale)}
-                                                        className="bg-card"
+                                                        className="bg-card rounded-2xl md:rounded-sm overflow-hidden"
                                                         loading={<div className="h-[800px] w-full bg-card animate-pulse" />}
                                                         error={<div className="p-4 text-destructive text-sm">Failed to load page</div>}
                                                     />
