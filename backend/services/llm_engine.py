@@ -19,11 +19,12 @@ TEXT_FALLBACK = TEXT_SECONDARY
 # Small Tasks Stack (Chat Titles, Summaries, Quick Tasks)
 SMALL_PRIMARY = "llama-3.1-8b-instant"                                       # Groq (Llama 3.1 8B Instant)
 SMALL_SECONDARY = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"       # OpenRouter (Nemotron 30B Free)
+SMALL_TERTIARY = "nvidia/nemotron-3-nano-30b-a3b:free"                       # Compatibility alias (OpenRouter)
 
 # Learn Mode Stack (Section Explanations, Check Questions, Diagnostic Retests)
 LEARN_PRIMARY = "llama-3.3-70b-versatile"                                    # Groq (Llama 3.3 70B Versatile)
 LEARN_SECONDARY = "meta-llama/llama-3.3-70b-instruct"                        # Groq (Llama 3.3 70B Instruct)
-LEARN_TERTIARY = "nvidia/nemotron-3-nano-30b-a3b:free"                       # OpenRouter (Nemotron 30B Free)
+LEARN_TERTIARY = SMALL_TERTIARY                                               # OpenRouter (Nemotron 30B Free)
 
 TEXT_FAST = SMALL_PRIMARY                # Smaller and faster model for quick tasks (e.g. titles)
 FAST_TEXT_MODEL_ORDER = [TEXT_TERTIARY, LEARN_PRIMARY, SMALL_PRIMARY, SMALL_SECONDARY, TEXT_SECONDARY]
