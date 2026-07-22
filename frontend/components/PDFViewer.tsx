@@ -2918,9 +2918,25 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                         </div>
                         </div>
                         
-                        {/* Chat Container (Mobile) */}
-                        <div className={`flex-1 h-full bg-background ${activeTab === 'chat' ? 'block' : 'hidden'} md:hidden`}>
-                            {renderChatUI(true)}
+                        {/* Mobile Full-Screen Sidebar Drawer */}
+                        <div className={`md:hidden fixed inset-0 z-50 bg-background flex flex-col transition-transform duration-300 ${isSidebarOpen ? 'translate-x-0' : 'translate-x-full pointer-events-none'}`}>
+                            {/* Mobile Sidebar Header */}
+                            <div className="h-14 border-b border-border bg-card px-4 flex items-center justify-between shrink-0 shadow-sm">
+                                <div className="flex items-center gap-3">
+                                    <button
+                                        onClick={() => setIsSidebarOpen(false)}
+                                        className="p-1.5 hover:bg-muted/50 rounded-lg text-muted-foreground hover:text-foreground transition-colors"
+                                        title="Close AI Assistant"
+                                    >
+                                        <ChevronLeft className="w-5 h-5" />
+                                    </button>
+                                    <span className="text-sm font-semibold text-foreground">Chat</span>
+                                </div>
+                            </div>
+                            {/* Mobile Sidebar Content */}
+                            <div className="flex-1 overflow-hidden">
+                                {renderChatUI(true)}
+                            </div>
                         </div>
 
                         {/* Chat Sidebar (Desktop) - flex-based, pushes PDF */}
@@ -2956,9 +2972,9 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                 )}
                             {/* Mobile Floating Bottom Bar Container (Auto-fades after 3 seconds) */}
                             <div
-                                className={`md:hidden fixed bottom-3 left-3 right-3 z-40 transition-all duration-500 ${showMobilePill ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-4 pointer-events-none'}`}
+                                className={`md:hidden fixed bottom-4 left-4 right-4 z-40 max-w-[340px] mx-auto transition-all duration-500 ${showMobilePill ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-4 pointer-events-none'}`}
                             >
-                                <div className="flex items-center justify-around w-full max-w-sm mx-auto bg-card/95 backdrop-blur-xl border border-border/80 rounded-2xl py-2 px-6 shadow-[0_10px_25px_-5px_rgba(0,0,0,0.5)]">
+                                <div className="flex items-center justify-between w-full bg-[#1b1c21] border border-white/10 rounded-full py-2 px-6 shadow-[0_12px_30px_rgba(0,0,0,0.7)]">
                                     {/* 1. Snip Action */}
                                     <button
                                         onClick={() => {
@@ -2968,9 +2984,9 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                             setSnipRect(null);
                                             setSnipPopup(null);
                                         }}
-                                        className={`flex flex-col items-center justify-center gap-1 transition-all active:scale-95 ${isSnippingMode
+                                        className={`flex flex-col items-center justify-center gap-1 min-w-[44px] transition-all active:scale-95 ${isSnippingMode
                                             ? 'text-primary font-semibold'
-                                            : 'text-muted-foreground hover:text-foreground'
+                                            : 'text-zinc-400 hover:text-white'
                                             }`}
                                     >
                                         <Scissors className="w-5 h-5" />
@@ -2979,15 +2995,15 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                         </span>
                                     </button>
 
-                                    {/* 2. Page Counter Pill (Matching desktop clean style, no extra icon/label) */}
-                                    <div className="flex items-center justify-center px-3 py-1 bg-muted/60 border border-border/50 rounded-lg text-xs font-bold text-foreground tracking-wide">
+                                    {/* 2. Page Counter Pill (Exact match to Image 2: dark oval capsule in center) */}
+                                    <div className="flex items-center justify-center px-4 py-1.5 bg-[#121316] rounded-full text-xs font-bold text-white tracking-tight shadow-inner border border-white/5">
                                         {currentPage}/{numPages || 1}
                                     </div>
 
                                     {/* 3. Help Action */}
                                     <button
                                         onClick={() => setShowTutorial(true)}
-                                        className="flex flex-col items-center justify-center gap-1 text-muted-foreground hover:text-foreground transition-all active:scale-95"
+                                        className="flex flex-col items-center justify-center gap-1 min-w-[44px] text-zinc-400 hover:text-white transition-all active:scale-95"
                                         title="How to use study mode"
                                     >
                                         <HelpCircle className="w-5 h-5" />
