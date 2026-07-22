@@ -2349,29 +2349,57 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 <>
 
 
-                    <div className={`md:hidden fixed top-0 w-full h-14 bg-background/80 backdrop-blur-md border-b border-border z-50 flex items-center justify-around shadow-sm transition-transform duration-300 ${mobileHeaderVisible || activeTab === 'chat' ? 'translate-y-0' : '-translate-y-full'}`}>
-                        <button
-                            onClick={() => { setActiveTab('document'); }}
-                            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-colors ${activeTab === 'document' ? 'text-primary' : 'text-muted-foreground'}`}
-                        >
-                            <FileText className="w-4 h-4" />
-                            Document
-                        </button>
-                        <button
-                            onClick={() => { setActiveTab('chat'); setUnreadMessages(false); }}
-                            className={`relative flex items-center gap-2 px-4 py-2 text-sm font-medium transition-colors ${activeTab === 'chat' ? 'text-primary' : 'text-muted-foreground'}`}
-                        >
-                            <MessageSquare className="w-4 h-4" />
-                            Chat
-                            {unreadMessages && <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full animate-pulse" />}
-                        </button>
-                        <button
-                            onClick={() => setShowTutorial(true)}
-                            className="p-2 text-muted-foreground hover:text-foreground transition-colors"
-                            title="How to use study mode"
-                        >
-                            <HelpCircle className="w-4 h-4" />
-                        </button>
+                    {/* Mobile Header */}
+                    <div className={`md:hidden fixed top-0 left-0 right-0 w-full h-14 bg-background/95 backdrop-blur-md border-b border-border z-50 flex items-center justify-between px-3 shadow-sm transition-transform duration-300 ${mobileHeaderVisible ? 'translate-y-0' : '-translate-y-full'}`}>
+                        {/* Left: Back button + Divider */}
+                        <div className="flex items-center gap-2 min-w-0">
+                            <button
+                                onClick={() => {
+                                    const course = searchParams.get('course');
+                                    if (course) {
+                                        router.push(`/reader?course=${course}`);
+                                    } else {
+                                        router.push('/reader');
+                                    }
+                                }}
+                                className="p-1.5 hover:bg-muted/50 rounded-lg text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                                title="Go Back"
+                            >
+                                <ChevronLeft className="w-5 h-5" />
+                            </button>
+                            <div className="h-5 w-px bg-border shrink-0" />
+
+                            {/* Middle: Document Metadata */}
+                            <div className="flex flex-col justify-center min-w-0 pr-2">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                    <h1 className="truncate text-xs font-semibold leading-tight text-foreground max-w-[180px]">
+                                        {meta.topic || meta.filename}
+                                    </h1>
+                                    {isArchivedMaterial && (
+                                        <span className="shrink-0 rounded-full border border-slate-500/20 bg-slate-500/10 px-1.5 py-0.2 text-[9px] font-bold uppercase tracking-wide text-slate-500">
+                                            Past
+                                        </span>
+                                    )}
+                                </div>
+                                <p className="truncate text-[10px] text-muted-foreground max-w-[180px]">
+                                    {[meta.lecturer, meta.academicSession, formatSemester(meta.semester)].filter(Boolean).join(' • ')}
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Right: Sidebar Toggle Button (AI Assistant) */}
+                        <div className="flex items-center gap-1 shrink-0">
+                            <button
+                                onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                                className={`flex items-center justify-center w-9 h-9 rounded-lg transition-all duration-200 ${isSidebarOpen
+                                    ? 'bg-muted/50 text-primary shadow-sm'
+                                    : 'bg-card hover:bg-muted/50 text-muted-foreground'
+                                    }`}
+                                title="AI Assistant"
+                            >
+                                <MessageSquare className="w-4 h-4" />
+                            </button>
+                        </div>
                     </div>
 
 
@@ -2926,18 +2954,12 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                         )}
                                     </div>
                                 )}
+                            {/* Mobile Bottom Navigation Bar (Auto-fades after 3 seconds) */}
                             <div
-                                className={`md:hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-40 transition-all duration-500 ${showMobilePill ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2 pointer-events-none'}`}
+                                className={`md:hidden fixed bottom-0 left-0 right-0 w-full z-40 bg-background/95 backdrop-blur-md border-t border-border py-2 px-4 transition-all duration-500 shadow-2xl ${showMobilePill ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-4 pointer-events-none'}`}
                             >
-                                <div className="flex items-center gap-1 p-1.5 bg-card border border-border rounded-full shadow-xl">
-                                    {/* Page number chip */}
-                                    {numPages > 0 && (
-                                        <span className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-muted-foreground">
-                                            <FileText className="w-3.5 h-3.5" />
-                                            {currentPage}/{numPages}
-                                        </span>
-                                    )}
-                                    <div className="w-px h-5 bg-border mx-0.5" />
+                                <div className="flex items-center justify-around max-w-md mx-auto">
+                                    {/* 1. Snip Action */}
                                     <button
                                         onClick={() => {
                                             const nextSnipMode = !isSnippingMode;
@@ -2946,33 +2968,37 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                             setSnipRect(null);
                                             setSnipPopup(null);
                                         }}
-                                        className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all active:scale-95 ${isSnippingMode
-                                            ? 'bg-primary/10 text-primary border border-primary/20'
-                                            : 'text-foreground hover:bg-muted'
+                                        className={`flex flex-col items-center justify-center gap-1 px-4 py-1.5 rounded-xl transition-all active:scale-95 ${isSnippingMode
+                                            ? 'text-primary font-semibold'
+                                            : 'text-muted-foreground hover:text-foreground'
                                             }`}
                                     >
-                                        <Scissors className="w-4 h-4" />
-                                        {isSnippingMode ? 'Cancel' : 'Snip'}
+                                        <Scissors className="w-5 h-5" />
+                                        <span className="text-[11px] font-medium leading-none">
+                                            {isSnippingMode ? 'Cancel' : 'Snip'}
+                                        </span>
                                     </button>
-                                    {/* COMMENTED OUT: Notes feature hidden
-                                    <div className="w-px h-5 bg-border mx-0.5" />
+
+                                    {/* 2. Page Indicator Action */}
+                                    <div className="flex flex-col items-center justify-center gap-1 px-4 py-1.5 text-muted-foreground">
+                                        <div className="flex items-center gap-1">
+                                            <FileText className="w-5 h-5" />
+                                            <span className="text-xs font-semibold text-foreground">
+                                                {currentPage}/{numPages || 1}
+                                            </span>
+                                        </div>
+                                        <span className="text-[11px] font-medium leading-none">Page</span>
+                                    </div>
+
+                                    {/* 3. Help Action */}
                                     <button
-                                        onClick={() => {
-                                            toggleNotesPanel();
-                                            setShowMobilePill(false);
-                                        }}
-                                        className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all active:scale-95 ${notesOpen
-                                            ? 'bg-primary/10 text-primary border border-primary/20'
-                                            : 'text-foreground hover:bg-muted'
-                                            }`}
+                                        onClick={() => setShowTutorial(true)}
+                                        className="flex flex-col items-center justify-center gap-1 px-4 py-1.5 rounded-xl text-muted-foreground hover:text-foreground transition-all active:scale-95"
+                                        title="How to use study mode"
                                     >
-                                        <BookOpen className="w-4 h-4" />
-                                        Notes
-                                        {notes.length > 0 && (
-                                            <span className="ml-0.5 text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">{notes.length}</span>
-                                        )}
+                                        <HelpCircle className="w-5 h-5" />
+                                        <span className="text-[11px] font-medium leading-none">Help</span>
                                     </button>
-                                    */}
                                 </div>
                             </div>
                             </>
