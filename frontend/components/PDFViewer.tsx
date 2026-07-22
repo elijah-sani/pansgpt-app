@@ -2982,7 +2982,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                         <div className={`md:hidden fixed inset-0 z-50 bg-background flex flex-col transition-transform duration-300 ${isSidebarOpen ? 'translate-x-0' : 'translate-x-full pointer-events-none'}`}>
                             {/* Mobile Sidebar Header */}
                             <div className="h-14 border-b border-border bg-card px-4 flex items-center justify-between shrink-0 shadow-sm">
-                                <div className="flex items-center gap-3">
+                                <div className="flex items-center gap-4">
                                     <button
                                         onClick={() => {
                                             setIsSidebarOpen(false);
@@ -2994,44 +2994,49 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                         <ChevronLeft className="w-5 h-5" />
                                     </button>
                                     
-                                    {/* Segmented Toggle: Chat vs Learn Mode (Matching Image 1) */}
-                                    <div className="flex items-center p-1 bg-muted/60 border border-border/50 rounded-xl">
+                                    {/* Regular Header Tabs: Chat & Learn */}
+                                    <div className="flex items-center gap-4">
                                         <button
                                             onClick={() => setActiveTab('chat')}
-                                            className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all ${activeTab === 'chat'
-                                                ? 'bg-card text-foreground shadow-sm'
+                                            className={`py-1 text-sm font-semibold transition-all relative ${activeTab === 'chat'
+                                                ? 'text-foreground font-bold'
                                                 : 'text-muted-foreground hover:text-foreground'
                                                 }`}
                                         >
                                             Chat
+                                            {activeTab === 'chat' && (
+                                                <span className="absolute -bottom-3.5 left-0 right-0 h-0.5 bg-primary rounded-full" />
+                                            )}
                                         </button>
                                         <button
                                             onClick={() => setActiveTab('learn')}
-                                            className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all ${activeTab === 'learn'
-                                                ? 'bg-emerald-600 text-white shadow-sm'
+                                            className={`py-1 text-sm font-semibold transition-all relative ${activeTab === 'learn'
+                                                ? 'text-emerald-500 font-bold'
                                                 : 'text-muted-foreground hover:text-foreground'
                                                 }`}
                                         >
                                             Learn
+                                            {activeTab === 'learn' && (
+                                                <span className="absolute -bottom-3.5 left-0 right-0 h-0.5 bg-emerald-500 rounded-full" />
+                                            )}
                                         </button>
                                     </div>
                                 </div>
                             </div>
                             {/* Mobile Sidebar Content */}
                             <div className="flex-1 overflow-hidden">
-                                {renderChatUI(true)}
+                                {activeTab === 'learn' ? (
+                                    <LearnModeView 
+                                        documentId={resolvedDocumentId} 
+                                        onJumpToSource={handleJumpToSource} 
+                                        onClose={() => setIsSidebarOpen(false)} 
+                                        sections={learnSections} // [LEARN MODE UI]
+                                        onSectionsLoaded={setLearnSections} // [LEARN MODE UI]
+                                    />
+                                ) : (
+                                    renderChatUI(true)
+                                )}
                             </div>
-                        </div>
-
-                        {/* Learn Mode Container (Mobile) */}
-                        <div className={`flex-1 h-full w-full max-w-full overflow-hidden bg-background ${activeTab === 'learn' ? 'block' : 'hidden'} md:hidden`}>
-                            <LearnModeView 
-                                documentId={resolvedDocumentId} 
-                                onJumpToSource={handleJumpToSource} 
-                                onClose={() => setActiveTab('document')} 
-                                sections={learnSections} // [LEARN MODE UI]
-                                onSectionsLoaded={setLearnSections} // [LEARN MODE UI]
-                            />
                         </div>
 
                         {/* Chat Sidebar (Desktop) - flex-based, pushes PDF */}
