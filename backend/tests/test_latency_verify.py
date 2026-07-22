@@ -73,9 +73,11 @@ async def test_llm_engine_routing():
         )
 
         # Test 3: generate_small_completion_with_failover
-        # Mock groq_client as well
+        # Must also patch groq_text_client to None so the function's
+        # g_client = groq_text_client or groq_client resolution uses our mock.
         mock_groq = AsyncMock()
-        with patch("services.llm_engine.groq_client", mock_groq):
+        with patch("services.llm_engine.groq_client", mock_groq), \
+             patch("services.llm_engine.groq_text_client", None):
             # Case 3a: SMALL_PRIMARY (Groq) succeeds
             mock_google.chat.completions.create.reset_mock()
             mock_groq.chat.completions.create.reset_mock()
