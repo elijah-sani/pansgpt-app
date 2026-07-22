@@ -3073,11 +3073,14 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                         )}
                                     </div>
                                 )}
+                            {/* Bottom Dark Fading Background Gradient Overlay */}
+                            <div className={`pointer-events-none fixed bottom-0 left-0 right-0 h-36 bg-gradient-to-t from-background/95 via-background/40 to-transparent z-30 transition-opacity duration-500 ${showMobilePill ? 'opacity-100' : 'opacity-0'} md:hidden`} />
+
                             {/* Mobile Floating Bottom Bar Container (Auto-fades after 3 seconds) */}
                             <div
-                                className={`md:hidden fixed bottom-4 left-4 right-4 z-40 max-w-[340px] mx-auto transition-all duration-500 ${showMobilePill ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-4 pointer-events-none'}`}
+                                className={`md:hidden fixed bottom-5 left-4 right-4 z-40 max-w-sm mx-auto transition-all duration-500 ${showMobilePill ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-4 pointer-events-none'}`}
                             >
-                                <div className="flex items-center justify-between w-full bg-[#1b1c21] border border-white/10 rounded-full py-2 px-6 shadow-[0_12px_30px_rgba(0,0,0,0.7)]">
+                                <div className="flex items-center justify-between w-full bg-background/95 backdrop-blur-xl border border-border rounded-2xl py-4 px-10 shadow-2xl">
                                     {/* 1. Snip Action */}
                                     <button
                                         onClick={() => {
@@ -3087,9 +3090,9 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                             setSnipRect(null);
                                             setSnipPopup(null);
                                         }}
-                                        className={`flex flex-col items-center justify-center gap-1 min-w-[44px] transition-all active:scale-95 ${isSnippingMode
+                                        className={`flex flex-col items-center justify-center gap-1.5 min-w-[50px] transition-all active:scale-95 ${isSnippingMode
                                             ? 'text-primary font-semibold'
-                                            : 'text-zinc-400 hover:text-white'
+                                            : 'text-muted-foreground hover:text-foreground'
                                             }`}
                                     >
                                         <Scissors className="w-5 h-5" />
@@ -3098,15 +3101,18 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                         </span>
                                     </button>
 
-                                    {/* 2. Page Counter Pill (Exact match to Image 2: dark oval capsule in center) */}
-                                    <div className="flex items-center justify-center px-4 py-1.5 bg-[#121316] rounded-full text-xs font-bold text-white tracking-tight shadow-inner border border-white/5">
-                                        {currentPage}/{numPages || 1}
+                                    {/* 2. Page Indicator Action (Center Document Icon + Counter Label underneath) */}
+                                    <div className="flex flex-col items-center justify-center gap-1.5 text-muted-foreground">
+                                        <FileText className="w-5 h-5 text-foreground" />
+                                        <span className="text-[11px] font-semibold text-foreground leading-none">
+                                            {currentPage}/{numPages || 1}
+                                        </span>
                                     </div>
 
                                     {/* 3. Help Action */}
                                     <button
                                         onClick={() => setShowTutorial(true)}
-                                        className="flex flex-col items-center justify-center gap-1 min-w-[44px] text-zinc-400 hover:text-white transition-all active:scale-95"
+                                        className="flex flex-col items-center justify-center gap-1.5 min-w-[50px] text-muted-foreground hover:text-foreground transition-all active:scale-95"
                                         title="How to use study mode"
                                     >
                                         <HelpCircle className="w-5 h-5" />
