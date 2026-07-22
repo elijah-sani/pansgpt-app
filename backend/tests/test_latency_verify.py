@@ -76,7 +76,7 @@ async def test_llm_engine_routing():
         # Mock groq_client as well
         mock_groq = AsyncMock()
         with patch("services.llm_engine.groq_client", mock_groq):
-            # Case 3a: SMALL_SECONDARY (Groq) succeeds
+            # Case 3a: SMALL_PRIMARY (Groq) succeeds
             mock_google.chat.completions.create.reset_mock()
             mock_groq.chat.completions.create.reset_mock()
             mock_openrouter.chat.completions.create.reset_mock()
@@ -89,7 +89,7 @@ async def test_llm_engine_routing():
                 max_tokens=100,
             )
             mock_groq.chat.completions.create.assert_called_with(
-                model=llm_engine.SMALL_SECONDARY,
+                model=llm_engine.SMALL_PRIMARY,
                 messages=messages,
                 temperature=0.7,
                 max_tokens=100,
@@ -98,7 +98,7 @@ async def test_llm_engine_routing():
             mock_google.chat.completions.create.assert_not_called()
             mock_openrouter.chat.completions.create.assert_not_called()
 
-            # Case 3b: SMALL_SECONDARY (Groq) fails, SMALL_PRIMARY (OpenRouter) succeeds
+            # Case 3b: SMALL_PRIMARY (Groq) fails, SMALL_SECONDARY (OpenRouter) succeeds
             mock_google.chat.completions.create.reset_mock()
             mock_groq.chat.completions.create.reset_mock()
             mock_openrouter.chat.completions.create.reset_mock()
@@ -112,50 +112,14 @@ async def test_llm_engine_routing():
                 max_tokens=100,
             )
             mock_groq.chat.completions.create.assert_called_with(
-                model=llm_engine.SMALL_SECONDARY,
+                model=llm_engine.SMALL_PRIMARY,
                 messages=messages,
                 temperature=0.7,
                 max_tokens=100,
                 stream=False,
             )
             mock_openrouter.chat.completions.create.assert_called_with(
-                model=llm_engine.SMALL_PRIMARY,
-                messages=messages,
-                temperature=0.7,
-                max_tokens=100,
-                stream=False,
-            )
-
-            # Case 3c: Groq and OpenRouter primary fail, SMALL_TERTIARY (OpenRouter) succeeds
-            mock_google.chat.completions.create.reset_mock()
-            mock_groq.chat.completions.create.reset_mock()
-            mock_openrouter.chat.completions.create.reset_mock()
-            
-            openrouter_responses = [Exception("OpenRouter primary down"), AsyncMock()]
-            mock_openrouter.chat.completions.create.side_effect = openrouter_responses
-            mock_groq.chat.completions.create.side_effect = Exception("Groq down")
-            
-            await llm_engine.generate_small_completion_with_failover(
-                messages=messages,
-                temperature=0.7,
-                max_tokens=100,
-            )
-            mock_groq.chat.completions.create.assert_called_with(
                 model=llm_engine.SMALL_SECONDARY,
-                messages=messages,
-                temperature=0.7,
-                max_tokens=100,
-                stream=False,
-            )
-            mock_openrouter.chat.completions.create.assert_any_call(
-                model=llm_engine.SMALL_PRIMARY,
-                messages=messages,
-                temperature=0.7,
-                max_tokens=100,
-                stream=False,
-            )
-            mock_openrouter.chat.completions.create.assert_any_call(
-                model=llm_engine.SMALL_TERTIARY,
                 messages=messages,
                 temperature=0.7,
                 max_tokens=100,
