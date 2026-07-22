@@ -2991,7 +2991,28 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                     >
                                         <ChevronLeft className="w-5 h-5" />
                                     </button>
-                                    <span className="text-sm font-semibold text-foreground">Chat</span>
+                                    
+                                    {/* Segmented Toggle: Chat vs Learn Mode (Matching Image 1) */}
+                                    <div className="flex items-center p-1 bg-muted/60 border border-border/50 rounded-xl">
+                                        <button
+                                            onClick={() => setActiveTab('chat')}
+                                            className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all ${activeTab === 'chat'
+                                                ? 'bg-card text-foreground shadow-sm'
+                                                : 'text-muted-foreground hover:text-foreground'
+                                                }`}
+                                        >
+                                            Chat
+                                        </button>
+                                        <button
+                                            onClick={() => setActiveTab('learn')}
+                                            className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all ${activeTab === 'learn'
+                                                ? 'bg-emerald-600 text-white shadow-sm'
+                                                : 'text-muted-foreground hover:text-foreground'
+                                                }`}
+                                        >
+                                            Learn
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                             {/* Mobile Sidebar Content */}
