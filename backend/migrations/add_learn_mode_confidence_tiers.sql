@@ -107,7 +107,7 @@ comment on column public.document_sections.tiered_content is
 -- ─────────────────────────────────────────────────────────────
 
 create or replace function public.merge_section_tiered_content(            -- [LEARN MODE TIERS]
-  p_section_id uuid,                                                       -- [LEARN MODE TIERS]
+  p_section_id bigint,                                                     -- [LEARN MODE TIERS] bigint: matches document_sections.id (bigserial)
   p_patch jsonb                                                            -- [LEARN MODE TIERS]
 )
 returns jsonb                                                              -- [LEARN MODE TIERS]
@@ -119,5 +119,5 @@ as $$                                                                      -- [L
   returning tiered_content;                                                -- [LEARN MODE TIERS]
 $$;                                                                        -- [LEARN MODE TIERS]
 
-revoke all on function public.merge_section_tiered_content(uuid, jsonb) from public;  -- [LEARN MODE TIERS]
-grant execute on function public.merge_section_tiered_content(uuid, jsonb) to service_role;  -- [LEARN MODE TIERS]
+revoke all on function public.merge_section_tiered_content(bigint, jsonb) from public;  -- [LEARN MODE TIERS]
+grant execute on function public.merge_section_tiered_content(bigint, jsonb) to service_role;  -- [LEARN MODE TIERS]

@@ -16,11 +16,7 @@ import json
 import logging
 import re
 import uuid
-<<<<<<< HEAD
 from typing import List, Literal, Optional  # [LEARN MODE TIERS] added Literal
-=======
-from typing import List, Optional
->>>>>>> main
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks  # [LEARN RETEST]
 from pydantic import BaseModel, Field
@@ -117,11 +113,7 @@ async def _get_sections(document_id: str) -> list:
     db = _db()
     res = await _run(
         lambda: db.table("document_sections")
-<<<<<<< HEAD
         .select("id,document_id,section_index,title,summary,page_start,page_end,explanation,check_questions,tiered_content")  # [LEARN MODE TIERS] added tiered_content
-=======
-        .select("id,document_id,section_index,title,summary,page_start,page_end,explanation,check_questions")
->>>>>>> main
         .eq("document_id", document_id)
         .order("section_index")
         .execute(),
@@ -134,11 +126,7 @@ async def _get_section(document_id: str, section_index: int) -> Optional[dict]:
     db = _db()
     res = await _run(
         lambda: db.table("document_sections")
-<<<<<<< HEAD
         .select("id,document_id,section_index,title,summary,page_start,page_end,explanation,check_questions,tiered_content")  # [LEARN MODE TIERS] added tiered_content
-=======
-        .select("id,document_id,section_index,title,summary,page_start,page_end,explanation,check_questions")
->>>>>>> main
         .eq("document_id", document_id)
         .eq("section_index", section_index)
         .limit(1)
@@ -203,7 +191,6 @@ async def _upsert_progress(user_id: str, document_id: str, section_index: int, *
 # ─────────────────────────────────────────────────────────────
 # LLM generation helpers
 # ─────────────────────────────────────────────────────────────
-<<<<<<< HEAD
 
 # [LEARN MODE TIERS] Per-tier explanation system prompts.
 # Each variant is calibrated to the student's declared prior exposure.
@@ -273,22 +260,6 @@ _QUESTIONS_SYSTEM_BY_TIER = {  # [LEARN MODE TIERS]
         "No preamble, no markdown, only the JSON array."
     ),  # [LEARN MODE TIERS]
 }  # [LEARN MODE TIERS]
-=======
-_EXPLAIN_SYSTEM = (
-    "You are a pharmacy study tutor. Write a clear, concise plain-English explanation of the "
-    "document section described below. Aim for 3-6 paragraphs. Use markdown for clarity. "
-    "Do not repeat the section title verbatim at the start. Focus on what a student needs to understand."
-)
-
-_QUESTIONS_SYSTEM = (
-    "You are a pharmacy study tutor. Generate exactly 3 multiple-choice check questions "
-    "based on the document section below. "
-    "Respond ONLY with a JSON array of objects. Each object must have exactly these keys: "
-    "question_text (string), options (object with keys A, B, C, D; each a string), "
-    "correct_answer (string, one of A/B/C/D), explanation (string, one sentence). "
-    "No preamble, no markdown, only the JSON array."
-)
->>>>>>> main
 
 _FOLLOWUP_SYSTEM = (
     "You are a pharmacy study tutor. A student answered a question incorrectly. "
@@ -324,11 +295,7 @@ async def _generate_retest_question(question: dict, selected: str, correct_answe
         },  # [LEARN RETEST]
     ]  # [LEARN RETEST]
     try:  # [LEARN RETEST]
-<<<<<<< HEAD
         resp = await llm_engine.generate_learn_completion_with_failover(  # [LEARN RETEST]
-=======
-        resp = await llm_engine.generate_small_completion_with_failover(  # [LEARN RETEST]
->>>>>>> main
             messages=retest_messages,  # [LEARN RETEST]
             temperature=0.3,  # [LEARN RETEST]
             max_tokens=512,  # [LEARN RETEST]
@@ -388,16 +355,10 @@ async def _background_generate_and_save_retest(  # [LEARN RETEST]
 
 
 
-<<<<<<< HEAD
 async def _generate_section_content(section: dict, chunks: list, tier: str) -> tuple[str, list]:  # [LEARN MODE TIERS] added tier param
     """
     Generate explanation and check_questions for a section using TEXT_SECONDARY.
     Selects system prompts from _EXPLAIN_SYSTEM_BY_TIER / _QUESTIONS_SYSTEM_BY_TIER based on tier.
-=======
-async def _generate_section_content(section: dict, chunks: list) -> tuple[str, list]:
-    """
-    Generate explanation and check_questions for a section using TEXT_SECONDARY.
->>>>>>> main
     Returns (explanation_text, check_questions_list).
     """
     chunk_text = "\n\n".join(c.get("content", "") for c in chunks if c.get("content"))
@@ -410,7 +371,6 @@ async def _generate_section_content(section: dict, chunks: list) -> tuple[str, l
         f"Content:\n{chunk_text[:8000]}"   # guard against very long inputs
     )
 
-<<<<<<< HEAD
     explain_sys = _EXPLAIN_SYSTEM_BY_TIER[tier]    # [LEARN MODE TIERS]
     questions_sys = _QUESTIONS_SYSTEM_BY_TIER[tier]  # [LEARN MODE TIERS]
 
@@ -421,47 +381,25 @@ async def _generate_section_content(section: dict, chunks: list) -> tuple[str, l
     ]
     questions_messages = [
         {"role": "system", "content": questions_sys},  # [LEARN MODE TIERS]
-=======
-    # Run both LLM calls concurrently
-    explain_messages = [
-        {"role": "system", "content": _EXPLAIN_SYSTEM},
-        {"role": "user", "content": context_block},
-    ]
-    questions_messages = [
-        {"role": "system", "content": _QUESTIONS_SYSTEM},
->>>>>>> main
         {"role": "user", "content": context_block},
     ]
 
     try:
         explain_resp, questions_resp = await asyncio.gather(
-<<<<<<< HEAD
             llm_engine.generate_learn_completion_with_failover(
-=======
-            llm_engine.generate_small_completion_with_failover(
->>>>>>> main
                 messages=explain_messages,
                 temperature=0.3,
                 max_tokens=1024,
             ),
-<<<<<<< HEAD
             llm_engine.generate_learn_completion_with_failover(
-=======
-            llm_engine.generate_small_completion_with_failover(
->>>>>>> main
                 messages=questions_messages,
                 temperature=0.15,
                 max_tokens=1024,
             ),
         )
     except Exception as exc:
-<<<<<<< HEAD
         logger.error("[LEARN] LLM generation failed for section %s/%s tier=%s: %s",
                      section.get("document_id"), section.get("section_index"), tier, exc)  # [LEARN MODE TIERS]
-=======
-        logger.error("[LEARN] LLM generation failed for section %s/%s: %s",
-                     section.get("document_id"), section.get("section_index"), exc)
->>>>>>> main
         raise HTTPException(status_code=502, detail="Failed to generate section content. Please try again.")
 
     # Extract text from completion objects (.choices[0].message.content pattern, same as quiz.py)
@@ -489,24 +427,15 @@ async def _generate_section_content(section: dict, chunks: list) -> tuple[str, l
         if isinstance(parsed, list):
             questions = parsed
         else:
-<<<<<<< HEAD
             logger.warning("[LEARN] Questions JSON was not a list for section %s/%s tier=%s",
                            section.get("document_id"), section.get("section_index"), tier)  # [LEARN MODE TIERS]
     except json.JSONDecodeError as exc:
         logger.warning("[LEARN] Could not parse questions JSON for section %s/%s tier=%s: %s | raw=%s",
                        section.get("document_id"), section.get("section_index"), tier, exc, raw_q[:200])  # [LEARN MODE TIERS]
-=======
-            logger.warning("[LEARN] Questions JSON was not a list for section %s/%s",
-                           section.get("document_id"), section.get("section_index"))
-    except json.JSONDecodeError as exc:
-        logger.warning("[LEARN] Could not parse questions JSON for section %s/%s: %s | raw=%s",
-                       section.get("document_id"), section.get("section_index"), exc, raw_q[:200])
->>>>>>> main
 
     return explanation, questions
 
 
-<<<<<<< HEAD
 async def _get_confidence_tier(user_id: str, document_id: str) -> str:  # [LEARN MODE TIERS]
     """
     Look up the confidence tier the student selected for this document.
@@ -561,18 +490,6 @@ async def _ensure_section_content(section: dict, tier: str) -> dict:  # [LEARN M
     document_id = section["document_id"]
     section_index = section["section_index"]
     section_id = section["id"]  # [LEARN MODE TIERS] needed for RPC call
-=======
-async def _ensure_section_content(section: dict) -> dict:
-    """
-    If explanation or check_questions are missing, generate them and persist.
-    Returns the updated section dict.
-    """
-    if section.get("explanation") and section.get("check_questions"):
-        return section
-
-    document_id = section["document_id"]
-    section_index = section["section_index"]
->>>>>>> main
 
     chunks = await _get_section_chunks(
         document_id,
@@ -591,7 +508,6 @@ async def _ensure_section_content(section: dict) -> dict:
             ),
         )
 
-<<<<<<< HEAD
     explanation, questions = await _generate_section_content(section, chunks, tier)  # [LEARN MODE TIERS]
 
     # Persist atomically — merge only the new tier key into tiered_content.
@@ -617,37 +533,6 @@ async def _ensure_section_content(section: dict) -> dict:
         **section,
         "explanation": explanation or "",               # [LEARN MODE TIERS]
         "check_questions": questions or [],             # [LEARN MODE TIERS]
-=======
-    explanation, questions = await _generate_section_content(section, chunks)
-
-    # Persist back to document_sections
-    db = _db()
-    update_payload: dict = {}
-    if explanation and not section.get("explanation"):
-        update_payload["explanation"] = explanation
-    if questions and not section.get("check_questions"):
-        update_payload["check_questions"] = questions
-
-    if update_payload:
-        try:
-            await _run(
-                lambda: db.table("document_sections")
-                .update(update_payload)
-                .eq("document_id", document_id)
-                .eq("section_index", section_index)
-                .execute(),
-                "persist section explanation/questions",
-            )
-        except Exception as exc:
-            logger.error("[LEARN] Failed to persist section content for %s/%s: %s",
-                         document_id, section_index, exc)
-            # Non-fatal: we still return the generated content this request
-
-    return {
-        **section,
-        "explanation": explanation or section.get("explanation"),
-        "check_questions": questions or section.get("check_questions") or [],
->>>>>>> main
     }
 
 
@@ -655,13 +540,10 @@ async def _ensure_section_content(section: dict) -> dict:
 # Request/Response models
 # ─────────────────────────────────────────────────────────────
 
-<<<<<<< HEAD
 class StartLearnRequest(BaseModel):               # [LEARN MODE TIERS]
     confidence: Literal["new", "familiar", "confident"]  # [LEARN MODE TIERS]
 
 
-=======
->>>>>>> main
 class StartLearnResponse(BaseModel):
     document_id: str
     total_sections: int
@@ -726,23 +608,14 @@ class CompleteResponse(BaseModel):
 @router.post("/documents/{document_id}/start", response_model=StartLearnResponse)
 async def start_learn_session(
     document_id: str,
-<<<<<<< HEAD
     body: StartLearnRequest,                       # [LEARN MODE TIERS] accept confidence tier from request body
-=======
->>>>>>> main
     current_user: User = Depends(get_current_user),
 ):
     """
     Initialize Learn Mode for a document.
-<<<<<<< HEAD
     Verifies access, persists the student's confidence tier selection, returns
     section count, and shows how many sections already have progress rows.
     Does NOT create progress rows proactively (they are created lazily on first visit).
-=======
-    Verifies access, returns section count, and shows how many sections
-    already have progress rows. Does NOT create progress rows proactively
-    (they are created lazily on first visit or completion).
->>>>>>> main
     """
     await _assert_document_access(document_id, current_user)
 
@@ -754,7 +627,6 @@ async def start_learn_session(
         )
 
     db = _db()
-<<<<<<< HEAD
 
     # [LEARN MODE TIERS] Upsert the student's confidence tier.
     # on_conflict overwrites confidence_level if the student restarts with a different tier.
@@ -777,8 +649,6 @@ async def start_learn_session(
             current_user.id, document_id, exc,   # [LEARN MODE TIERS]
         )                                         # [LEARN MODE TIERS]
 
-=======
->>>>>>> main
     progress_res = await _run(
         lambda: db.table("document_learn_progress")
         .select("section_index")
@@ -851,13 +721,8 @@ async def get_learn_section(
 ):
     """
     Return a single section with its full explanation and check questions.
-<<<<<<< HEAD
     Content is served from the per-tier cache in tiered_content; if missing for the
     student's current tier, generates and persists it lazily.
-=======
-    If explanation/questions haven't been generated yet, generates them now (lazy)
-    using TEXT_SECONDARY and persists them to document_sections.
->>>>>>> main
 
     Also marks the section as 'in_progress' if it's currently 'not_started'.
     """
@@ -867,14 +732,9 @@ async def get_learn_section(
     if not section:
         raise HTTPException(status_code=404, detail=f"Section {section_index} not found.")
 
-<<<<<<< HEAD
     # [LEARN MODE TIERS] Look up the student's confidence tier, then ensure tier-specific content
     tier = await _get_confidence_tier(current_user.id, document_id)         # [LEARN MODE TIERS]
     section = await _ensure_section_content(section, tier)                  # [LEARN MODE TIERS]
-=======
-    # Lazily generate explanation + check questions if needed
-    section = await _ensure_section_content(section)
->>>>>>> main
 
     # Fetch / upsert progress for this section
     progress = await _get_progress(current_user.id, document_id, section_index)
@@ -939,14 +799,10 @@ async def submit_section_answer(
     if not section:
         raise HTTPException(status_code=404, detail=f"Section {section_index} not found.")
 
-<<<<<<< HEAD
     # [LEARN MODE TIERS] check_questions now live in tiered_content — resolve via tier
     tier = await _get_confidence_tier(current_user.id, document_id)         # [LEARN MODE TIERS]
     section = await _ensure_section_content(section, tier)                  # [LEARN MODE TIERS]
     questions = section.get("check_questions") or []                        # [LEARN MODE TIERS]
-=======
-    questions = section.get("check_questions") or []
->>>>>>> main
 
     # Fetch unresolved pending retests for target_section_index = section_index to align question indices
     db = _db()                                                                                  # [LEARN RETEST]
