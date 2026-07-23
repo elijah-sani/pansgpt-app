@@ -42,7 +42,7 @@ export default function QuizSelectionForm() {
     topic: '',
     level: '',
     numQuestions: 10,
-    questionType: 'MCQ',
+    questionType: 'OBJECTIVE',
     difficulty: 'medium',
     timeLimit: undefined,
   });
@@ -343,7 +343,7 @@ export default function QuizSelectionForm() {
               <option value={10} className="bg-card text-foreground">10 Questions</option>
               <option value={15} className="bg-card text-foreground">15 Questions</option>
               <option value={20} className="bg-card text-foreground">20 Questions</option>
-              <option value={30} className="bg-card text-foreground">30 Questions</option>
+              <option value={25} className="bg-card text-foreground">25 Questions</option>
             </select>
           </div>
 

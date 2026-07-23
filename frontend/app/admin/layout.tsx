@@ -123,6 +123,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 return;
             }
 
+            if (data?.is_university_admin && !data?.is_super_admin) {
+                router.replace('/main');
+                return;
+            }
+
             if (data?.is_super_admin && !getAdminWorkspaceUniversityId()) {
                 router.replace('/super-admin');
                 return;

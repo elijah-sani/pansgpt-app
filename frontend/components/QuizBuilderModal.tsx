@@ -52,7 +52,7 @@ export default function QuizBuilderModal({ isOpen, onClose, onJobCreated }: Quiz
     courseTitle: '',
     topic: '',
     numQuestions: 10,
-    questionType: 'MCQ',
+    questionType: 'OBJECTIVE',
     difficulty: 'medium',
     timeLimit: undefined,
   });
@@ -256,7 +256,7 @@ export default function QuizBuilderModal({ isOpen, onClose, onJobCreated }: Quiz
             <div className="space-y-2">
               <label htmlFor="quiz-count" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Number of questions</label>
               <select id="quiz-count" value={formData.numQuestions} onChange={(event) => updateField('numQuestions', Number(event.target.value))} className={inputClass}>
-                {[5, 10, 15, 20, 30].map((count) => (
+                {[5, 10, 15, 20, 25].map((count) => (
                   <option key={count} value={count}>{count} Questions</option>
                 ))}
               </select>

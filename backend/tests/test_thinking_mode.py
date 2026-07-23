@@ -87,6 +87,8 @@ def test_is_generic_title():
     assert _is_generic_title("discussion") is True
     assert _is_generic_title("help") is True
     assert _is_generic_title("study help") is True
+    assert _is_generic_title("Small Talk") is True
+    assert _is_generic_title("small talk") is True
     
     # Non-generic specific concepts
     assert _is_generic_title("Streptomyces erythreus") is False

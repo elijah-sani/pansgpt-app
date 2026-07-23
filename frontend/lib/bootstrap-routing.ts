@@ -17,7 +17,7 @@ export function resolveDestinationFromBootstrap(bootstrap: BootstrapRouteRespons
   }
 
   if (bootstrap?.is_university_admin) {
-    return '/admin';
+    return '/main';
   }
 
   if (bootstrap?.is_lecturer) {

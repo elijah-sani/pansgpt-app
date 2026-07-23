@@ -100,6 +100,7 @@ def _is_generic_title(title: str) -> bool:
         "study help",
         "conversation",
         "untitled",
+        "small talk",
     }
     if lower in generic_phrases:
         return True
