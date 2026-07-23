@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 
@@ -36,6 +36,8 @@ interface Document {
     embedding_status: 'pending' | 'processing' | 'completed' | 'failed';
     embedding_progress: number;
     embedding_error?: string; // For partial success or failure details
+    sections_status?: 'pending' | 'processing' | 'completed' | 'failed'; // [SECTION RETRY]
+    sections_error?: string | null; // [SECTION RETRY]
     ingestion_worker_heartbeat_at?: string | null;
     total_chunks: number;
     target_levels?: string[];
@@ -268,6 +270,8 @@ export default function LibraryPage() {
                 embedding_status?: 'pending' | 'processing' | 'completed' | 'failed';
                 embedding_progress?: number;
                 embedding_error?: string;
+                sections_status?: 'pending' | 'processing' | 'completed' | 'failed';
+                sections_error?: string;
                 ingestion_worker_heartbeat_at?: string | null;
                 total_chunks?: number;
                 target_levels?: string[];
@@ -295,6 +299,8 @@ export default function LibraryPage() {
                     embedding_status: status,
                     embedding_progress: progress,
                     embedding_error: row.embedding_error,
+                    sections_status: row.sections_status,
+                    sections_error: row.sections_error,
                     ingestion_worker_heartbeat_at: row.ingestion_worker_heartbeat_at,
                     total_chunks: Number(row.total_chunks) || 0,
                     target_levels: row.target_levels || [],
@@ -374,7 +380,8 @@ export default function LibraryPage() {
     // --- Background Polling for Processing Documents ---
     useEffect(() => {
         const hasProcessingDocs = documents.some(
-            doc => doc.embedding_status === 'pending' || doc.embedding_status === 'processing'
+            // [SECTION RETRY] Include section processing states in background polling
+            doc => doc.embedding_status === 'pending' || doc.embedding_status === 'processing' || doc.sections_status === 'pending' || doc.sections_status === 'processing'
         );
 
         if (!hasProcessingDocs) return;
@@ -676,7 +683,7 @@ export default function LibraryPage() {
 
     const getReembedActionLabel = (doc: Document) => {
         if (doc.embedding_status === 'processing' && isStaleProcessingDocument(doc)) return 'Retry stale processing';
-        if (doc.embedding_status === 'processing') return 'Processingâ€¦';
+        if (doc.embedding_status === 'processing') return 'Processing…';
         if (reembeddingIds.has(doc.id)) return 'Restarting ingestion...';
         if (doc.embedding_status === 'completed') return 'Re-process';
         return 'Retry Processing';
@@ -735,6 +742,55 @@ export default function LibraryPage() {
             });
         }
     };
+
+    // [SECTION RETRY] Helpers for retrying section outline generation
+    const canShowRetrySections = (doc: Document) => {
+        return doc.sections_status === 'failed' && doc.embedding_status === 'completed';
+    };
+
+    const canRunRetrySections = (doc: Document) => {
+        return doc.sections_status === 'failed' && doc.embedding_status === 'completed';
+    };
+
+    const handleRetrySections = async (doc: Document) => {
+        if (!canRunRetrySections(doc)) return;
+        const confirmed = window.confirm(
+            'Regenerate the section outline for this document? This will create new explanations and quiz questions for each section using the already-processed content. It will not affect embeddings or search.'
+        );
+        if (!confirmed) return;
+
+        const updateDocState = (updated: Partial<Document>) => {
+            setDocuments(prev => prev.map(d => d.id === doc.id ? { ...d, ...updated } : d));
+            if (selectedDoc?.id === doc.id) {
+                setSelectedDoc(prev => prev ? { ...prev, ...updated } : null);
+            }
+            if (mobileDetailsDoc?.id === doc.id) {
+                setMobileDetailsDoc(prev => prev ? { ...prev, ...updated } : null);
+            }
+        };
+
+        updateDocState({
+            sections_status: 'processing',
+            sections_error: undefined,
+        });
+
+        try {
+            const response = await api.fetch(`/admin/documents/${doc.id}/retry-sections`, { method: 'POST' });
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.detail || 'Failed to restart section outline generation');
+            }
+        } catch (err) {
+            console.error('Retry sections failed:', err);
+            const message = err instanceof Error ? err.message : 'Failed to restart section outline generation. Please try again.';
+            updateDocState({
+                sections_status: doc.sections_status,
+                sections_error: doc.sections_error,
+            });
+            alert(message);
+        }
+    };
+
     return (
         <div className="w-full flex flex-1 min-h-0 flex-col overflow-hidden animate-in fade-in duration-500 lg:h-screen lg:min-h-0 lg:overflow-hidden lg:pb-0">
             {/* Desktop Panel Workspace */}
@@ -1061,7 +1117,7 @@ export default function LibraryPage() {
 
                                         {/* Size column */}
                                         <div className="text-xs md:text-sm text-muted-foreground text-right font-medium">
-                                            {doc.file_size ? `${(doc.file_size / (1024 * 1024)).toFixed(2)} MB` : 'â€”'}
+                                            {doc.file_size ? `${(doc.file_size / (1024 * 1024)).toFixed(2)} MB` : '—'}
                                         </div>
                                     </div>
                                 );
@@ -1116,15 +1172,15 @@ export default function LibraryPage() {
                                     </div>
                                     <div className="flex justify-between items-center gap-2 min-w-0">
                                         <span className="text-muted-foreground shrink-0">File Size</span>
-                                        <span className="font-semibold truncate">{selectedDoc.file_size ? `${(selectedDoc.file_size / (1024 * 1024)).toFixed(2)} MB` : 'â€”'}</span>
+                                        <span className="font-semibold truncate">{selectedDoc.file_size ? `${(selectedDoc.file_size / (1024 * 1024)).toFixed(2)} MB` : '—'}</span>
                                     </div>
                                     <div className="flex justify-between items-center gap-2 min-w-0">
                                         <span className="text-muted-foreground shrink-0">Academic Session</span>
-                                        <span className="font-semibold truncate">{selectedDoc.academic_session || 'â€”'}</span>
+                                        <span className="font-semibold truncate">{selectedDoc.academic_session || '—'}</span>
                                     </div>
                                     <div className="flex justify-between items-center gap-2 min-w-0">
                                         <span className="text-muted-foreground shrink-0">Semester</span>
-                                        <span className="font-semibold truncate">{formatSemester(selectedDoc.semester) || 'â€”'}</span>
+                                        <span className="font-semibold truncate">{formatSemester(selectedDoc.semester) || '—'}</span>
                                     </div>
                                     <div className="flex justify-between items-center gap-2 min-w-0">
                                         <span className="text-muted-foreground shrink-0">Upload Date</span>
@@ -1136,6 +1192,15 @@ export default function LibraryPage() {
                                             status={selectedDoc.embedding_status}
                                             progress={selectedDoc.embedding_progress}
                                             error={selectedDoc.embedding_error}
+                                        />
+                                    </div>
+                                    {/* [SECTION RETRY] Section Outline Status row */}
+                                    <div className="flex justify-between items-center gap-2 min-w-0">
+                                        <span className="text-muted-foreground shrink-0">Section Outline Status</span>
+                                        <AIBadge
+                                            status={selectedDoc.sections_status || 'pending'}
+                                            progress={selectedDoc.sections_status === 'completed' ? 100 : 0}
+                                            error={selectedDoc.sections_error || undefined}
                                         />
                                     </div>
                                     {selectedDoc.embedding_status === 'completed' && (
@@ -1150,6 +1215,14 @@ export default function LibraryPage() {
                                     <div className="bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl p-3 text-xs leading-relaxed space-y-1 mt-2 min-w-0">
                                         <p className="font-bold flex items-center gap-1.5 shrink-0"><AlertCircle className="w-3.5 h-3.5 text-red-500" /> AI Ingestion Failed</p>
                                         <p className="font-mono text-[10px] break-words">{selectedDoc.embedding_error}</p>
+                                    </div>
+                                )}
+
+                                {/* [SECTION RETRY] Section Outline Error box */}
+                                {selectedDoc.sections_status === 'failed' && selectedDoc.sections_error && (
+                                    <div className="bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl p-3 text-xs leading-relaxed space-y-1 mt-2 min-w-0">
+                                        <p className="font-bold flex items-center gap-1.5 shrink-0"><AlertCircle className="w-3.5 h-3.5 text-red-500" /> Section Outline Failed</p>
+                                        <p className="font-mono text-[10px] break-words">{selectedDoc.sections_error}</p>
                                     </div>
                                 )}
                             </div>
@@ -1184,6 +1257,19 @@ export default function LibraryPage() {
                                     >
                                         <Sparkles className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
                                         <span>{getReembedActionLabel(selectedDoc)}</span>
+                                    </button>
+                                )}
+
+                                {/* [SECTION RETRY] Retry Sections button */}
+                                {canShowRetrySections(selectedDoc) && (
+                                    <button
+                                        type="button"
+                                        onClick={() => void handleRetrySections(selectedDoc)}
+                                        disabled={!canRunRetrySections(selectedDoc)}
+                                        className="w-full py-2.5 rounded-xl border border-border/80 bg-background hover:bg-muted text-xs font-bold text-foreground transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+                                    >
+                                        <RefreshCw className="w-3.5 h-3.5 text-primary" />
+                                        <span>Retry Section Outline</span>
                                     </button>
                                 )}
 
@@ -1484,6 +1570,12 @@ export default function LibraryPage() {
                         canShowReembed={canShowReembedAction(mobileDetailsDoc)}
                         canRunReembed={canRunReembedDocument(mobileDetailsDoc)}
                         reembedLabel={getReembedActionLabel(mobileDetailsDoc)}
+                        canShowResection={canShowRetrySections(mobileDetailsDoc)}
+                        canRunResection={canRunRetrySections(mobileDetailsDoc)}
+                        resectionLabel="Retry Section Outline"
+                        onResection={async () => {
+                            await handleRetrySections(mobileDetailsDoc);
+                        }}
                     />
                 )}
             </AnimatePresence>
@@ -1576,6 +1668,10 @@ function MobileDocumentDetailsSheet({
     canShowReembed,
     canRunReembed,
     reembedLabel,
+    canShowResection,
+    canRunResection,
+    resectionLabel,
+    onResection,
 }: {
     doc: Document;
     onClose: () => void;
@@ -1586,6 +1682,10 @@ function MobileDocumentDetailsSheet({
     canShowReembed: boolean;
     canRunReembed: boolean;
     reembedLabel: string;
+    canShowResection?: boolean;
+    canRunResection?: boolean;
+    resectionLabel?: string;
+    onResection?: () => Promise<void>;
 }) {
     const isArchived = normalizeMaterialStatus(doc.material_status) === 'archived';
     
@@ -1634,15 +1734,15 @@ function MobileDocumentDetailsSheet({
                     </div>
                     <div className="flex justify-between">
                         <span className="text-muted-foreground">File Size</span>
-                        <span className="font-semibold">{doc.file_size ? `${(doc.file_size / (1024 * 1024)).toFixed(2)} MB` : 'â€”'}</span>
+                        <span className="font-semibold">{doc.file_size ? `${(doc.file_size / (1024 * 1024)).toFixed(2)} MB` : '—'}</span>
                     </div>
                     <div className="flex justify-between">
                         <span className="text-muted-foreground">Academic Session</span>
-                        <span className="font-semibold">{doc.academic_session || 'â€”'}</span>
+                        <span className="font-semibold">{doc.academic_session || '—'}</span>
                     </div>
                     <div className="flex justify-between">
                         <span className="text-muted-foreground">Semester</span>
-                        <span className="font-semibold">{formatSemester(doc.semester) || 'â€”'}</span>
+                        <span className="font-semibold">{formatSemester(doc.semester) || '—'}</span>
                     </div>
                     <div className="flex justify-between">
                         <span className="text-muted-foreground">Upload Date</span>
@@ -1656,10 +1756,26 @@ function MobileDocumentDetailsSheet({
                             error={doc.embedding_error}
                         />
                     </div>
+                    {/* [SECTION RETRY] Section Outline Status */}
+                    <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">Section Outline Status</span>
+                        <AIBadge
+                            status={doc.sections_status || 'pending'}
+                            progress={doc.sections_status === 'completed' ? 100 : 0}
+                            error={doc.sections_error || undefined}
+                        />
+                    </div>
                     {doc.embedding_error && (
                         <div className="bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl p-3 text-xs leading-relaxed space-y-1">
                             <p className="font-bold flex items-center gap-1.5"><AlertCircle className="w-3.5 h-3.5" /> AI Ingestion Failed</p>
                             <p className="font-mono text-[9px] break-words">{doc.embedding_error}</p>
+                        </div>
+                    )}
+                    {/* [SECTION RETRY] Section Outline Error box */}
+                    {doc.sections_status === 'failed' && doc.sections_error && (
+                        <div className="bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl p-3 text-xs leading-relaxed space-y-1">
+                            <p className="font-bold flex items-center gap-1.5"><AlertCircle className="w-3.5 h-3.5" /> Section Outline Failed</p>
+                            <p className="font-mono text-[9px] break-words">{doc.sections_error}</p>
                         </div>
                     )}
                 </div>
@@ -1700,6 +1816,21 @@ function MobileDocumentDetailsSheet({
                             <span>{reembedLabel}</span>
                         </button>
                     )}
+
+                    {/* [SECTION RETRY] Mobile Retry Sections button */}
+                    {canShowResection && onResection && ( // [SECTION RETRY]
+                        <button // [SECTION RETRY]
+                            type="button" // [SECTION RETRY]
+                            onClick={() => { // [SECTION RETRY]
+                                void onResection(); // [SECTION RETRY]
+                            }} // [SECTION RETRY]
+                            disabled={!canRunResection} // [SECTION RETRY]
+                            className="w-full py-3 rounded-xl border border-border/80 bg-card hover:bg-muted text-xs font-bold text-foreground transition-all flex items-center justify-center gap-1.5 disabled:opacity-50" // [SECTION RETRY]
+                        > // [SECTION RETRY]
+                            <RefreshCw className="w-3.5 h-3.5 text-primary" /> // [SECTION RETRY]
+                            <span>{resectionLabel || 'Retry Section Outline'}</span> // [SECTION RETRY]
+                        </button> // [SECTION RETRY]
+                    )} {/* [SECTION RETRY] */}
 
                     <button
                         type="button"

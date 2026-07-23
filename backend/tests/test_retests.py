@@ -27,8 +27,11 @@ API_KEY      = API_KEYS_RAW.split(",")[0].strip()
 BACKEND      = "http://localhost:8000"
 DOC_ID       = "b7bc27cb-4489-4033-8ed6-22c179d596f7"
 
-STUDENT_EMAIL    = "[EMAIL_ADDRESS]"
-STUDENT_PASSWORD = "[PASSWORD]"
+STUDENT_EMAIL    = os.environ.get("TEST_STUDENT_EMAIL")     # [SECRET FIX]
+STUDENT_PASSWORD = os.environ.get("TEST_STUDENT_PASSWORD")  # [SECRET FIX]
+
+if not STUDENT_EMAIL or not STUDENT_PASSWORD:  # [SECRET FIX]
+    raise RuntimeError("Missing required test credentials: TEST_STUDENT_EMAIL and TEST_STUDENT_PASSWORD must be set in your environment or local .env file before running test_retests.py.")  # [SECRET FIX]
 
 print("======================================================================")
 print("[AUTH] Signing in via Supabase password auth...")

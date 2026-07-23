@@ -244,3 +244,110 @@ def test_rollover_academic_context_dry_run_returns_rpc_payload(client: TestClien
     assert payload["archived_count"] == 12
     assert payload["previous_context"]["current_academic_session"] == "2024/2025"
     assert payload["new_context"]["current_semester"] == "second"
+
+
+# [SECTION RETRY]
+def test_get_document_status_includes_sections_fields(client, monkeypatch):  # [SECTION RETRY]
+    async def _current_admin():  # [SECTION RETRY]
+        return _admin_user()  # [SECTION RETRY]
+
+    async def _resolve_admin_workspace_university(current_user, requested_university_id=None):  # [SECTION RETRY]
+        return "11111111-1111-1111-1111-111111111111"  # [SECTION RETRY]
+
+    async def _get_document_row_for_admin(db, document_id, admin_scope, select_fields):  # [SECTION RETRY]
+        return {"id": document_id, "university_id": "11111111-1111-1111-1111-111111111111"}  # [SECTION RETRY]
+
+    async def _execute_with_retry_async(fn, operation_name):  # [SECTION RETRY]
+        return SimpleNamespace(data=[{  # [SECTION RETRY]
+            "embedding_status": "completed",  # [SECTION RETRY]
+            "embedding_progress": 100,  # [SECTION RETRY]
+            "total_chunks": 15,  # [SECTION RETRY]
+            "embedding_error": None,  # [SECTION RETRY]
+            "sections_status": "failed",  # [SECTION RETRY]
+            "sections_error": "LLM timeout",  # [SECTION RETRY]
+        }])  # [SECTION RETRY]
+
+    app.dependency_overrides[library.get_current_admin] = _current_admin  # [SECTION RETRY]
+    monkeypatch.setattr(library, "_db_client", lambda: object())  # [SECTION RETRY]
+    monkeypatch.setattr(library, "resolve_admin_workspace_university", _resolve_admin_workspace_university)  # [SECTION RETRY]
+    monkeypatch.setattr(library, "_get_document_row_for_admin", _get_document_row_for_admin)  # [SECTION RETRY]
+    monkeypatch.setattr(library, "_execute_with_retry_async", _execute_with_retry_async)  # [SECTION RETRY]
+
+    response = client.get("/admin/documents/doc-123/status", headers={"x-api-key": "test"})  # [SECTION RETRY]
+    assert response.status_code == 200  # [SECTION RETRY]
+    payload = response.json()  # [SECTION RETRY]
+    assert payload["status"] == "completed"  # [SECTION RETRY]
+    assert payload["sections_status"] == "failed"  # [SECTION RETRY]
+    assert payload["sections_error"] == "LLM timeout"  # [SECTION RETRY]
+
+
+# [SECTION RETRY]
+def test_retry_sections_validation_guards(client, monkeypatch):  # [SECTION RETRY]
+    async def _current_admin():  # [SECTION RETRY]
+        return _admin_user()  # [SECTION RETRY]
+
+    async def _resolve_admin_workspace_university(current_user, requested_university_id=None):  # [SECTION RETRY]
+        return "11111111-1111-1111-1111-111111111111"  # [SECTION RETRY]
+
+    app.dependency_overrides[library.get_current_admin] = _current_admin  # [SECTION RETRY]
+    monkeypatch.setattr(library, "_db_client", lambda: object())  # [SECTION RETRY]
+    monkeypatch.setattr(library, "resolve_admin_workspace_university", _resolve_admin_workspace_university)  # [SECTION RETRY]
+
+    # Test 1: Refuse when embedding_status is processing (not completed)  # [SECTION RETRY]
+    async def _get_doc_incomplete(db, document_id, admin_scope, select_fields):  # [SECTION RETRY]
+        return {"id": document_id, "university_id": admin_scope, "embedding_status": "processing", "sections_status": "failed"}  # [SECTION RETRY]
+
+    monkeypatch.setattr(library, "_get_document_row_for_admin", _get_doc_incomplete)  # [SECTION RETRY]
+    res1 = client.post("/admin/documents/doc-123/retry-sections", headers={"x-api-key": "test"})  # [SECTION RETRY]
+    assert res1.status_code == 400  # [SECTION RETRY]
+    assert "finish AI indexing" in res1.json()["detail"]  # [SECTION RETRY]
+
+    # Test 2: Refuse when sections_status is processing  # [SECTION RETRY]
+    async def _get_doc_processing_sections(db, document_id, admin_scope, select_fields):  # [SECTION RETRY]
+        return {"id": document_id, "university_id": admin_scope, "embedding_status": "completed", "sections_status": "processing"}  # [SECTION RETRY]
+
+    monkeypatch.setattr(library, "_get_document_row_for_admin", _get_doc_processing_sections)  # [SECTION RETRY]
+    res2 = client.post("/admin/documents/doc-123/retry-sections", headers={"x-api-key": "test"})  # [SECTION RETRY]
+    assert res2.status_code == 409  # [SECTION RETRY]
+    assert "already in progress" in res2.json()["detail"]  # [SECTION RETRY]
+
+
+# [SECTION RETRY]
+def test_retry_sections_success(client, monkeypatch):  # [SECTION RETRY]
+    async def _current_admin():  # [SECTION RETRY]
+        return _admin_user()  # [SECTION RETRY]
+
+    async def _resolve_admin_workspace_university(current_user, requested_university_id=None):  # [SECTION RETRY]
+        return "11111111-1111-1111-1111-111111111111"  # [SECTION RETRY]
+
+    async def _get_doc(db, document_id, admin_scope, select_fields):  # [SECTION RETRY]
+        return {"id": document_id, "university_id": admin_scope, "embedding_status": "completed", "sections_status": "failed"}  # [SECTION RETRY]
+
+    async def _execute_with_retry_async(fn, operation_name):  # [SECTION RETRY]
+        if "document_embeddings" in operation_name:  # [SECTION RETRY]
+            return SimpleNamespace(data=[  # [SECTION RETRY]
+                {"content": "Chunk 1 text", "page_start": 1, "page_end": 2},  # [SECTION RETRY]
+                {"content": "Chunk 2 text", "page_start": 3, "page_end": 5},  # [SECTION RETRY]
+            ])  # [SECTION RETRY]
+        return SimpleNamespace(data=[])  # [SECTION RETRY]
+
+    created_tasks = []  # [SECTION RETRY]
+    def _mock_create_task(coro):  # [SECTION RETRY]
+        created_tasks.append(coro)  # [SECTION RETRY]
+        coro.close()  # prevent unawaited coroutine warning  # [SECTION RETRY]
+        return None  # [SECTION RETRY]
+
+    app.dependency_overrides[library.get_current_admin] = _current_admin  # [SECTION RETRY]
+    monkeypatch.setattr(library, "_db_client", lambda: object())  # [SECTION RETRY]
+    monkeypatch.setattr(library, "resolve_admin_workspace_university", _resolve_admin_workspace_university)  # [SECTION RETRY]
+    monkeypatch.setattr(library, "_get_document_row_for_admin", _get_doc)  # [SECTION RETRY]
+    monkeypatch.setattr(library, "_execute_with_retry_async", _execute_with_retry_async)  # [SECTION RETRY]
+    monkeypatch.setattr(library.asyncio, "create_task", _mock_create_task)  # [SECTION RETRY]
+
+    res = client.post("/admin/documents/doc-123/retry-sections", headers={"x-api-key": "test"})  # [SECTION RETRY]
+    assert res.status_code == 200  # [SECTION RETRY]
+    payload = res.json()  # [SECTION RETRY]
+    assert payload["status"] == "processing"  # [SECTION RETRY]
+    assert payload["sections_status"] == "processing"  # [SECTION RETRY]
+    assert len(created_tasks) == 1  # [SECTION RETRY]
+
