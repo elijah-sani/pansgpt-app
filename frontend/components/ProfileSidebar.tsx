@@ -132,18 +132,6 @@ export default function ProfileSidebar({
                         </div>
                     </div>
                 </div>
-
-                <div className="px-4 py-3">
-                    <button
-                        onClick={handleLogout}
-                        className="flex items-center gap-3 w-full py-2.5 px-3 text-left transition-all rounded-xl bg-red-500/5 hover:bg-red-500/10 active:bg-red-500/15 group"
-                    >
-                        <div className="w-8 h-8 rounded-lg bg-red-500/10 flex items-center justify-center shrink-0 group-hover:bg-red-500/15 transition-colors">
-                            <LogOut size={16} className="text-red-500" />
-                        </div>
-                        <span className="text-sm font-medium text-foreground group-hover:text-red-500 transition-colors">Log Out</span>
-                    </button>
-                </div>
             </div>
         </>
     );
