@@ -54,7 +54,7 @@ export function QuickActionModal({ isOpen, onClose, card, onSubmit, isInlineMobi
       return; // [QUICK ACTION CARDS]
     } // [QUICK ACTION CARDS]
  // [QUICK ACTION CARDS]
-    const prompt = card.hasCountSelector ? card.buildPrompt(inputValue.trim(), selectedCount) : card.buildPrompt(inputValue.trim()); // [QUICK ACTION CARDS]
+    const prompt = card.hasCountSelector ? (card.buildPrompt as (input: string, count?: number) => string)(inputValue.trim(), selectedCount) : card.buildPrompt(inputValue.trim()); // [QUICK ACTION CARDS]
     onSubmit(prompt); // [QUICK ACTION CARDS]
     onClose(); // [QUICK ACTION CARDS]
   }; // [QUICK ACTION CARDS]
