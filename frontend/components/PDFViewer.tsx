@@ -571,6 +571,19 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
     // Tutorial — show once per user
     const [showTutorial, setShowTutorial] = useState(false);
+
+    // Go-to-page modal
+    const [showGoToPage, setShowGoToPage] = useState(false);
+    const [goToPageInput, setGoToPageInput] = useState('');
+    const goToPageInputRef = React.useRef<HTMLInputElement>(null);
+    const handleGoToPage = () => {
+        const target = parseInt(goToPageInput, 10);
+        if (!isNaN(target) && target >= 1 && target <= numPages) {
+            document.getElementById(`page-container-${target}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        setShowGoToPage(false);
+        setGoToPageInput('');
+    };
     useEffect(() => {
         const seen = localStorage.getItem('pansgpt-reader-tutorial-seen');
         if (!seen) setShowTutorial(true);
@@ -2365,6 +2378,47 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
             {/* Study mode tutorial — shows once per user */}
             {showTutorial && <StudyModeTutorial onClose={handleCloseTutorial} />}
 
+            {/* Go-to-page modal */}
+            {showGoToPage && (
+                <div
+                    className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150"
+                    onClick={(e) => { if (e.target === e.currentTarget) { setShowGoToPage(false); setGoToPageInput(''); } }}
+                >
+                    <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-xs p-5 flex flex-col gap-4 animate-in zoom-in-95 duration-150">
+                        <div className="space-y-0.5">
+                            <h3 className="text-sm font-bold text-foreground">Go to page</h3>
+                            <p className="text-xs text-muted-foreground">Enter a page number between 1 and {numPages}</p>
+                        </div>
+                        <input
+                            ref={goToPageInputRef}
+                            type="number"
+                            min={1}
+                            max={numPages}
+                            value={goToPageInput}
+                            onChange={(e) => setGoToPageInput(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') handleGoToPage(); if (e.key === 'Escape') { setShowGoToPage(false); setGoToPageInput(''); } }}
+                            placeholder={`e.g. ${currentPage}`}
+                            className="w-full px-4 py-2.5 rounded-xl border border-border bg-background text-foreground text-sm font-medium placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                            autoFocus
+                        />
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => { setShowGoToPage(false); setGoToPageInput(''); }}
+                                className="flex-1 py-2.5 rounded-xl border border-border bg-muted/40 hover:bg-muted text-foreground text-sm font-semibold transition-all"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleGoToPage}
+                                className="flex-[2] py-2.5 rounded-xl bg-primary hover:opacity-90 active:opacity-95 text-primary-foreground text-sm font-bold transition-all shadow-md shadow-primary/20"
+                            >
+                                Go
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {!isMounted ? (
                 <InitialLoading />
             ) : (
@@ -2919,9 +2973,13 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                     >
                                         <ChevronLeft className="w-3.5 h-3.5" />
                                     </button>
-                                    <span className="flex items-center gap-1 px-2 text-sm font-medium text-muted-foreground select-none min-w-[4rem] justify-center">
+                                    <button
+                                        onClick={() => { setGoToPageInput(String(currentPage)); setShowGoToPage(true); }}
+                                        className="flex items-center gap-1 px-2 text-sm font-medium text-muted-foreground hover:text-foreground select-none min-w-[4rem] justify-center hover:bg-background rounded-full py-0.5 transition-all cursor-pointer"
+                                        title="Go to page"
+                                    >
                                         {currentPage} / {numPages}
-                                    </span>
+                                    </button>
                                     <button
                                         onClick={() => {
                                             const next = Math.min(numPages, currentPage + 1);
@@ -3110,13 +3168,17 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                         </span>
                                     </button>
 
-                                    {/* 2. Page Indicator Action (Center Document Icon + Counter Label underneath) */}
-                                    <div className="flex flex-col items-center justify-center gap-1.5 text-muted-foreground">
-                                        <FileText className="w-5 h-5 text-foreground" />
-                                        <span className="text-[11px] font-semibold text-foreground leading-none">
+                                    {/* 2. Page Indicator Action (Center) — tappable to open go-to-page modal */}
+                                    <button
+                                        onClick={() => { setGoToPageInput(String(currentPage)); setShowGoToPage(true); }}
+                                        className="flex flex-col items-center justify-center gap-1.5 min-w-[50px] transition-all active:scale-95 text-foreground"
+                                        title="Go to page"
+                                    >
+                                        <FileText className="w-5 h-5" />
+                                        <span className="text-[11px] font-semibold leading-none">
                                             {currentPage}/{numPages || 1}
                                         </span>
-                                    </div>
+                                    </button>
 
                                     {/* 3. Help Action */}
                                     <button
