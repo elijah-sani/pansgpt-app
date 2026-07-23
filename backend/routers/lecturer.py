@@ -312,7 +312,7 @@ async def _enrich_material_submissions_with_library_state(rows: list[dict]) -> l
     try:
         library_res = await _run_db(
             lambda: sb.table("pans_library")
-            .select("id,embedding_status,embedding_progress,embedding_error")
+            .select("id,embedding_status,embedding_progress,embedding_error,sections_status,sections_error")  # [SECTION RETRY]
             .in_("id", library_ids)
             .execute()
         )
@@ -329,6 +329,8 @@ async def _enrich_material_submissions_with_library_state(rows: list[dict]) -> l
             payload["library_embedding_status"] = linked.get("embedding_status")
             payload["library_embedding_progress"] = linked.get("embedding_progress")
             payload["library_embedding_error"] = linked.get("embedding_error")
+            payload["library_sections_status"] = linked.get("sections_status")  # [SECTION RETRY]
+            payload["library_sections_error"] = linked.get("sections_error")  # [SECTION RETRY]
         enriched.append(payload)
     return enriched
 

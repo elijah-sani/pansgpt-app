@@ -1916,10 +1916,10 @@ async def get_document_status(
     
     try:
         await _get_document_row_for_admin(db, document_id, admin_scope, "id,university_id")
-        # Lightweight query for status fields only
+        # [SECTION RETRY] Lightweight query for status fields only
         response = await _execute_with_retry_async(
             lambda: db.table("pans_library")
-            .select("embedding_status, embedding_progress, total_chunks, embedding_error")
+            .select("embedding_status, embedding_progress, total_chunks, embedding_error, sections_status, sections_error")  # [SECTION RETRY]
             .eq("id", document_id)
             .execute(),
             f"Fetch document status for {document_id}",
@@ -1938,7 +1938,9 @@ async def get_document_status(
             "status": status_value,
             "progress": progress_value,
             "total": data.get("total_chunks", 0),
-            "error": data.get("embedding_error")
+            "error": data.get("embedding_error"),
+            "sections_status": data.get("sections_status", "pending"),  # [SECTION RETRY]
+            "sections_error": data.get("sections_error")  # [SECTION RETRY]
         }
         
     except HTTPException:
@@ -1946,6 +1948,94 @@ async def get_document_status(
     except Exception as e:
         logger.error(f"Status Check Error: {e}")
         raise HTTPException(status_code=500, detail="Unable to check upload status. Please try again.")
+
+
+# [SECTION RETRY]
+@router.post("/documents/{document_id}/retry-sections", dependencies=[Depends(verify_api_key)])  # [SECTION RETRY]
+async def admin_retry_document_sections(  # [SECTION RETRY]
+    document_id: str,  # [SECTION RETRY]
+    university_id: Optional[str] = Query(None),  # [SECTION RETRY]
+    current_user: User = Depends(get_current_admin),  # [SECTION RETRY]
+):  # [SECTION RETRY]
+    """
+    [SECTION RETRY]
+    Admin Endpoint: Regenerate document section outline without deleting or rebuilding embeddings.
+    """
+    db = _db_client()  # [SECTION RETRY]
+    if not db:  # [SECTION RETRY]
+        raise HTTPException(status_code=503, detail="The service is temporarily unavailable. Please try again in a moment.")  # [SECTION RETRY]
+    admin_scope = await resolve_admin_workspace_university(current_user, university_id)  # [SECTION RETRY]
+
+    doc_row = await _get_document_row_for_admin(db, document_id, admin_scope, "id,university_id,embedding_status,sections_status")  # [SECTION RETRY]
+    
+    emb_status = (doc_row.get("embedding_status") or "").strip().lower()  # [SECTION RETRY]
+    sec_status = (doc_row.get("sections_status") or "").strip().lower()  # [SECTION RETRY]
+
+    if emb_status != "completed":  # [SECTION RETRY]
+        raise HTTPException(  # [SECTION RETRY]
+            status_code=400,  # [SECTION RETRY]
+            detail="This document must finish AI indexing before its section outline can be regenerated."  # [SECTION RETRY]
+        )  # [SECTION RETRY]
+
+    if sec_status == "processing":  # [SECTION RETRY]
+        raise HTTPException(  # [SECTION RETRY]
+            status_code=409,  # [SECTION RETRY]
+            detail="Section outline generation is already in progress for this document."  # [SECTION RETRY]
+        )  # [SECTION RETRY]
+
+    chunks_res = await _execute_with_retry_async(  # [SECTION RETRY]
+        lambda: db.table("document_embeddings")  # [SECTION RETRY]
+        .select("content, page_start, page_end")  # [SECTION RETRY]
+        .eq("document_id", document_id)  # [SECTION RETRY]
+        .order("id", desc=False)  # [SECTION RETRY]
+        .execute(),  # [SECTION RETRY]
+        f"Fetch document_embeddings for retry-sections {document_id}",  # [SECTION RETRY]
+    )  # [SECTION RETRY]
+    chunks_rows = chunks_res.data or []  # [SECTION RETRY]
+    if not chunks_rows:  # [SECTION RETRY]
+        raise HTTPException(  # [SECTION RETRY]
+            status_code=400,  # [SECTION RETRY]
+            detail="No processed content found for this document to generate sections."  # [SECTION RETRY]
+        )  # [SECTION RETRY]
+
+    page_tagged_chunks = [  # [SECTION RETRY]
+        {  # [SECTION RETRY]
+            "content": row.get("content", ""),  # [SECTION RETRY]
+            "page_start": row.get("page_start") or 1,  # [SECTION RETRY]
+            "page_end": row.get("page_end") or 1,  # [SECTION RETRY]
+        }  # [SECTION RETRY]
+        for row in chunks_rows  # [SECTION RETRY]
+    ]  # [SECTION RETRY]
+
+    new_run_id = str(uuid4())  # [SECTION RETRY]
+    new_worker_id = str(uuid4())  # [SECTION RETRY]
+
+    await _execute_with_retry_async(  # [SECTION RETRY]
+        lambda: db.table("pans_library").update({  # [SECTION RETRY]
+            "ingestion_run_id": new_run_id,  # [SECTION RETRY]
+            "ingestion_worker_id": new_worker_id,  # [SECTION RETRY]
+            "sections_status": "processing",  # [SECTION RETRY]
+            "sections_error": None,  # [SECTION RETRY]
+            "last_updated_at": datetime.now(timezone.utc).isoformat(),  # [SECTION RETRY]
+        }).eq("id", document_id).execute(),  # [SECTION RETRY]
+        f"Update ingestion tokens and sections_status for retry-sections {document_id}",  # [SECTION RETRY]
+    )  # [SECTION RETRY]
+
+    asyncio.create_task(  # [SECTION RETRY]
+        generate_document_sections(  # [SECTION RETRY]
+            document_id=document_id,  # [SECTION RETRY]
+            page_tagged_chunks=page_tagged_chunks,  # [SECTION RETRY]
+            ingestion_run_id=new_run_id,  # [SECTION RETRY]
+            ingestion_worker_id=new_worker_id,  # [SECTION RETRY]
+        )  # [SECTION RETRY]
+    )  # [SECTION RETRY]
+
+    return {  # [SECTION RETRY]
+        "status": "processing",  # [SECTION RETRY]
+        "sections_status": "processing",  # [SECTION RETRY]
+        "sections_error": None,  # [SECTION RETRY]
+        "document_id": document_id,  # [SECTION RETRY]
+    }  # [SECTION RETRY]
 
 # --- Smart Resume: Reading Progress Endpoints ---
 
