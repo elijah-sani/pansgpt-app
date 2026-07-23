@@ -2417,7 +2417,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                     }`}
                                 title="AI Assistant"
                             >
-                                <Sparkles className="w-4 h-4 text-primary" />
+                                <Sparkles className="w-4 h-4" />
                             </button>
                         </div>
                     </div>
@@ -2986,7 +2986,6 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                     <button
                                         onClick={() => {
                                             setIsSidebarOpen(false);
-                                            setActiveTab('document');
                                         }}
                                         className="p-1.5 hover:bg-muted/50 rounded-lg text-muted-foreground hover:text-foreground transition-colors"
                                         title="Close AI Assistant"
@@ -3023,9 +3022,9 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                     </div>
                                 </div>
                             </div>
-                            {/* Mobile Sidebar Content */}
-                            <div className="flex-1 overflow-hidden">
-                                {activeTab === 'learn' ? (
+                            {/* Mobile Sidebar Content — both always mounted, CSS toggles visibility to preserve state */}
+                            <div className="flex-1 overflow-hidden relative">
+                                <div className={`h-full ${activeTab === 'learn' ? '' : 'hidden'}`}>
                                     <LearnModeView 
                                         documentId={resolvedDocumentId} 
                                         onJumpToSource={handleJumpToSource} 
@@ -3033,9 +3032,10 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                         sections={learnSections} // [LEARN MODE UI]
                                         onSectionsLoaded={setLearnSections} // [LEARN MODE UI]
                                     />
-                                ) : (
-                                    renderChatUI(true)
-                                )}
+                                </div>
+                                <div className={`h-full ${activeTab !== 'learn' ? '' : 'hidden'}`}>
+                                    {renderChatUI(true)}
+                                </div>
                             </div>
                         </div>
 
@@ -3045,8 +3045,9 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                 isSidebarOpen ? 'w-96 opacity-100' : 'w-0 opacity-0 pointer-events-none border-l-0'
                             }`}
                         >
-                            <div className="w-96 h-full flex-shrink-0">
-                                {activeTab === 'learn' ? (
+                            {/* Desktop Sidebar Content — both always mounted, CSS toggles visibility to preserve state */}
+                            <div className="w-96 h-full flex-shrink-0 relative">
+                                <div className={`h-full ${activeTab === 'learn' ? '' : 'hidden'}`}>
                                     <LearnModeView 
                                         documentId={resolvedDocumentId} 
                                         onJumpToSource={handleJumpToSource} 
@@ -3054,9 +3055,10 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                         sections={learnSections} // [LEARN MODE UI]
                                         onSectionsLoaded={setLearnSections} // [LEARN MODE UI]
                                     />
-                                ) : (
-                                    renderChatUI(false)
-                                )}
+                                </div>
+                                <div className={`h-full ${activeTab !== 'learn' ? '' : 'hidden'}`}>
+                                    {renderChatUI(false)}
+                                </div>
                             </div>
                         </div>
 
