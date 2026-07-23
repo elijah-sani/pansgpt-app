@@ -51,6 +51,8 @@ pip-delete-this-directory.txt
 .env.backup
 .env.supabase-backup
 .env*
+# [SECRET FIX]
+!.env.example
 backend/.env
 frontend/.env.local
 
