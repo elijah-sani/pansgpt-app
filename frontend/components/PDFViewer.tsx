@@ -1172,9 +1172,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
         // Open AI Sidebar drawer and switch active tab to chat
         setIsSidebarOpen(true);
-        if (window.innerWidth < 768) {
-            setActiveTab('chat');
-        }
+        setActiveTab('chat');
 
         setSelectionMenu(null);
         setShowMoreMenu(false);
@@ -1381,6 +1379,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         // Reset stream buffer and early-stop flag so stale state never bleeds into next send
         streamFullTextRef.current = '';
         wasEarlyStopRef.current = false;
+        setIsSidebarOpen(true);
+        setActiveTab('chat');
         setIsLoading(true);
         setIsError(false);
         setChatError(null);
@@ -1780,7 +1780,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     const handleMenuSend = async ({ text, attachments, intent }: { text: string; attachments: string[], intent?: 'snippet_explain' }) => {
         // 1. Open Sidebar
         setIsSidebarOpen(true);
-        if (window.innerWidth < 768) setActiveTab('chat');
+        setActiveTab('chat');
 
         // 2. Clear Snip UI
         setIsSnippingMode(false);
@@ -1799,7 +1799,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         }
         // 1. Open Sidebar
         setIsSidebarOpen(true);
-        if (window.innerWidth < 768) setActiveTab('chat');
+        setActiveTab('chat');
 
         // 2. Clear Snip UI
         setIsSnippingMode(false);
