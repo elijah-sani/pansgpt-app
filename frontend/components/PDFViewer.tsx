@@ -2396,7 +2396,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                     }`}
                                 title="AI Assistant"
                             >
-                                <Sparkles className="w-4 h-4 text-primary" />
+                                <Sparkles className="w-4 h-4" />
                             </button>
                         </div>
                     </div>
