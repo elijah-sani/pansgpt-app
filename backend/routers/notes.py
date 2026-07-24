@@ -15,6 +15,7 @@ from .shared import (
     _execute_with_retry,
     verify_api_key,
     logger,
+    time,
 )
 from .sanitize import sanitize_text, NOTE_MAX
 from utils.thinking_token_utils import strip_thinking_tokens
