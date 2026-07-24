@@ -73,8 +73,8 @@ export default function ProfileSidebar({
                         <div className="absolute top-0 inset-x-0 h-24 bg-gradient-to-b from-primary/10 to-transparent pointer-events-none" />
 
                         <div className="px-5 pt-6 pb-5 flex flex-col items-center text-center relative z-10">
-                            <div className="w-[72px] h-[72px] rounded-full bg-muted shadow-sm overflow-hidden ring-2 ring-primary/30 relative"> {/* [IMG OPTIMIZATION] */}
-                                <Image src={currentAvatar} alt="Avatar" fill sizes="72px" className="w-full h-full object-cover rounded-full" /> {/* [IMG OPTIMIZATION] */}
+                            <div className="w-[72px] h-[72px] rounded-full bg-muted shadow-sm overflow-hidden ring-2 ring-primary/30 relative"> {/* [ELECTRON API CONFIG] */}
+                                <Image src={currentAvatar} alt="Avatar" fill sizes="72px" unoptimized={typeof currentAvatar === "string" && currentAvatar.includes("dicebear.com")} className="w-full h-full object-cover rounded-full" /> {/* [ELECTRON API CONFIG] */}
                             </div>
 
                             <h3 className="text-lg font-bold text-foreground mt-3 leading-tight">{user.name || 'User'}</h3>

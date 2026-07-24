@@ -63,7 +63,7 @@ export default function AvatarSelectionModal({ isOpen, onClose, onConfirm }: Ava
                                     : 'border-border hover:border-primary/50 hover:scale-105'
                             }`}
                         >
-                            <Image src={buildAvatarUrl(seed)} alt={`Avatar ${i}`} fill sizes="(max-width: 640px) 33vw, 120px" className="w-full h-full object-cover bg-muted/30" /> {/* [IMG OPTIMIZATION] */}
+                            <Image src={buildAvatarUrl(seed)} alt={`Avatar ${i}`} fill sizes="(max-width: 640px) 33vw, 120px" unoptimized className="w-full h-full object-cover bg-muted/30" /> {/* [ELECTRON API CONFIG] */}
                             {selectedSeed === seed && (
                                 <div className="absolute top-1 right-1 bg-primary text-primary-foreground p-0.5 rounded-full shadow-sm">
                                     <Check className="w-3 h-3" />

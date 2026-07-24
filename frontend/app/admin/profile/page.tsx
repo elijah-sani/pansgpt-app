@@ -149,8 +149,8 @@ export default function AdminProfilePage() {
 
                         <div className="relative z-10 px-5 pt-6 pb-5 flex flex-col items-center text-center">
                             {/* Avatar */}
-                            <div className="w-[72px] h-[72px] rounded-full bg-muted shadow-sm overflow-hidden ring-2 ring-primary/30 relative"> {/* [IMG OPTIMIZATION] */}
-                                <Image src={currentAvatar} alt="Avatar" fill sizes="72px" className="w-full h-full object-cover rounded-full" /> {/* [IMG OPTIMIZATION] */}
+                            <div className="w-[72px] h-[72px] rounded-full bg-muted shadow-sm overflow-hidden ring-2 ring-primary/30 relative"> {/* [ELECTRON API CONFIG] */}
+                                <Image src={currentAvatar} alt="Avatar" fill sizes="72px" unoptimized={typeof currentAvatar === "string" && currentAvatar.includes("dicebear.com")} className="w-full h-full object-cover rounded-full" /> {/* [ELECTRON API CONFIG] */}
                             </div>
 
                             {/* Name */}
