@@ -3,7 +3,7 @@
 
 "use strict";
 
-const { app, BrowserWindow, dialog } = require("electron"); // [ELECTRON PHASE 1]
+const { app, BrowserWindow, dialog, shell } = require("electron"); // [ELECTRON PHASE 3]
 const path = require("path"); // [ELECTRON PHASE 1]
 const net = require("net"); // [ELECTRON PHASE 1]
 const http = require("http"); // [ELECTRON PHASE 1]
@@ -149,6 +149,24 @@ function createWindow(url) { // [ELECTRON PHASE 1]
       preload: path.join(__dirname, "preload.js"), // [ELECTRON PHASE 1]
     }, // [ELECTRON PHASE 1]
   }); // [ELECTRON PHASE 1]
+
+  // [ELECTRON PHASE 3] Intercept external link popups & new windows
+  mainWindow.webContents.setWindowOpenHandler(({ url: targetUrl }) => { // [ELECTRON PHASE 3]
+    if (!targetUrl || targetUrl === "about:blank" || targetUrl.startsWith("javascript:") || targetUrl.startsWith("data:")) { // [ELECTRON PHASE 3]
+      return { action: "deny" }; // [ELECTRON PHASE 3] Clean deny for empty/print popups without opening external browser
+    } // [ELECTRON PHASE 3]
+
+    try { // [ELECTRON PHASE 3]
+      const parsed = new URL(targetUrl); // [ELECTRON PHASE 3]
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") { // [ELECTRON PHASE 3]
+        shell.openExternal(targetUrl); // [ELECTRON PHASE 3] Open external HTTP/HTTPS links in system default browser
+      } // [ELECTRON PHASE 3]
+    } catch (err) { // [ELECTRON PHASE 3]
+      console.warn("[ELECTRON PHASE 3] Failed to parse target URL:", targetUrl, err); // [ELECTRON PHASE 3]
+    } // [ELECTRON PHASE 3]
+
+    return { action: "deny" }; // [ELECTRON PHASE 3] Prevent internal Electron popup windows
+  }); // [ELECTRON PHASE 3]
 
   mainWindow.loadURL(url); // [ELECTRON PHASE 1]
 
