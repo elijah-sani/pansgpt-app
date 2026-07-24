@@ -1841,7 +1841,7 @@ def _classify_quiz_generation_exception(exc: Exception) -> str:
 
 
 
-async def _generate_quiz_grading_response(system_prompt: str, user_prompt: str) -> str:
+async def _generate_quiz_grading_response(system_prompt: str, user_prompt: str, audit_meta: Optional[dict] = None) -> str:
     messages = merge_system_into_user([
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
@@ -1853,6 +1853,7 @@ async def _generate_quiz_grading_response(system_prompt: str, user_prompt: str) 
         has_images=False,
         stream=False,
         force_google=False,
+        audit_meta=audit_meta,
     )
     if response is None:
         raise RuntimeError("LLM grading failed on all available clients")
@@ -1913,6 +1914,16 @@ async def _generate_quiz_now(
             status_code=400,
             detail="Complete your profile with your university before generating document-based quizzes.",
         )
+
+    request_meta = {
+        "job_id": job_id,
+        "courseCode": body.courseCode,
+        "topic": body.topic or "General",
+        "numQuestions": body.numQuestions,
+        "request_type": "quiz",
+        "user_id": str(current_user.id),
+        "university_id": str(student_university_id),
+    }
     student_level = (student_context.get("level") or "").strip()
     if not student_level:
         raise HTTPException(

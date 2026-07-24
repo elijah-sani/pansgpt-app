@@ -224,6 +224,7 @@ async def _summarize_previous_session(user_id: str, exclude_session_id: str):
             temperature=0.3,
             max_tokens=768,
             stream=False,
+            audit_meta={"request_type": "summary", "user_id": user_id, "session_id": prev_session_id},
         )
 
         raw_output = (response.choices[0].message.content or "").strip()

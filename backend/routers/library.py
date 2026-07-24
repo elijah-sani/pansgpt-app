@@ -43,7 +43,7 @@ except ImportError:
 from services.pdf_conversion import convert_office_file_to_pdf, detect_admin_upload_file_type
 from services.policy_guard import contains_prompt_leak
 from services.security_logging import log_security_event
-from services import llm_engine  # [SECTION OUTLINE]
+from services import llm_engine, ai_usage_tracker  # [SECTION OUTLINE]
 from utils.thinking_token_utils import strip_thinking_tokens
 from .shared import get_current_academic_context
 
@@ -997,7 +997,7 @@ async def generate_document_sections(
             force_google=False,
             requested_model=llm_engine.TEXT_PRIMARY,
             response_format={"type": "json_object"},
-            audit_meta={"document_id": document_id, "action": "generate_document_sections"}
+            audit_meta={"document_id": document_id, "request_type": "document_processing", "action": "generate_document_sections"}
         )
 
         if not response:

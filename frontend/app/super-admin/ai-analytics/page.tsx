@@ -26,6 +26,18 @@ type TokenBucket = {
     provider?: string;
 };
 
+type ErrorItem = {
+    id: string;
+    status: string;
+    error_type: string;
+    error_message: string;
+    model_used: string;
+    provider: string;
+    request_type: string;
+    latency_ms: number | null;
+    created_at: string;
+};
+
 type Totals = {
     requests: number;
     prompt_tokens: number;
@@ -33,6 +45,7 @@ type Totals = {
     total_tokens: number;
     avg_latency_ms: number | null;
     by_status: Record<string, number>;
+    by_error_type?: Record<string, number>;
 };
 
 type DailyPoint = {
@@ -46,6 +59,7 @@ type AnalyticsData = {
     university_id: string | null;
     universities: Array<{ id: string; name: string; short_name?: string | null }>;
     totals: Totals;
+    recent_errors?: ErrorItem[];
     by_model: Record<string, TokenBucket>;
     by_provider: Record<string, TokenBucket>;
     by_request_type: Record<string, TokenBucket>;
@@ -254,6 +268,30 @@ export default function SuperAdminAIAnalyticsPage() {
                 )}
 
                 <button
+                    id="ai-analytics-download-report-btn"
+                    onClick={async () => {
+                        try {
+                            const p = selectedDays <= 1 ? 'daily' : selectedDays <= 7 ? 'weekly' : 'monthly';
+                            const res = await api.get(`/admin/ai-analytics/reports?period=${p}${selectedUniversity ? `&university_id=${selectedUniversity}` : ''}`);
+                            if (res.ok) {
+                                const reportJson = await res.json();
+                                const blob = new Blob([JSON.stringify(reportJson, null, 2)], { type: 'application/json' });
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement('a');
+                                a.href = url;
+                                a.download = `ai-analytics-report-${p}-${new Date().toISOString().slice(0, 10)}.json`;
+                                a.click();
+                            }
+                        } catch (err) {
+                            alert('Failed to download report');
+                        }
+                    }}
+                    className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white transition hover:bg-indigo-500 shadow-sm"
+                >
+                    Export Report
+                </button>
+
+                <button
                     id="ai-analytics-refresh-btn"
                     onClick={() => void fetchAnalytics(selectedUniversity, selectedDays)}
                     disabled={loading}
@@ -444,6 +482,52 @@ export default function SuperAdminAIAnalyticsPage() {
                                             No usage data recorded yet for this period.
                                             <br />
                                             <span className="text-xs">Run the SQL migration and send a few chat requests to start seeing data.</span>
+                                        </td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </section>
+
+                    {/* Recent Errors Table */}
+                    <section className="overflow-x-auto rounded-2xl border border-border/60 bg-card shadow-sm">
+                        <div className="flex items-center gap-2 border-b border-border px-5 py-4">
+                            <Activity className="h-4 w-4 text-red-500" />
+                            <h2 className="text-sm font-semibold text-foreground">Recent AI Errors & Diagnostics Feed</h2>
+                            <span className="ml-auto text-xs text-muted-foreground">Showing last {data.recent_errors?.length ?? 0} errors</span>
+                        </div>
+                        <table className="w-full min-w-[700px] text-sm">
+                            <thead>
+                                <tr className="border-b border-border text-xs uppercase text-muted-foreground">
+                                    <th className="px-5 py-3 text-left font-medium">Timestamp</th>
+                                    <th className="px-5 py-3 text-left font-medium">Error Type</th>
+                                    <th className="px-5 py-3 text-left font-medium">Feature</th>
+                                    <th className="px-5 py-3 text-left font-medium">Model</th>
+                                    <th className="px-5 py-3 text-left font-medium">Message</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-border">
+                                {(data.recent_errors ?? []).map((errItem) => (
+                                    <tr key={errItem.id} className="hover:bg-red-500/5 transition-colors">
+                                        <td className="px-5 py-3 text-xs text-muted-foreground whitespace-nowrap">
+                                            {new Date(errItem.created_at).toLocaleString()}
+                                        </td>
+                                        <td className="px-5 py-3">
+                                            <span className="inline-flex items-center rounded-md bg-red-100 dark:bg-red-950/60 px-2 py-0.5 text-xs font-semibold text-red-700 dark:text-red-300">
+                                                {errItem.error_type}
+                                            </span>
+                                        </td>
+                                        <td className="px-5 py-3 font-mono text-xs text-foreground">{errItem.request_type}</td>
+                                        <td className="px-5 py-3 text-xs text-muted-foreground max-w-[140px] truncate">{errItem.model_used}</td>
+                                        <td className="px-5 py-3 text-xs text-red-600 dark:text-red-400 font-mono max-w-[280px] truncate" title={errItem.error_message}>
+                                            {errItem.error_message || '—'}
+                                        </td>
+                                    </tr>
+                                ))}
+                                {!(data.recent_errors ?? []).length && (
+                                    <tr>
+                                        <td colSpan={5} className="px-5 py-8 text-center text-sm text-emerald-600 dark:text-emerald-400">
+                                            🎉 No AI errors recorded in this timeframe! All models functioning normally.
                                         </td>
                                     </tr>
                                 )}

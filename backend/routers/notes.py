@@ -110,9 +110,10 @@ async def _resolve_document_uuid(sb, document_id: str) -> str:
     return resolved
 
 
-async def _fix_typos(text: str) -> str:
+async def _fix_typos(text: str, user_id: Optional[str] = None) -> str:
     if not text or len(text.strip()) < 3:
         return text
+    started = time.perf_counter()
     try:
         if llm_engine.google_client is None:
             return text
@@ -139,14 +140,51 @@ async def _fix_typos(text: str) -> str:
             timeout=5.0,
         )
 
+        _latency_ms = (time.perf_counter() - started) * 1000
         corrected = strip_thinking_tokens((response.choices[0].message.content or "").strip())
+
+        from services import ai_usage_tracker
+        asyncio.create_task(ai_usage_tracker.log_usage(
+            model_used=llm_engine.TEXT_SECONDARY,
+            request_type="notes_fix",
+            prompt_character_count=len(text),
+            completion_character_count=len(corrected or ""),
+            latency_ms=_latency_ms,
+            status="success",
+            user_id=user_id,
+        ))
+
         if not corrected or len(corrected) > len(text) * 3:
             return text
         return corrected
     except asyncio.TimeoutError:
+        _latency_ms = (time.perf_counter() - started) * 1000
+        from services import ai_usage_tracker
+        asyncio.create_task(ai_usage_tracker.log_usage(
+            model_used=llm_engine.TEXT_SECONDARY,
+            request_type="notes_fix",
+            prompt_character_count=len(text),
+            latency_ms=_latency_ms,
+            status="timeout",
+            error_type="TimeoutError",
+            error_message="Typo correction timeout (5s)",
+            user_id=user_id,
+        ))
         logger.warning("Typo correction skipped: model took too long")
         return text
     except Exception as e:
+        _latency_ms = (time.perf_counter() - started) * 1000
+        from services import ai_usage_tracker
+        asyncio.create_task(ai_usage_tracker.log_usage(
+            model_used=llm_engine.TEXT_SECONDARY,
+            request_type="notes_fix",
+            prompt_character_count=len(text),
+            latency_ms=_latency_ms,
+            status="error",
+            error_type=type(e).__name__,
+            error_message=str(e)[:500],
+            user_id=user_id,
+        ))
         logger.warning(f"Typo correction failed (non-fatal): {e}")
         return text
 

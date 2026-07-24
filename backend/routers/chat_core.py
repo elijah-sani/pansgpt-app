@@ -1178,7 +1178,9 @@ async def transcribe_audio(request: Request, audio: UploadFile = File(...)):
     if shared.groq_client is None:
         raise HTTPException(status_code=503, detail="The transcription service is temporarily unavailable.")
 
+    from services import ai_usage_tracker
     temp_file_path = None
+    started = time.perf_counter()
     try:
         audio_bytes = await audio.read()
         if not audio_bytes:
@@ -1204,6 +1206,14 @@ async def transcribe_audio(request: Request, audio: UploadFile = File(...)):
                     file=temp_audio_file,
                     model="whisper-large-v3-turbo",
                 )
+            _latency_ms = (time.perf_counter() - started) * 1000
+            asyncio.create_task(ai_usage_tracker.log_usage(
+                model_used="whisper-large-v3-turbo",
+                request_type="transcription",
+                latency_ms=_latency_ms,
+                status="success",
+                completion_character_count=len(transcription.text or ""),
+            ))
             return {"text": transcription.text}
         except Exception as primary_error:
             logger.warning(f"Groq turbo transcription failed, falling back to whisper-large-v3: {primary_error}")
@@ -1213,8 +1223,25 @@ async def transcribe_audio(request: Request, audio: UploadFile = File(...)):
                         file=temp_audio_file,
                         model="whisper-large-v3",
                     )
+                _latency_ms = (time.perf_counter() - started) * 1000
+                asyncio.create_task(ai_usage_tracker.log_usage(
+                    model_used="whisper-large-v3",
+                    request_type="transcription",
+                    latency_ms=_latency_ms,
+                    status="success",
+                    completion_character_count=len(transcription.text or ""),
+                ))
                 return {"text": transcription.text}
             except Exception as secondary_error:
+                _latency_ms = (time.perf_counter() - started) * 1000
+                asyncio.create_task(ai_usage_tracker.log_usage(
+                    model_used="whisper-large-v3",
+                    request_type="transcription",
+                    latency_ms=_latency_ms,
+                    status="error",
+                    error_type=type(secondary_error).__name__,
+                    error_message=str(secondary_error)[:500],
+                ))
                 logger.error(f"Groq fallback transcription failed: {secondary_error}")
                 return JSONResponse(status_code=429, content={"error": "groq_limits_reached"})
     except HTTPException:

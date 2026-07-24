@@ -279,7 +279,7 @@ _RETEST_QUESTION_SYSTEM = (  # [LEARN RETEST]
 )  # [LEARN RETEST]
 
 
-async def _generate_retest_question(question: dict, selected: str, correct_answer: str, base_explanation: str) -> Optional[dict]:  # [LEARN RETEST]
+async def _generate_retest_question(question: dict, selected: str, correct_answer: str, base_explanation: str, user_id: Optional[str] = None, document_id: Optional[str] = None) -> Optional[dict]:  # [LEARN RETEST]
     """Generate ONE targeted retest question testing the same concept from a different angle."""  # [LEARN RETEST]
     retest_messages = [  # [LEARN RETEST]
         {"role": "system", "content": _RETEST_QUESTION_SYSTEM},  # [LEARN RETEST]
@@ -299,6 +299,7 @@ async def _generate_retest_question(question: dict, selected: str, correct_answe
             messages=retest_messages,  # [LEARN RETEST]
             temperature=0.3,  # [LEARN RETEST]
             max_tokens=512,  # [LEARN RETEST]
+            audit_meta={"request_type": "learn_retest", "user_id": user_id, "document_id": document_id},
         )  # [LEARN RETEST]
         if resp and getattr(resp, 'choices', None):  # [LEARN RETEST]
             raw_text = (resp.choices[0].message.content or "").strip()  # [LEARN RETEST]
@@ -330,7 +331,7 @@ async def _background_generate_and_save_retest(  # [LEARN RETEST]
     from utils import background_task_tracker  # [LEARN RETEST]
     background_task_tracker.increment()  # [LEARN RETEST]
     try:  # [LEARN RETEST]
-        retest_q = await _generate_retest_question(question, selected, correct_answer, base_explanation)  # [LEARN RETEST]
+        retest_q = await _generate_retest_question(question, selected, correct_answer, base_explanation, user_id=user_id, document_id=document_id)  # [LEARN RETEST]
         if retest_q:  # [LEARN RETEST]
             db = _db()  # [LEARN RETEST]
             payload = {  # [LEARN RETEST]
@@ -355,7 +356,7 @@ async def _background_generate_and_save_retest(  # [LEARN RETEST]
 
 
 
-async def _generate_section_content(section: dict, chunks: list, tier: str) -> tuple[str, list]:  # [LEARN MODE TIERS] added tier param
+async def _generate_section_content(section: dict, chunks: list, tier: str, user_id: Optional[str] = None) -> tuple[str, list]:  # [LEARN MODE TIERS] added tier param
     """
     Generate explanation and check_questions for a section using TEXT_SECONDARY.
     Selects system prompts from _EXPLAIN_SYSTEM_BY_TIER / _QUESTIONS_SYSTEM_BY_TIER based on tier.
@@ -385,16 +386,19 @@ async def _generate_section_content(section: dict, chunks: list, tier: str) -> t
     ]
 
     try:
+        doc_id = section.get("document_id")
         explain_resp, questions_resp = await asyncio.gather(
             llm_engine.generate_learn_completion_with_failover(
                 messages=explain_messages,
                 temperature=0.3,
                 max_tokens=1024,
+                audit_meta={"request_type": "learn_explain", "user_id": user_id, "document_id": doc_id},
             ),
             llm_engine.generate_learn_completion_with_failover(
                 messages=questions_messages,
                 temperature=0.15,
                 max_tokens=1024,
+                audit_meta={"request_type": "learn_questions", "user_id": user_id, "document_id": doc_id},
             ),
         )
     except Exception as exc:
@@ -896,6 +900,7 @@ async def submit_section_answer(
                 messages=followup_messages,
                 temperature=0.2,
                 max_tokens=256,
+                audit_meta={"request_type": "learn_followup", "user_id": str(current_user.id), "document_id": document_id},
             )
             # Extract text from completion object (.choices[0].message.content)
             if followup_resp and getattr(followup_resp, 'choices', None):

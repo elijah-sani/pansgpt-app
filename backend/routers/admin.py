@@ -2085,7 +2085,7 @@ async def get_ai_analytics(
     try:
         q = sb.table("ai_usage_logs").select(
             "id,model_used,provider,request_type,prompt_tokens,completion_tokens,"
-            "total_tokens,latency_ms,status,has_images,university_id,created_at"
+            "total_tokens,latency_ms,status,error_type,error_message,has_images,university_id,user_id,created_at"
         ).gte("created_at", since_iso)
 
         if norm_uni_id:
@@ -2106,6 +2106,8 @@ async def get_ai_analytics(
     avg_latency_ms = round(sum(latency_values) / len(latency_values), 2) if latency_values else None
 
     status_counts: dict[str, int] = {}
+    error_breakdown: dict[str, int] = {}
+    recent_errors: list[dict] = []
     model_breakdown: dict[str, dict] = {}
     provider_breakdown: dict[str, dict] = {}
     request_type_breakdown: dict[str, dict] = {}
@@ -2118,6 +2120,26 @@ async def get_ai_analytics(
         # status counts
         s = row.get("status", "success")
         status_counts[s] = status_counts.get(s, 0) + 1
+
+        # error breakdown
+        err_type = row.get("error_type")
+        if err_type:
+            error_breakdown[err_type] = error_breakdown.get(err_type, 0) + 1
+
+        if s in ("error", "timeout", "content_blocked") and len(recent_errors) < 50:
+            recent_errors.append({
+                "id": row.get("id"),
+                "status": s,
+                "error_type": err_type or "UnknownError",
+                "error_message": row.get("error_message") or "",
+                "model_used": row.get("model_used"),
+                "provider": row.get("provider"),
+                "request_type": row.get("request_type"),
+                "latency_ms": row.get("latency_ms"),
+                "created_at": row.get("created_at"),
+                "user_id": row.get("user_id"),
+                "university_id": row.get("university_id"),
+            })
 
         pt = row.get("prompt_tokens") or 0
         ct = row.get("completion_tokens") or 0
@@ -2171,12 +2193,36 @@ async def get_ai_analytics(
             "total_tokens": total_tokens,
             "avg_latency_ms": avg_latency_ms,
             "by_status": status_counts,
+            "by_error_type": error_breakdown,
         },
+        "recent_errors": recent_errors,
         "by_model": model_breakdown,
         "by_provider": provider_breakdown,
         "by_request_type": request_type_breakdown,
         "daily_series": daily_series,
     }
+
+
+@router.get("/admin/ai-analytics/reports", dependencies=[Depends(verify_api_key)])
+async def get_ai_analytics_report(
+    period: str = Query("daily", regex="^(daily|weekly|monthly)$"),
+    university_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Generate structured Daily, Weekly, or Monthly summary reports.
+    Access: super_admin / global_admin only.
+    """
+    from dependencies import require_super_admin_role
+    await require_super_admin_role(current_user)
+
+    from services import ai_report_generator
+    try:
+        report = await ai_report_generator.generate_report(period=period, university_id=university_id)
+        return report
+    except Exception as exc:
+        logger.error("[ai-analytics-report] Report generation failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to generate AI analytics report")
 
 
 # [VECTOR REINDEX]

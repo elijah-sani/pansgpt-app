@@ -220,8 +220,22 @@ async def _create_completion_with_audit(
 ) -> Any:
     model = str(kwargs.get("model") or "")
     response_format = kwargs.get("response_format")
+    messages = kwargs.get("messages") or []
     started = time.perf_counter()
     _log_quiz_provider_timing("llm_provider_call_started", 0.0, model, response_format, audit_meta)
+
+    # Prompt character estimation
+    _meta = audit_meta or {}
+    prompt_chars = 0
+    for m in messages:
+        c = m.get("content")
+        if isinstance(c, str):
+            prompt_chars += len(c)
+        elif isinstance(c, list):
+            for part in c:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    prompt_chars += len(part.get("text", ""))
+
     try:
         request = client.chat.completions.create(**kwargs)
         res = await asyncio.wait_for(request, timeout=timeout_seconds) if timeout_seconds else await request
@@ -245,13 +259,22 @@ async def _create_completion_with_audit(
                     _pt = _ct = _tt = 0
             else:
                 _pt = _ct = _tt = 0
-            _meta = audit_meta or {}
+
+            _comp_content = ""
+            try:
+                if res and res.choices and res.choices[0].message:
+                    _comp_content = res.choices[0].message.content or ""
+            except Exception:
+                pass
+
             asyncio.create_task(ai_usage_tracker.log_usage(
                 model_used=model,
                 request_type=_meta.get("request_type", "chat"),
                 prompt_tokens=_pt,
                 completion_tokens=_ct,
                 total_tokens=_tt,
+                prompt_character_count=prompt_chars,
+                completion_character_count=len(_comp_content),
                 latency_ms=_latency_ms,
                 status="success",
                 has_images=bool(_meta.get("has_images", False)),
@@ -260,25 +283,53 @@ async def _create_completion_with_audit(
                 session_id=_meta.get("session_id"),
             ))
         return res
-    except asyncio.TimeoutError:
+    except asyncio.TimeoutError as exc:
+        _latency_ms = (time.perf_counter() - started) * 1000
         _log_quiz_provider_timing(
             "llm_provider_call_timeout",
-            (time.perf_counter() - started) * 1000,
+            _latency_ms,
             model,
             response_format,
             audit_meta,
             timeout_seconds=timeout_seconds,
         )
+        asyncio.create_task(ai_usage_tracker.log_usage(
+            model_used=model,
+            request_type=_meta.get("request_type", "chat"),
+            prompt_character_count=prompt_chars,
+            latency_ms=_latency_ms,
+            status="timeout",
+            error_type="TimeoutError",
+            error_message=f"Timeout after {timeout_seconds or 0}s",
+            has_images=bool(_meta.get("has_images", False)),
+            user_id=_meta.get("user_id"),
+            university_id=_meta.get("university_id"),
+            session_id=_meta.get("session_id"),
+        ))
         raise
     except Exception as exc:
+        _latency_ms = (time.perf_counter() - started) * 1000
         _log_quiz_provider_timing(
             "llm_provider_call_failed",
-            (time.perf_counter() - started) * 1000,
+            _latency_ms,
             model,
             response_format,
             audit_meta,
             error_type=type(exc).__name__,
         )
+        asyncio.create_task(ai_usage_tracker.log_usage(
+            model_used=model,
+            request_type=_meta.get("request_type", "chat"),
+            prompt_character_count=prompt_chars,
+            latency_ms=_latency_ms,
+            status="error",
+            error_type=type(exc).__name__,
+            error_message=str(exc)[:500],
+            has_images=bool(_meta.get("has_images", False)),
+            user_id=_meta.get("user_id"),
+            university_id=_meta.get("university_id"),
+            session_id=_meta.get("session_id"),
+        ))
         raise
 
 
@@ -501,7 +552,9 @@ async def generate_dual_cloud_stream(
     requested_model: Optional[str] = None,
     preferred_models: Optional[list[str]] = None,
     require_system_role_support: bool = False,
+    audit_meta: Optional[dict] = None,
 ) -> AsyncIterator[Any]:
+    started = time.perf_counter()
     completion_stream = await generate_completion_with_failover(
         messages=messages,
         temperature=temperature,
@@ -511,14 +564,62 @@ async def generate_dual_cloud_stream(
         requested_model=requested_model,
         preferred_models=preferred_models,
         require_system_role_support=require_system_role_support,
+        audit_meta=audit_meta,
     )
     if completion_stream is None:
         return
-    async for chunk in completion_stream:
-        yield chunk
+
+    _meta = audit_meta or {}
+    accumulated_chars = 0
+    actual_model = requested_model or (VISION_PRIMARY if has_images else FAST_TEXT_PRIMARY)
+
+    try:
+        async for chunk in completion_stream:
+            try:
+                if chunk and getattr(chunk, "choices", None) and chunk.choices[0].delta:
+                    content = chunk.choices[0].delta.content or ""
+                    accumulated_chars += len(content)
+                if chunk and getattr(chunk, "model", None):
+                    actual_model = chunk.model
+            except Exception:
+                pass
+            yield chunk
+
+        # Stream finished successfully — log tokens & latency
+        _latency_ms = (time.perf_counter() - started) * 1000
+        prompt_chars = sum(len(m.get("content", "")) for m in messages if isinstance(m.get("content"), str))
+
+        asyncio.create_task(ai_usage_tracker.log_usage(
+            model_used=actual_model,
+            request_type=_meta.get("request_type", "chat"),
+            prompt_character_count=prompt_chars,
+            completion_character_count=accumulated_chars,
+            latency_ms=_latency_ms,
+            status="success",
+            has_images=has_images,
+            user_id=_meta.get("user_id"),
+            university_id=_meta.get("university_id"),
+            session_id=_meta.get("session_id"),
+        ))
+    except Exception as stream_err:
+        _latency_ms = (time.perf_counter() - started) * 1000
+        asyncio.create_task(ai_usage_tracker.log_usage(
+            model_used=actual_model,
+            request_type=_meta.get("request_type", "chat"),
+            completion_character_count=accumulated_chars,
+            latency_ms=_latency_ms,
+            status="error",
+            error_type=type(stream_err).__name__,
+            error_message=str(stream_err)[:500],
+            has_images=has_images,
+            user_id=_meta.get("user_id"),
+            university_id=_meta.get("university_id"),
+            session_id=_meta.get("session_id"),
+        ))
+        raise stream_err
 
 
-async def generate_response_async(prompt: str, messages: list[dict] = None, force_google: bool = False) -> str:
+async def generate_response_async(prompt: str, messages: list[dict] = None, force_google: bool = False, audit_meta: Optional[dict] = None) -> str:
     """Non-streaming wrapper for one-off LLM generation."""
     msgs = (messages or []) + [{"role": "user", "content": prompt}]
     
@@ -529,6 +630,7 @@ async def generate_response_async(prompt: str, messages: list[dict] = None, forc
         has_images=False,
         stream=False,
         force_google=force_google,
+        audit_meta=audit_meta,
     )
     
     if response is None:
@@ -542,6 +644,7 @@ async def generate_small_completion_with_failover(
     temperature: float,
     max_tokens: int,
     stream: bool = False,
+    audit_meta: Optional[dict] = None,
 ) -> Optional[Any]:
     """
     Failover chain for small/fast tasks (Chat Titles, Summaries):
@@ -555,12 +658,17 @@ async def generate_small_completion_with_failover(
     if g_client is not None:
         try:
             logger.info(f"[INFO] SMALL failover chain: attempting Groq SMALL_PRIMARY ({SMALL_PRIMARY})")
-            return await g_client.chat.completions.create(
-                model=SMALL_PRIMARY,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stream=stream,
+            kwargs = {
+                "model": SMALL_PRIMARY,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": stream,
+            }
+            return await _create_completion_with_audit(
+                g_client,
+                kwargs,
+                audit_meta=audit_meta,
             )
         except Exception as exc:
             logger.warning(f"SMALL_PRIMARY failed ({SMALL_PRIMARY}), trying next: {exc}")
@@ -569,12 +677,17 @@ async def generate_small_completion_with_failover(
     if openrouter_client is not None:
         try:
             logger.info(f"[INFO] SMALL failover chain: attempting OpenRouter SMALL_SECONDARY ({SMALL_SECONDARY})")
-            return await openrouter_client.chat.completions.create(
-                model=SMALL_SECONDARY,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stream=stream,
+            kwargs = {
+                "model": SMALL_SECONDARY,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": stream,
+            }
+            return await _create_completion_with_audit(
+                openrouter_client,
+                kwargs,
+                audit_meta=audit_meta,
             )
         except Exception as exc:
             logger.warning(f"SMALL_SECONDARY failed ({SMALL_SECONDARY}), trying next: {exc}")
@@ -586,6 +699,7 @@ async def generate_small_completion_with_failover(
         temperature=temperature,
         max_tokens=max_tokens,
         stream=stream,
+        audit_meta=audit_meta,
     )
 
 
@@ -594,6 +708,7 @@ async def generate_learn_completion_with_failover(
     temperature: float,
     max_tokens: int,
     stream: bool = False,
+    audit_meta: Optional[dict] = None,
 ) -> Optional[Any]:
     """
     Failover chain for Learn Mode tasks (Section Explanations, Check Questions, Diagnostic Retests):
@@ -608,12 +723,17 @@ async def generate_learn_completion_with_failover(
     if g_client is not None:
         try:
             logger.info(f"[INFO] LEARN failover chain: attempting Groq LEARN_PRIMARY ({LEARN_PRIMARY})")
-            return await g_client.chat.completions.create(
-                model=LEARN_PRIMARY,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stream=stream,
+            kwargs = {
+                "model": LEARN_PRIMARY,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": stream,
+            }
+            return await _create_completion_with_audit(
+                g_client,
+                kwargs,
+                audit_meta=audit_meta,
             )
         except Exception as exc:
             logger.warning(f"LEARN_PRIMARY failed ({LEARN_PRIMARY}), trying next: {exc}")
@@ -622,12 +742,17 @@ async def generate_learn_completion_with_failover(
     if g_client is not None:
         try:
             logger.info(f"[INFO] LEARN failover chain: attempting Groq LEARN_SECONDARY ({LEARN_SECONDARY})")
-            return await g_client.chat.completions.create(
-                model=LEARN_SECONDARY,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stream=stream,
+            kwargs = {
+                "model": LEARN_SECONDARY,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": stream,
+            }
+            return await _create_completion_with_audit(
+                g_client,
+                kwargs,
+                audit_meta=audit_meta,
             )
         except Exception as exc:
             logger.warning(f"LEARN_SECONDARY failed ({LEARN_SECONDARY}), trying next: {exc}")
@@ -636,12 +761,17 @@ async def generate_learn_completion_with_failover(
     if openrouter_client is not None:
         try:
             logger.info(f"[INFO] LEARN failover chain: attempting OpenRouter LEARN_TERTIARY ({LEARN_TERTIARY})")
-            return await openrouter_client.chat.completions.create(
-                model=LEARN_TERTIARY,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stream=stream,
+            kwargs = {
+                "model": LEARN_TERTIARY,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": stream,
+            }
+            return await _create_completion_with_audit(
+                openrouter_client,
+                kwargs,
+                audit_meta=audit_meta,
             )
         except Exception as exc:
             logger.warning(f"LEARN_TERTIARY failed ({LEARN_TERTIARY}), falling back to main chain: {exc}")
@@ -653,4 +783,5 @@ async def generate_learn_completion_with_failover(
         temperature=temperature,
         max_tokens=max_tokens,
         stream=stream,
+        audit_meta=audit_meta,
     )

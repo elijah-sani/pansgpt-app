@@ -2020,6 +2020,7 @@ async def agentic_rag_loop(
                     max_tokens=50,
                     has_images=False,
                     stream=False,
+                    audit_meta={"request_type": "search_rephrase"},
                 )
                 rephrased_query = rephrase_res.choices[0].message.content.strip().strip('"\'') if rephrase_res else query_str
             except Exception as e:
