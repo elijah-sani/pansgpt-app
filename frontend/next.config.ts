@@ -9,7 +9,7 @@ const withPWAConfig = withPWA({
   aggressiveFrontEndNavCaching: true,
   // Prevent automatic reload when network comes back online, which can cause loops on mobile login
   reloadOnOnline: false,
-  disable: process.env.NODE_ENV === "development",
+  disable: process.env.NODE_ENV === "development" || process.env.NEXT_PUBLIC_IS_ELECTRON === "true", // [ELECTRON PHASE 1]
   // Cache the root URL as the app shell so the PWA opens instantly
   cacheStartUrl: true,
   // Unique identifier so the SW distinguishes new builds
@@ -29,7 +29,14 @@ const withPWAConfig = withPWA({
 });
 
 const nextConfig: NextConfig = {
-  distDir: process.env.NODE_ENV === "development" ? ".next-dev" : ".next",
+  // [ELECTRON PHASE 1] Three-way distDir: dev → .next-dev, electron build → .next-electron, production → .next
+  distDir: process.env.NODE_ENV === "development"
+    ? ".next-dev"
+    : process.env.ELECTRON_BUILD === "true"
+      ? ".next-electron" // [ELECTRON PHASE 1]
+      : ".next",
+  // [ELECTRON PHASE 1] standalone output only for Electron packaging — do NOT enable for Vercel (Vercel has its own handling)
+  ...(process.env.ELECTRON_BUILD === "true" && { output: "standalone" as const }), // [ELECTRON PHASE 1]
   transpilePackages: [
     "@blocknote/core",
     "@blocknote/react",

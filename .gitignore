@@ -122,6 +122,10 @@ frontend/public/swe-worker-*.js.map
 frontend/public/fallback-*.js
 frontend/public/fallback-*.js.map
 
+# [ELECTRON PHASE 1] Electron build artifacts (generated, do not commit)
+frontend/.next-electron/
+dist-electron/
+
 # AI agent / Antigravity local files (never commit)
 .agent/
 .codex-backups/

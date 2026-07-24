@@ -1,18 +1,31 @@
 {
   "name": "pansgpt-app",
   "version": "1.0.0",
+  "description": "PansGPT — AI-powered study platform for pharmacy students",
+  "author": "PansGPT",
+  "main": "electron/main.js",
   "private": true,
   "scripts": {
     "dev:frontend": "node .\\node_modules\\next\\dist\\bin\\next dev --webpack .\\frontend",
     "dev:backend": "cd backend && uvicorn api:app --host 0.0.0.0 --port 8000 --reload",
     "build": "npm run build --workspace=frontend",
     "start": "npm run start --workspace=frontend",
-    "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\""
+    "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\"",
+    "electron:build:next": "node electron/scripts/build-next.js",
+    "electron:copy-assets": "node electron/scripts/copy-assets.js",
+    "electron:build": "npm run electron:build:next && npm run electron:copy-assets",
+    "electron:dev": "cross-env ELECTRON_DEV=true electron electron/main.js",
+    "electron:start": "electron electron/main.js",
+    "electron:package": "electron-builder --config electron-builder.yml"
   },
   "workspaces": [
     "frontend"
   ],
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "fs-extra": "^11.2.0"
   }
 }

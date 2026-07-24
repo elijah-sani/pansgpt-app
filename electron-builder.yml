@@ -1,0 +1,37 @@
+# [ELECTRON PHASE 1] — electron-builder configuration
+# Targets Windows only for Phase 1. No code signing, no auto-update (Phase 2+ scope).
+# This file lives at the repo root. electron-builder resolves file paths from the root.
+
+appId: "ng.pansgpt.desktop"
+productName: "PansGPT"
+
+# Output directory for the packaged installer (relative to repo root)
+directories:
+  output: "dist-electron"
+
+# [ELECTRON PHASE 1] asar: false — required because main.js spawns server.js via child_process.
+# Node.js cannot execute files inside an asar archive. asar optimization is Phase 2 scope.
+asar: false
+
+# ─── Files to include ─────────────────────────────────────────────────────────
+# electron-builder always includes package.json automatically from the project root.
+# We explicitly list the electron entry points and the standalone Next.js build.
+# copy-assets.js is a build-time tool only — no need to ship it in the packaged app.
+files:
+  - "electron/main.js"
+  - "electron/preload.js"
+  - "frontend/.next-electron/standalone/**"
+  - "!**/*.map"
+  - "!**/node_modules/.cache/**"
+
+# ─── Windows target ───────────────────────────────────────────────────────────
+# [ELECTRON PHASE 1] Using "dir" target (unpacked directory) rather than "nsis" (installer).
+# NSIS packaging requires electron-builder to download winCodeSign, which contains macOS
+# dylib symlinks — extracting these on Windows requires Administrator or Developer Mode.
+# "dir" produces dist-electron/win-unpacked/PansGPT.exe directly launchable for testing.
+# Switch back to nsis when preparing for actual distribution (Phase 2).
+win:
+  target:
+    - target: "dir"
+      arch:
+        - "x64"
