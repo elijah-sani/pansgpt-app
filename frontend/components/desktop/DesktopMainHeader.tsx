@@ -7,6 +7,7 @@ import Image from 'next/image';
 import { useTheme } from 'next-themes';
 import { usePathname, useRouter } from 'next/navigation';
 import { useChatSession } from '@/lib/ChatSessionContext';
+import { DocumentTabStrip } from '@/components/desktop/DocumentTabStrip'; // [DESKTOP UI]
 import type { MainUser } from '@/components/main/types';
 
 type SessionSummary = {
@@ -100,12 +101,28 @@ export function DesktopMainHeader({
       {/* DESKTOP GLOBAL TOP HEADER (Full Width, bg-card matching AppSidebar)       */}
       {/* ========================================================================= */}
       {!mobileOnly && (
-        <header className="hidden md:flex h-14 w-full shrink-0 items-center justify-between bg-card px-6 z-30 select-none border-b border-border/40">
-          {/* Left: Brand Title */}
-          <div className="flex items-center gap-2 min-w-[140px]">
-            <span className="text-xl font-normal text-foreground tracking-wide" style={{ fontFamily: "'Albert Sans', sans-serif" }}>
+        <header className="hidden md:flex h-11 w-full shrink-0 items-center justify-between bg-card px-4 z-30 select-none border-b border-border/40 gap-3">
+          {/* Left: Sidebar Toggle, Brand Title, & Integrated Document Tabs */}
+          <div className="flex items-center gap-2.5 min-w-0 flex-1 max-w-[65%]">
+            {onOpenSidebar && (
+              <button
+                type="button"
+                onClick={onOpenSidebar}
+                title="Toggle Sidebar"
+                className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent/60 rounded-md transition-colors shrink-0"
+              >
+                <PanelLeft size={16} />
+              </button>
+            )}
+
+            <span className="text-base font-normal text-foreground tracking-wide shrink-0 hidden sm:inline border-r border-border/40 pr-3" style={{ fontFamily: "'Albert Sans', sans-serif" }}>
               PansGPT
             </span>
+
+            {/* Integrated Notion-Style Tab Strip */}
+            <div className="flex-1 min-w-0 flex items-center">
+              <DocumentTabStrip />
+            </div>
           </div>
 
           {/* Center: History Button (Left), Search Bar (Center), New Chat Button (Right) */}

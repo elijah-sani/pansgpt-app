@@ -5,7 +5,6 @@ import React, { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { DesktopMainHeader } from "@/components/desktop/DesktopMainHeader";
 import DesktopSidebar from "@/components/desktop/DesktopSidebar";
-import { DocumentTabStrip } from "@/components/desktop/DocumentTabStrip";
 import { DocumentTabsProvider } from "@/lib/DocumentTabsContext";
 import SearchChatsModal from "@/components/SearchChatsModal";
 import SettingsModal from "@/components/SettingsModal";
@@ -136,9 +135,6 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
           sessions={sessions}
           user={shellUser}
         />
-
-        {/* Horizontal Document Tab Strip */}
-        <DocumentTabStrip />
 
         {/* Main Body with Desktop Sidebar */}
         <div className="flex flex-1 min-h-0 w-full overflow-hidden">
