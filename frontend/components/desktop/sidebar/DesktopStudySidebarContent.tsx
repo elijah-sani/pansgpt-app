@@ -17,7 +17,7 @@ export function DesktopStudySidebarContent({
   return (
     <nav className="flex flex-col items-center py-1 gap-1">
       <SidebarLink icon={MessageSquare} label="AI Chat" onClick={() => routerPush('/main')} active={pathname === '/main'} isIconOnly={true} />
-      <SidebarLink icon={Home} label="Home" onClick={() => routerPush('/reader')} active={pathname.startsWith('/reader')} isIconOnly={true} />
+      <SidebarLink icon={Home} label="Home" onClick={() => routerPush('/study')} active={pathname.startsWith('/reader') || pathname.startsWith('/study')} isIconOnly={true} />
       <SidebarLink icon={HelpCircle} label="Quiz" onClick={() => routerPush('/quiz')} active={pathname.startsWith('/quiz')} isIconOnly={true} />
     </nav>
   );

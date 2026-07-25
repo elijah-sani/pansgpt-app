@@ -178,7 +178,7 @@ export default function DesktopSidebar({
   } = useChatSession();
 
   const isOnMain = pathname === "/main";
-  const isOnReader = pathname.startsWith("/reader");
+  const isOnReader = pathname.startsWith("/reader") || pathname.startsWith("/study"); // [DESKTOP UI]
   const isOnQuiz = pathname.startsWith("/quiz");
   const isOnNotes = pathname.startsWith("/notes");
   const showChatHistory = isOnMain || isOnReader || isOnQuiz || isOnNotes;
@@ -628,7 +628,7 @@ export default function DesktopSidebar({
                   <button
                     type="button"
                     onClick={() => {
-                      handleNavigate("/reader");
+                      handleNavigate("/study");
                       onClose();
                     }}
                     className={`flex min-h-[40px] w-full items-center gap-3 rounded-[10px] px-1 text-left text-[15px] font-semibold transition-all active:scale-[0.98] active:bg-muted ${
