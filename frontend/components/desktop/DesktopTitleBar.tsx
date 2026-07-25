@@ -54,16 +54,17 @@ export function DesktopTitleBar({ onOpenSidebar }: DesktopTitleBarProps) {
 
   return (
     <header
-      className="desktop-custom-titlebar flex h-9 w-full shrink-0 items-center justify-between bg-card/95 border-b border-border/40 px-3 z-40 select-none text-foreground"
+      className="desktop-custom-titlebar flex h-10 w-full shrink-0 items-center justify-between bg-[#0e0e0e] border-b border-border/30 px-3 z-40 select-none text-foreground"
       style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
     >
-      {/* Left: Green App Logo, PansGPT Title & Document Tabs */}
-      <div className="flex items-center gap-2.5 min-w-0 flex-1 max-w-[75%]" style={{ WebkitAppRegion: "drag" } as React.CSSProperties}>
+      {/* Left: Green App Logo Pill Container, PansGPT Title & Document Tabs */}
+      <div className="flex items-center gap-2 min-w-0 flex-1 max-w-[75%]" style={{ WebkitAppRegion: "drag" } as React.CSSProperties}>
+        {/* Lighter Brand Pill Container matching WPS reference image */}
         <div
-          className="flex items-center gap-1.5 shrink-0 border-r border-border/40 pr-2.5"
+          className="flex items-center gap-1.5 shrink-0 bg-card border border-border/50 rounded-md px-2.5 py-1 shadow-2xs"
           style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         >
-          <Logo className="w-4 h-4 text-[#2f9e1c] shrink-0" />
+          <Logo className="w-3.5 h-3.5 text-[#2f9e1c] shrink-0" />
           <span
             className="text-xs font-semibold text-foreground tracking-wide"
             style={{ fontFamily: "'Albert Sans', sans-serif" }}
