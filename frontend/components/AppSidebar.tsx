@@ -761,45 +761,11 @@ export default function AppSidebar({
           ${isOpen ? "translate-x-0" : "-translate-x-full"}
           md:relative md:inset-auto md:z-[100] md:block md:max-w-none md:translate-x-0
           md:transition-[width,opacity] md:duration-300 md:ease-in-out md:flex-shrink-0 md:overflow-visible
-          ${isOpen ? "md:w-72" : "md:w-[63px] md:translate-x-0"}
+          md:w-[72px] md:translate-x-0
         `}
       >
         <div className="h-full flex flex-col bg-card overflow-visible">
-          <div className={`flex items-center py-5 ${isIconOnly ? "justify-center px-2" : "justify-between pl-6 pr-3"}`}>
-            {!isIconOnly && <Logo className="h-5 w-auto" />}
-            <div className="flex items-center gap-1">
-              {!isIconOnly && onSearchOpen && showChatHistory ? (
-                <button
-                  type="button"
-                  onClick={onSearchOpen}
-                  title="Search chats"
-                  aria-label="Search chats"
-                  className="p-2 text-foreground hover:bg-accent active:bg-accent/80 active:scale-95 rounded-lg transition-colors"
-                  style={{ WebkitTapHighlightColor: 'transparent' }}
-                >
-                  <Search size={18} />
-                </button>
-              ) : null}
-              <button
-                onClick={onClose}
-                onMouseEnter={() => setIsToggleHovered(true)}
-                onMouseLeave={() => setIsToggleHovered(false)}
-                title={isIconOnly ? "Expand sidebar" : "Collapse sidebar"}
-                className="p-2 text-foreground hover:bg-accent active:bg-accent/80 active:scale-95 rounded-lg transition-colors flex items-center justify-center"
-                style={{ WebkitTapHighlightColor: 'transparent' }}
-              >
-                {(isOnReader || isOnQuiz || isOnMain) && isIconOnly ? (
-                  isToggleHovered ? (
-                    <PanelLeft size={20} />
-                  ) : (
-                    <Logo className="h-5 w-5" />
-                  )
-                ) : (
-                  <PanelLeft size={20} />
-                )}
-              </button>
-            </div>
-          </div>
+          <div className="pt-3 pb-1" />
 
           {isOnMain && (
             <MainSidebarContent
@@ -850,28 +816,15 @@ export default function AppSidebar({
             </nav>
           )}
 
-          {(isOnReader || isOnQuiz || isOnNotes) && !isIconOnly && (
-            <SidebarChatHistorySection
-              activeSessionId={activeSessionId}
-              handleLoadSession={handleLoadSession}
-              isLoadingHistory={isLoadingHistory}
-              onDeleteRequest={onDeleteRequest}
-              onRenameRequest={onRenameRequest}
-              openMenuId={openMenuId}
-              sessions={sessions}
-              setOpenMenuId={setOpenMenuId}
-            />
-          )}
-
           <div
             ref={settingsMenuRef}
-            className={`relative mt-auto border-t border-border py-3 ${isIconOnly ? "flex flex-col items-center" : "px-2"}`}
+            className="relative mt-auto border-t border-border py-3 flex flex-col items-center justify-center w-full"
           >
             <SidebarLink
               icon={Settings}
-              label="Settings & Help"
+              label="Settings"
               onClick={() => setIsSettingsMenuOpen((previous) => !previous)}
-              isIconOnly={isIconOnly}
+              isIconOnly={true}
               active={isSettingsMenuOpen}
             />
 

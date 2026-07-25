@@ -1,15 +1,6 @@
 import { useState } from 'react';
-import { BookOpen, CalendarDays, ChevronDown, Loader2, MessageSquare, MoreVertical, Pencil, SquarePen, Trash2, Brain } from 'lucide-react';
+import { Home, HelpCircle, MessageSquare } from 'lucide-react';
 import { SidebarLink } from './SidebarPrimitives';
-import { SidebarConversationList } from './SidebarConversationList';
-import { SidebarNotesSection, type SidebarNoteItem } from './SidebarNotesSection';
-
-type ChatSession = {
-  id: string;
-  title: string;
-  created_at?: string | null;
-  updated_at?: string | null;
-};
 
 type MainSidebarContentProps = {
   activeSessionId: string | null;
@@ -149,15 +140,10 @@ export function MainSidebarContent({
 
   return (
     <>
-      <nav className={isIconOnly ? 'flex flex-col items-center py-1 gap-0.5' : 'px-2 space-y-0.5'}>
-        <SidebarLink icon={SquarePen} label="New Chat" onClick={handleNewChat} isIconOnly={isIconOnly} />
-        <SidebarLink icon={BookOpen} label="Study" onClick={() => routerPush('/reader')} isIconOnly={isIconOnly} />
-        <SidebarLink icon={Brain} label="Quiz" onClick={() => routerPush('/quiz')} isIconOnly={isIconOnly} />
-        {/* COMMENTED OUT: Notes Feature
-        {isIconOnly ? (
-          <SidebarNotesSection isIconOnly notes={notes} totalNotes={totalNotes} routerPush={routerPush} />
-        ) : null}
-        */}
+      <nav className="flex flex-col items-center py-1 gap-1">
+        <SidebarLink icon={MessageSquare} label="AI Chat" onClick={() => { handleNewChat(); routerPush('/main'); }} active={true} isIconOnly={true} />
+        <SidebarLink icon={Home} label="Home" onClick={() => routerPush('/reader')} isIconOnly={true} />
+        <SidebarLink icon={HelpCircle} label="Quiz" onClick={() => routerPush('/quiz')} isIconOnly={true} />
       </nav>
 
       {/* COMMENTED OUT: Notes Feature
@@ -165,57 +151,6 @@ export function MainSidebarContent({
         <SidebarNotesSection isIconOnly={false} notes={notes} totalNotes={totalNotes} routerPush={routerPush} />
       ) : null}
       */}
-
-      {!isIconOnly && (
-        <>
-          <div className="flex flex-col flex-1 overflow-hidden pt-2 pb-2">
-            <div className="flex min-h-8 items-center justify-between px-5 pt-2 pb-3 shrink-0">
-              <div className="flex items-center">
-                <span className="text-xs font-medium text-muted-foreground">Recent chats</span>
-                <button
-                  type="button"
-                  onClick={() => setIsChatHistoryOpen((previous) => !previous)}
-                  aria-expanded={isChatHistoryOpen}
-                  title={isChatHistoryOpen ? 'Collapse recent chats' : 'Expand recent chats'}
-                  className="ml-1 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
-                >
-                  <ChevronDown
-                    size={16}
-                    className={`transition-transform ${isChatHistoryOpen ? 'rotate-0' : '-rotate-90'}`}
-                  />
-                </button>
-              </div>
-              <button
-                onClick={() => setIsDateGroupingEnabled((previous) => !previous)}
-                aria-pressed={isDateGroupingEnabled}
-                title={isDateGroupingEnabled ? 'Disable date grouping' : 'Enable date grouping'}
-                className={`rounded-md p-1.5 transition-colors ${
-                  isDateGroupingEnabled ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted/40 hover:text-foreground'
-                }`}
-              >
-                <CalendarDays size={14} />
-              </button>
-            </div>
-            {isChatHistoryOpen ? (
-              <div className="flex-1 overflow-y-auto px-3 pb-2">
-                <SidebarConversationList
-                  activeSessionId={activeSessionId}
-                  emptyText="No chats yet"
-                  handleLoadSession={handleLoadSession}
-                  isDateGroupingEnabled={isDateGroupingEnabled}
-                  isLoadingHistory={isLoadingHistory}
-                  loadingText="Loading..."
-                  onDeleteRequest={onDeleteRequest}
-                  onRenameRequest={onRenameRequest}
-                  openMenuId={openMenuId}
-                  sessions={sessions}
-                  setOpenMenuId={setOpenMenuId}
-                />
-              </div>
-            ) : null}
-          </div>
-        </>
-      )}
     </>
   );
 }

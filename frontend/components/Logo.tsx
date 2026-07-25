@@ -1,5 +1,5 @@
 export default function Logo({ className }: { className?: string }) {
-    const svgClassName = `${className ?? ""} text-[#2f9e1c] dark:text-white`.trim();
+    const svgClassName = `text-[#2f9e1c] ${className ?? ""}`.trim();
 
     return (
         <svg

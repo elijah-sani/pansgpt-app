@@ -1,4 +1,4 @@
-import { BookOpen, Brain, Filter, MessageSquare } from 'lucide-react';
+import { Home, HelpCircle, Filter, MessageSquare } from 'lucide-react';
 import { scoreColor, SidebarLink } from './SidebarPrimitives';
 import { SidebarNotesSection, type SidebarNoteItem } from './SidebarNotesSection';
 import type { QuizHistoryItem } from './types';
@@ -28,15 +28,10 @@ export function QuizSidebarContent({
 }: QuizSidebarContentProps) {
   return (
     <>
-      <nav className={isIconOnly ? 'flex flex-col items-center py-1 gap-0.5' : 'px-2 space-y-0.5'}>
-        <SidebarLink icon={MessageSquare} label="Chat" onClick={() => routerPush('/main')} isIconOnly={isIconOnly} />
-        <SidebarLink icon={BookOpen} label="Study" onClick={() => routerPush('/reader')} isIconOnly={isIconOnly} />
-        <SidebarLink icon={Brain} label="Quiz" onClick={() => routerPush('/quiz')} active={pathname === '/quiz' || pathname.startsWith('/quiz/')} isIconOnly={isIconOnly} />
-        {/* COMMENTED OUT: Notes Feature
-        {isIconOnly ? (
-          <SidebarNotesSection isIconOnly notes={notes} totalNotes={totalNotes} routerPush={routerPush} />
-        ) : null}
-        */}
+      <nav className="flex flex-col items-center py-1 gap-1">
+        <SidebarLink icon={MessageSquare} label="AI Chat" onClick={() => routerPush('/main')} active={pathname === '/main'} isIconOnly={true} />
+        <SidebarLink icon={Home} label="Home" onClick={() => routerPush('/reader')} active={pathname.startsWith('/reader')} isIconOnly={true} />
+        <SidebarLink icon={HelpCircle} label="Quiz" onClick={() => routerPush('/quiz')} active={pathname === '/quiz' || pathname.startsWith('/quiz/')} isIconOnly={true} />
       </nav>
 
       {!isIconOnly ? (

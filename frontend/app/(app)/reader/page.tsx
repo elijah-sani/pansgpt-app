@@ -1,6 +1,6 @@
 "use client";
 import { Suspense } from "react";
-import HomeContent from "@/components/HomeContent";
+import HomeContent from "@/components/HomeContent.backup";
 
 export default function ReaderIndexPage() {
     return (

@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Clock3, Loader2, Pencil, ShieldAlert, Trash2, X } from "lucide-react";
 import AppSidebar from "@/components/AppSidebar";
+import { MainHeader } from "@/components/main/MainHeader";
 import MainLoading from "./main/loading";
 import ReaderLoading from "./reader/loading";
 import QuizLoading from "./quiz/loading";
@@ -393,52 +394,71 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
             ) : (
                 <>
                     <div
-                        className="flex h-[100dvh] w-full overflow-hidden bg-background"
+                        className="flex flex-col h-[100dvh] w-full overflow-hidden bg-background"
                         onTouchStart={handleShellTouchStart}
                         onTouchEnd={handleShellTouchEnd}
                     >
                         {!isQuizTaking && (
-                            <LocalErrorBoundary
-                                boundaryName="student-app-sidebar"
-                                fallback={({ error, retry }) => (
-                                    <div className="hidden h-[100dvh] w-[22rem] shrink-0 border-r border-border bg-card/90 md:flex md:items-center md:justify-center md:p-4">
-                                        <ErrorRecoveryView
-                                            title="Sidebar unavailable"
-                                            description="The student sidebar hit an unexpected problem. Retry the shell panel without reloading the whole page."
-                                            errorMessage={error.message}
-                                            retryLabel="Retry Sidebar"
-                                            onRetry={retry}
-                                            secondaryLabel="Go Home"
-                                            onSecondaryAction={() => window.location.assign('/main')}
-                                        />
-                                    </div>
-                                )}
-                            >
-                                <AppSidebar
-                                    isOpen={isSidebarOpen}
-                                    onClose={() => setIsSidebarOpen((prev) => !prev)}
-                                    onSearchOpen={() => setIsSearchModalOpen(true)}
-                                    onOpenReportProblem={() => setIsReportProblemOpen(true)}
-                                    onOpenSettings={() => setIsSettingsOpen(true)}
-                                    onDeleteRequest={(id) => { setDeleteTargetId(id); setIsDeleteModalOpen(true); }}
-                                    onRenameRequest={(id, title) => { setRenamingChatId(id); setRenameDraft(title); }}
-                                    isAdmin={isAdmin}
-                                />
-                            </LocalErrorBoundary>
+                            <MainHeader
+                                desktopOnly
+                                activeSessionId={activeSessionId}
+                                isProfileOpen={isPersonalInfoOpen}
+                                onNewChat={() => {
+                                    setActiveSessionId(null);
+                                    setPendingPath(null);
+                                }}
+                                onOpenProfile={() => setIsPersonalInfoOpen(true)}
+                                onOpenSidebar={() => setIsSidebarOpen((prev) => !prev)}
+                                onSearchOpen={() => setIsSearchModalOpen(true)}
+                                sessions={sessions}
+                                user={shellUser}
+                            />
                         )}
 
-                        <div className={`flex-1 min-w-0 overflow-x-hidden overflow-y-auto transition-transform duration-300 ease-out md:translate-x-0 ${
-                            isSidebarOpen && !isQuizTaking ? "max-md:translate-x-full" : "max-md:translate-x-0"
-                        } ${!pathname?.startsWith("/reader/") ? "overscroll-none" : ""}`}>
-                            {pendingPath === "/reader" ? (
-                                <ReaderLoading />
-                            ) : pendingPath === "/quiz" ? (
-                                <QuizLoading />
-                            ) : pendingPath === "/main" ? (
-                                <MainLoading />
-                            ) : (
-                                children
+                        <div className="flex flex-1 min-h-0 w-full overflow-hidden">
+                            {!isQuizTaking && (
+                                <LocalErrorBoundary
+                                    boundaryName="student-app-sidebar"
+                                    fallback={({ error, retry }) => (
+                                        <div className="hidden h-full w-[22rem] shrink-0 border-r border-border bg-card/90 md:flex md:items-center md:justify-center md:p-4">
+                                            <ErrorRecoveryView
+                                                title="Sidebar unavailable"
+                                                description="The student sidebar hit an unexpected problem. Retry the shell panel without reloading the whole page."
+                                                errorMessage={error.message}
+                                                retryLabel="Retry Sidebar"
+                                                onRetry={retry}
+                                                secondaryLabel="Go Home"
+                                                onSecondaryAction={() => window.location.assign('/main')}
+                                            />
+                                        </div>
+                                    )}
+                                >
+                                    <AppSidebar
+                                        isOpen={isSidebarOpen}
+                                        onClose={() => setIsSidebarOpen((prev) => !prev)}
+                                        onSearchOpen={() => setIsSearchModalOpen(true)}
+                                        onOpenReportProblem={() => setIsReportProblemOpen(true)}
+                                        onOpenSettings={() => setIsSettingsOpen(true)}
+                                        onDeleteRequest={(id) => { setDeleteTargetId(id); setIsDeleteModalOpen(true); }}
+                                        onRenameRequest={(id, title) => { setRenamingChatId(id); setRenameDraft(title); }}
+                                        isAdmin={isAdmin}
+                                    />
+                                </LocalErrorBoundary>
                             )}
+
+                            <div className={`flex-1 min-w-0 overflow-x-hidden overflow-y-auto overscroll-none transition-transform duration-300 ease-out md:translate-x-0 ${
+                                isSidebarOpen && !isQuizTaking ? "max-md:translate-x-full" : "max-md:translate-x-0"
+                            }`}>
+                                {pendingPath === "/reader" ? (
+                                    <ReaderLoading />
+                                ) : pendingPath === "/quiz" ? (
+                                    <QuizLoading />
+                                ) : pendingPath === "/main" ? (
+                                    <MainLoading />
+                                ) : (
+                                    children
+                                )}
+                            </div>
                         </div>
                     </div>
 

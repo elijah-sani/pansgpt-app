@@ -106,6 +106,7 @@ export default function MainPage() {
         isProfileOpen ? 'max-md:-translate-x-full' : 'max-md:translate-x-0'
       }`}>
         <MainHeader
+          mobileOnly
           activeSessionId={activeSessionId}
           isProfileOpen={isProfileOpen}
           onNewChat={handleNewChat}

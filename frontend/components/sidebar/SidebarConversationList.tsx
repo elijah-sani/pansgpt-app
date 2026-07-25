@@ -87,7 +87,7 @@ export function SidebarConversationList({
       key={chat.id}
       data-mobile-chat-menu
       onClick={() => handleLoadSession(chat.id)}
-      className={`group relative flex min-h-[38px] w-full cursor-pointer items-center gap-2 rounded-[10px] py-1 pl-1 pr-1 text-left text-[14px] font-medium text-foreground transition-all active:scale-[0.98] active:bg-muted ${
+      className={`group relative flex min-h-[42px] w-full cursor-pointer items-center gap-3 border-b border-border/40 py-2.5 pl-4 pr-2 text-left text-[14px] font-medium text-foreground transition-all active:scale-[0.98] active:bg-muted ${
         activeSessionId === chat.id ? 'bg-muted/50' : 'hover:bg-muted/30'
       } ${
         openMenuId === chat.id ? 'z-[210]' : 'z-0'

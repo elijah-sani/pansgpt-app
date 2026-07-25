@@ -231,7 +231,6 @@ export default function HomeContent() {
     // View layout: 'grid' by default for replica match
     const [viewStyle, setViewStyle] = useState<'list' | 'grid'>('grid');
     const [showMobileFilters, setShowMobileFilters] = useState(false);
-    const [showCourseChips, setShowCourseChips] = useState(Boolean(activeCourse));
 
     // Save to localStorage when documents change
     useEffect(() => {
@@ -266,7 +265,6 @@ export default function HomeContent() {
 
     // Auth State
     const [user, setUser] = useState<SupabaseUser | null>(null);
-    const [userName, setUserName] = useState<string>('');
     const [isAdmin, setIsAdmin] = useState(false);
     const [authLoading, setAuthLoading] = useState(true);
 
@@ -406,17 +404,10 @@ export default function HomeContent() {
             const currentUser = session?.user || null;
             setUser(currentUser);
 
-            if (currentUser) {
-                const rawName = currentUser.user_metadata?.full_name || currentUser.email?.split('@')[0] || '';
-                setUserName(rawName);
+            if (currentUser?.email) {
                 const response = await api.get('/me/bootstrap');
                 if (response.ok) {
                     const data = await response.json();
-                    if (data?.profile?.full_name) {
-                        setUserName(data.profile.full_name);
-                    } else if (data?.profile?.first_name) {
-                        setUserName(data.profile.first_name);
-                    }
                     if (data?.is_admin) {
                         setIsAdmin(true);
                     }
@@ -550,25 +541,6 @@ export default function HomeContent() {
         return groups;
     }, [displayRecentDocs, progressMap]);
 
-    // Computed Last Opened Document & Metrics
-    const lastOpenedDoc = useMemo(() => {
-        if (recentDocs.length > 0) return recentDocs[0];
-        return docs.length > 0 ? docs[0] : null;
-    }, [recentDocs, docs]);
-
-    const lastOpenedProg = lastOpenedDoc ? progressMap[lastOpenedDoc.drive_file_id] : null;
-
-    const lastOpenedDateStr = useMemo(() => {
-        if (!lastOpenedProg?.updated_at) return null;
-        const d = new Date(lastOpenedProg.updated_at);
-        if (isNaN(d.getTime())) return null;
-        return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-    }, [lastOpenedProg]);
-
-    const readCount = useMemo(() => {
-        return Object.keys(progressMap).length;
-    }, [progressMap]);
-
     // Format file size helper
     const formatSize = (bytes?: number) => {
         if (!bytes) return '—';
@@ -577,37 +549,15 @@ export default function HomeContent() {
         return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
     };
 
-    const filteredCourseDocs = useMemo(() => {
-        if (!activeCourse) return displayRecentDocs;
-        const courseFiltered = docs.filter(doc => {
-            if (doc.course_code !== activeCourse) return false;
-            const matchesSession = sessionFilter === 'All' || doc.academic_session === sessionFilter;
-            const matchesSemester = semesterFilter === 'All' || normalizeSemester(doc.semester) === semesterFilter;
-            return matchesSession && matchesSemester;
-        });
-        return filterListBySearch(courseFiltered);
-    }, [docs, activeCourse, sessionFilter, semesterFilter, displayRecentDocs, searchQuery]);
-
     // Nav helpers
     const selectTab = (tab: string) => {
         setSelectedDoc(null);
-        if (tab === 'courses') {
-            setShowCourseChips(prev => !prev);
-            router.push('/reader?tab=recent');
-        } else {
-            setShowCourseChips(false);
-            selectCourse('');
-        }
+        router.push(`/reader?tab=${tab}`);
     };
 
     const selectCourse = (code: string) => {
         setSelectedDoc(null);
-        if (code) {
-            setShowCourseChips(true);
-            router.push(`/reader?tab=recent&course=${code}`);
-        } else {
-            router.push('/reader?tab=recent');
-        }
+        router.push(`/reader?course=${code}`);
     };
 
     const selectDocument = (doc: PDFDocument) => {
@@ -666,8 +616,8 @@ export default function HomeContent() {
 
     return (
         <div className="flex h-screen w-full overflow-hidden bg-background text-foreground transition-colors duration-500">
-            {/* 1. LEFT LOCAL SIDEBAR - DISABLED */}
-            <aside className="hidden flex-col w-64 shrink-0 border-r border-border/60 bg-card/35 backdrop-blur-md">
+            {/* 1. LEFT LOCAL SIDEBAR - DESKTOP ONLY */}
+            <aside className="hidden md:flex flex-col w-64 shrink-0 border-r border-border/60 bg-card/35 backdrop-blur-md">
                 {/* Title */}
                 <div className="px-6 py-5 border-b border-border/40 flex items-center gap-3">
                     <Library className="h-6 w-6 text-primary" />
@@ -738,8 +688,8 @@ export default function HomeContent() {
                 {/* Main Content Scroll Container */}
                 <div className="flex-1 flex flex-col overflow-hidden">
                     
-                    {/* DESKTOP HEADER ROW - DISABLED */}
-                    <div className="hidden px-6 py-5 border-b border-border/40 bg-card/20 flex-col gap-4">
+                    {/* DESKTOP HEADER ROW */}
+                    <div className="hidden md:flex px-6 py-5 border-b border-border/40 bg-card/20 flex-col gap-4">
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
                                 <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl font-outfit">
@@ -819,8 +769,21 @@ export default function HomeContent() {
                         </div>
                     </div>
 
-                    {/* MOBILE REPLICA TOP LAYOUT (EXACT IMAGE ORDER: HERO GREETING + TABS + INLINE SEARCH/FILTERS/GRID) */}
-                    <div className="flex-1 flex flex-col justify-between bg-background pt-2 gap-3.5 overflow-hidden">
+                    {/* MOBILE REPLICA TOP LAYOUT (EXACT IMAGE ORDER: SEARCH, FILTERS, PANEL, TABS, ACTIONS, GRID) */}
+                    <div className="md:hidden flex-1 flex flex-col bg-background pt-4 gap-3.5 overflow-y-auto">
+                        {/* 1. Top Search Bar: wide, dark grey, rounded-corner search input field with double-horizontal scanner icon */}
+                        <div className="px-4 flex gap-2.5 items-center">
+                            <div className="relative flex-1">
+                                <input
+                                    type="text"
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    placeholder="Search documents or courses..."
+                                    className="w-full rounded-full bg-surface-secondary border-none py-2.5 px-4 text-base text-foreground placeholder:text-muted-foreground outline-none focus:ring-0 focus:border-none"
+                                />
+                            </div>
+                        </div>
+
                         {/* Filter panel when Filter icon is toggled */}
                         {showMobileFilters && (
                             <div className="px-4 animate-in slide-in-from-top-1 duration-150">
@@ -845,100 +808,8 @@ export default function HomeContent() {
                                     </select>
                                 </div>
                             </div>
-                        )}
-
-                        {/* HERO GREETING & LAST OPENED DOCUMENT AREA (UPPER 40%) */}
-                        <div className="flex-1 flex items-center justify-between px-6 sm:px-12 lg:px-16 py-6 w-full overflow-hidden gap-8 sm:gap-12">
-                            {/* LEFT SIDE: Greeting, Subtext, Low-opacity Stats */}
-                            <div className="flex flex-col gap-2 max-w-lg">
-                                <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold text-foreground tracking-tight font-outfit">
-                                    {(() => {
-                                        const hour = new Date().getHours();
-                                        const greetingPrefix = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
-                                        const firstName = userName ? userName.split(' ')[0] : 'there';
-                                        return `${greetingPrefix}, ${firstName} 👋`;
-                                    })()}
-                                </h1>
-                                <p className="text-xs sm:text-sm text-muted-foreground font-medium leading-relaxed mt-0.5">
-                                    Pick up right where you left off or dive into your course materials.
-                                </p>
-
-                                {/* Low-Opacity Stats Badges */}
-                                <div className="flex items-center gap-3.5 mt-3 text-xs font-semibold text-muted-foreground/80 select-none">
-                                    <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-surface-secondary/40 border border-border/25 backdrop-blur-sm">
-                                        <BookOpen className="h-4 w-4 text-primary opacity-80" />
-                                        <span>{docs.length} {docs.length === 1 ? 'Material' : 'Materials'}</span>
-                                    </div>
-                                    <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-surface-secondary/40 border border-border/25 backdrop-blur-sm">
-                                        <CheckCircle2 className="h-4 w-4 text-primary opacity-80" />
-                                        <span>{readCount} {readCount === 1 ? 'Material Read' : 'Materials Read'}</span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* RIGHT SIDE: Last Opened Document Card (Taller & Wider) */}
-                            {lastOpenedDoc && (
-                                <div className="hidden sm:flex flex-col gap-2 shrink-0 w-96 lg:w-[420px]">
-                                    <div className="flex items-center justify-between px-1">
-                                        <span className="text-[11px] font-bold text-muted-foreground/75 uppercase tracking-wider">
-                                            Last Opened Document
-                                        </span>
-                                        {lastOpenedDateStr && (
-                                            <span className="text-[11px] font-medium text-muted-foreground/60">
-                                                {lastOpenedDateStr}
-                                            </span>
-                                        )}
-                                    </div>
-
-                                    <div
-                                        onClick={() => handleOpenReader(lastOpenedDoc)}
-                                        className="group flex flex-col justify-between p-5 rounded-2xl bg-surface-primary border border-border/60 hover:border-primary/40 hover:bg-surface-secondary/60 cursor-pointer transition-all duration-200 shadow-md min-h-[140px]"
-                                    >
-                                        <div className="flex items-start gap-3.5 min-w-0">
-                                            <div className="w-11 h-11 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0 group-hover:scale-105 transition-transform mt-0.5">
-                                                {loadingDocId === lastOpenedDoc.drive_file_id ? (
-                                                    <Loader2 className="h-5.5 w-5.5 animate-spin text-primary" />
-                                                ) : (
-                                                    <FileText className="h-5.5 w-5.5" />
-                                                )}
-                                            </div>
-                                            <div className="min-w-0 flex-1">
-                                                <h4 className="text-sm font-bold text-foreground truncate group-hover:text-primary transition-colors leading-snug">
-                                                    {lastOpenedDoc.topic}
-                                                </h4>
-                                                <div className="flex items-center gap-2 mt-1.5 text-xs text-muted-foreground">
-                                                    {lastOpenedDoc.course_code && (
-                                                        <span className="px-2 py-0.5 rounded bg-muted text-[10px] font-bold uppercase shrink-0">
-                                                            {lastOpenedDoc.course_code}
-                                                        </span>
-                                                    )}
-                                                    <span className="truncate">{lastOpenedDoc.lecturer_name || 'From iPhone'}</span>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* Progress bar beneath it */}
-                                        {lastOpenedProg && lastOpenedProg.total_pages > 0 && (
-                                            <div className="mt-4 space-y-1.5">
-                                                <div className="flex items-center justify-between text-[11px] font-bold text-muted-foreground">
-                                                    <span>Page {lastOpenedProg.current_page} of {lastOpenedProg.total_pages}</span>
-                                                    <span className="text-primary">{Math.round((lastOpenedProg.current_page / lastOpenedProg.total_pages) * 100)}%</span>
-                                                </div>
-                                                <div className="w-full h-2 rounded-full bg-muted/40 overflow-hidden">
-                                                    <div 
-                                                        className="h-full bg-primary rounded-full transition-all duration-300"
-                                                        style={{ width: `${Math.round((lastOpenedProg.current_page / lastOpenedProg.total_pages) * 100)}%` }}
-                                                    />
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Main documents panel wrapper - rounded top container enclosing tabs and list (80% screen height from bottom) */}
-                        <div className="h-[80vh] shrink-0 mt-auto bg-surface-primary rounded-t-[28px] border-t border-border/40 flex flex-col pb-8 overflow-y-auto">
+                        )}                        {/* Main documents panel wrapper - rounded top container enclosing tabs and list */}
+                        <div className="flex-1 bg-surface-primary rounded-t-[28px] border-t border-border/40 mt-1 flex flex-col pb-8 overflow-y-auto">
                             {searchQuery.trim() ? (
                                 /* GLOBAL SEARCH RESULTS VIEW FOR MOBILE */
                                 <div className="flex-1 px-4 py-5 flex flex-col gap-6 animate-in fade-in duration-150">
@@ -1033,116 +904,30 @@ export default function HomeContent() {
                             ) : (
                                 /* NORMAL TABBED CONTENT FOR MOBILE */
                                 <>
-                                    {/* 2. View Tab Bar: Sticky tab header with inline search, grid/list toggle, and course filter chips activated on Courses tab */}
-                                    <div className="sticky top-0 z-10 bg-surface-primary backdrop-blur-md border-b border-border/20">
-                                        <div className="flex items-center justify-between px-6 pt-4 pb-3 gap-4">
-                                            {/* Left Side: Tabs + Course Chips inline when Courses tab is active */}
-                                            <div className="flex items-center gap-4 min-w-0 flex-1 overflow-hidden">
-                                                <div className="flex gap-5 items-center shrink-0">
-                                                    <button 
-                                                        onClick={() => {
-                                                            selectCourse('');
-                                                            setShowCourseChips(false);
-                                                        }}
-                                                        className="relative pb-1"
-                                                    >
-                                                        <span className={`text-base transition-all ${!showCourseChips && !activeCourse ? 'font-bold text-foreground' : 'font-normal text-muted-foreground'}`}>
-                                                            Recent
-                                                        </span>
-                                                        {!showCourseChips && !activeCourse && (
-                                                            <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-4 h-[3px] bg-primary rounded-full" />
-                                                        )}
-                                                    </button>
-                                                    <button 
-                                                        onClick={() => setShowCourseChips(prev => !prev)}
-                                                        className="relative pb-1"
-                                                    >
-                                                        <span className={`text-base transition-all ${showCourseChips || Boolean(activeCourse) ? 'font-bold text-foreground' : 'font-normal text-muted-foreground'}`}>
-                                                            Courses
-                                                        </span>
-                                                        {(showCourseChips || Boolean(activeCourse)) && (
-                                                            <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-4 h-[3px] bg-primary rounded-full" />
-                                                        )}
-                                                    </button>
-                                                </div>
-
-                                                {/* Low-Opacity Horizontal Scrollable Course Filter Chips - Activated when Courses is clicked */}
-                                                {(showCourseChips || Boolean(activeCourse)) && courseFolders.length > 0 && (
-                                                    <div className="flex items-center gap-1.5 overflow-x-auto py-0.5 opacity-80 hover:opacity-100 transition-opacity select-none no-scrollbar animate-in fade-in duration-200">
-                                                        <span className="h-4 w-[1px] bg-border/40 shrink-0 mx-1" />
-                                                        <button
-                                                            onClick={() => selectCourse('')}
-                                                            className={`px-2.5 py-1 rounded-full text-xs font-semibold shrink-0 transition-all ${
-                                                                !activeCourse 
-                                                                    ? 'bg-primary/25 text-primary border border-primary/40 opacity-100' 
-                                                                    : 'bg-surface-secondary/40 text-muted-foreground hover:bg-surface-secondary/80 border border-border/20 opacity-75 hover:opacity-100'
-                                                            }`}
-                                                        >
-                                                            All ({docs.length})
-                                                        </button>
-                                                        {courseFolders.map((folder) => (
-                                                            <button
-                                                                key={`header-chip-${folder}`}
-                                                                onClick={() => selectCourse(folder)}
-                                                                className={`px-2.5 py-1 rounded-full text-xs font-semibold shrink-0 transition-all ${
-                                                                    activeCourse === folder
-                                                                        ? 'bg-primary/25 text-primary border border-primary/40 opacity-100'
-                                                                        : 'bg-surface-secondary/40 text-muted-foreground hover:bg-surface-secondary/80 border border-border/20 opacity-75 hover:opacity-100'
-                                                                }`}
-                                                            >
-                                                                {folder} ({courseStats[folder] || 0})
-                                                            </button>
-                                                        ))}
-                                                    </div>
-                                                )}
-                                            </div>
-
-                                            {/* Right Side: Inline Search Bar, Layout Switcher & Filter Toggle */}
-                                            <div className="flex items-center gap-2 shrink-0">
-                                                <div className="relative w-28 sm:w-44">
-                                                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                                                    <input
-                                                        type="text"
-                                                        value={searchQuery}
-                                                        onChange={(e) => setSearchQuery(e.target.value)}
-                                                        placeholder="Search..."
-                                                        className="w-full rounded-full bg-surface-secondary border border-border/30 py-1.5 pl-8 pr-3 text-xs text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/30"
-                                                    />
-                                                    {searchQuery && (
-                                                        <button
-                                                            onClick={() => setSearchQuery("")}
-                                                            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                                                        >
-                                                            <X className="h-3 w-3" />
-                                                        </button>
-                                                    )}
-                                                </div>
-
-                                                <button 
-                                                    onClick={() => handleSetViewStyle(viewStyle === 'grid' ? 'list' : 'grid')}
-                                                    className="p-1.5 text-muted-foreground hover:text-foreground transition-colors rounded-lg bg-surface-secondary/60"
-                                                    title="Switch layout"
-                                                >
-                                                    {viewStyle === 'grid' ? (
-                                                        <List className="h-4 w-4" />
-                                                    ) : (
-                                                        <LayoutGrid className="h-4 w-4" />
-                                                    )}
-                                                </button>
-
-                                                <button
-                                                    onClick={() => setShowMobileFilters(prev => !prev)}
-                                                    className={`p-1.5 transition-all rounded-lg bg-surface-secondary/60 ${
-                                                        showMobileFilters ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
-                                                    }`}
-                                                    title="Toggle Filters"
-                                                >
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                                        <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-                                                    </svg>
-                                                </button>
-                                            </div>
-                                        </div>
+                                    {/* 2. View Tab Bar: Tab header inside a rounded content panel */}
+                                    <div className="flex gap-8 px-6 pt-5 pb-3">
+                                        <button 
+                                            onClick={() => selectTab('recent')}
+                                            className="relative pb-2"
+                                        >
+                                            <span className={`text-base transition-all ${activeTab === 'recent' ? 'font-bold text-foreground' : 'font-normal text-muted-foreground'}`}>
+                                                Recent
+                                            </span>
+                                            {activeTab === 'recent' && (
+                                                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-4 h-[3px] bg-primary rounded-full" />
+                                            )}
+                                        </button>
+                                        <button 
+                                            onClick={() => selectTab('courses')}
+                                            className="relative pb-2"
+                                        >
+                                            <span className={`text-base transition-all ${activeTab === 'courses' ? 'font-bold text-foreground' : 'font-normal text-muted-foreground'}`}>
+                                                Courses
+                                            </span>
+                                            {activeTab === 'courses' && (
+                                                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-4 h-[3px] bg-primary rounded-full" />
+                                            )}
+                                        </button>
                                     </div>
 
                                     {/* Main Listings inside mobile wrapper */}
@@ -1155,59 +940,205 @@ export default function HomeContent() {
                                             </div>
                                         ) : (
                                             <div className="space-y-6">
-                                                {/* RECENT / COURSE FILTERED DOCUMENTS */}
-                                                <div className="space-y-6">
-                                                    {/* Subheader */}
-                                                    <div className="flex items-center justify-between pl-1">
-                                                        <span className="text-[13px] font-bold text-muted-foreground/60 uppercase tracking-wider">
-                                                            {activeCourse ? `${activeCourse} Documents (${filteredCourseDocs.length})` : 'Recent Documents'}
-                                                        </span>
-                                                        {activeCourse && (
-                                                            <button
-                                                                onClick={() => selectCourse('')}
-                                                                className="text-xs font-semibold text-primary hover:underline"
-                                                            >
-                                                                Show All Recent
-                                                            </button>
+                                                {/* TAB 1: RECENT GROUP */}
+                                                {activeTab === 'recent' && (
+                                                    <div className="space-y-6">
+                                                        {/* Mobile Recent Actions Row */}
+                                                        <div className="flex items-center justify-between pl-1">
+                                                            <span className="text-[13px] font-bold text-muted-foreground/60 uppercase tracking-wider">
+                                                                Recent Documents
+                                                            </span>
+                                                            <div className="flex items-center gap-3.5 text-muted-foreground">
+                                                                {/* Toggle Grid/List */}
+                                                                <button 
+                                                                    onClick={() => handleSetViewStyle(viewStyle === 'grid' ? 'list' : 'grid')}
+                                                                    className="p-1 hover:text-foreground transition-colors"
+                                                                    title="Switch layout"
+                                                                >
+                                                                    {viewStyle === 'grid' ? (
+                                                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                                                            <line x1="8" y1="6" x2="21" y2="6"/>
+                                                                            <line x1="8" y1="12" x2="21" y2="12"/>
+                                                                            <line x1="8" y1="18" x2="21" y2="18"/>
+                                                                            <rect x="3" y="5" width="2" height="2" rx="0.5"/>
+                                                                            <rect x="3" y="11" width="2" height="2" rx="0.5"/>
+                                                                            <rect x="3" y="15" width="2" height="2" rx="0.5"/>
+                                                                        </svg>
+                                                                    ) : (
+                                                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                                                            <rect x="3" y="3" width="7" height="7"/>
+                                                                            <rect x="14" y="3" width="7" height="7"/>
+                                                                            <rect x="14" y="14" width="7" height="7"/>
+                                                                            <rect x="3" y="14" width="7" height="7"/>
+                                                                        </svg>
+                                                                    )}
+                                                                </button>
+                                                                {/* Filter Toggle */}
+                                                                <button
+                                                                    onClick={() => setShowMobileFilters(prev => !prev)}
+                                                                    className={`p-1 hover:text-foreground transition-all ${
+                                                                        showMobileFilters ? 'text-primary' : 'text-muted-foreground'
+                                                                    }`}
+                                                                    title="Toggle Filters"
+                                                                >
+                                                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                                                        <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+                                                                    </svg>
+                                                                </button>
+                                                            </div>
+                                                        </div>
+
+                                                        {Object.entries(recentGroups).map(([dateGroup, items]) => 
+                                                            items.length > 0 ? (
+                                                                <div key={dateGroup} className="space-y-3.5">
+                                                                    <div className="flex items-center justify-between pl-1">
+                                                                        <span className="text-[13px] font-semibold text-muted-foreground/80">
+                                                                            {dateGroup}
+                                                                        </span>
+                                                                    </div>
+                                                                    {renderCollection(items)}
+                                                                </div>
+                                                            ) : null
+                                                        )}
+                                                        {recentDocs.length === 0 && (
+                                                            <div className="rounded-2xl border border-dashed border-border/60 p-6 text-center bg-card/25 shadow-sm flex flex-col items-center justify-center">
+                                                                <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center text-primary mb-4">
+                                                                    <BookOpen className="h-6 w-6 text-primary" />
+                                                                </div>
+                                                                <h4 className="text-[15px] font-bold text-foreground">Welcome to your Library</h4>
+                                                                <p className="text-xs text-muted-foreground mt-1.5 max-w-[240px] leading-relaxed mx-auto">
+                                                                    Your recently read documents will appear here. Tap the button below to browse your courses.
+                                                                </p>
+                                                                <button
+                                                                    onClick={() => selectTab('courses')}
+                                                                    className="mt-4 bg-primary text-primary-foreground text-xs font-bold px-4 py-2 rounded-xl shadow hover:bg-primary/95 transition-all"
+                                                                >
+                                                                    Browse Course Folders
+                                                                </button>
+                                                            </div>
                                                         )}
                                                     </div>
+                                                )}
 
-                                                    {activeCourse ? (
-                                                        filteredCourseDocs.length > 0 ? (
-                                                            renderCollection(filteredCourseDocs)
-                                                        ) : (
-                                                            <div className="rounded-2xl border border-dashed border-border/60 p-8 text-center text-sm text-muted-foreground">
-                                                                No documents found for {activeCourse}.
-                                                            </div>
-                                                        )
-                                                    ) : (
-                                                        <>
-                                                            {Object.entries(recentGroups).map(([dateGroup, items]) => 
-                                                                items.length > 0 ? (
-                                                                    <div key={dateGroup} className="space-y-3.5">
-                                                                        <div className="flex items-center justify-between pl-1">
-                                                                            <span className="text-[13px] font-semibold text-muted-foreground/80">
-                                                                                {dateGroup}
+                                                {/* TAB 2: COURSES SYSTEM */}
+                                                {activeTab === 'courses' && (
+                                                    <div className="space-y-4">
+                                                        {!activeCourse ? (
+                                                            // Course folders list/grid
+                                                            <div className="space-y-3.5">
+                                                                <div className="flex items-center justify-between pl-1">
+                                                                    <span className="text-[13px] font-medium text-muted-foreground">
+                                                                        All Courses
+                                                                    </span>
+                                                                </div>
+                                                                <div className="grid grid-cols-2 gap-3.5">
+                                                                    {courseFolders.map(folder => (
+                                                                        <div
+                                                                            key={`mob-folder-card-${folder}`}
+                                                                            onClick={() => selectCourse(folder)}
+                                                                            className="flex flex-col p-4 rounded-2xl border border-border/80 bg-surface-secondary hover:bg-surface-secondary/80 cursor-pointer transition-all duration-150 group"
+                                                                        >
+                                                                            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary mb-3 group-hover:scale-105 transition-transform">
+                                                                                <FolderOpen className="h-5 w-5" />
+                                                                            </div>
+                                                                            <span className="text-sm font-extrabold text-foreground group-hover:text-primary transition-colors">
+                                                                                {folder}
+                                                                            </span>
+                                                                            <span className="text-xs text-muted-foreground mt-1">
+                                                                                {courseStats[folder] || 0} {courseStats[folder] === 1 ? 'document' : 'documents'}
                                                                             </span>
                                                                         </div>
-                                                                        {renderCollection(items)}
-                                                                    </div>
-                                                                ) : null
-                                                            )}
-                                                            {recentDocs.length === 0 && (
-                                                                <div className="rounded-2xl border border-dashed border-border/60 p-6 text-center bg-card/25 shadow-sm flex flex-col items-center justify-center">
-                                                                    <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center text-primary mb-4">
-                                                                        <BookOpen className="h-6 w-6 text-primary" />
-                                                                    </div>
-                                                                    <h4 className="text-[15px] font-bold text-foreground">Welcome to your Library</h4>
-                                                                    <p className="text-xs text-muted-foreground mt-1.5 max-w-[240px] leading-relaxed mx-auto">
-                                                                        Your recently read documents will appear here. Tap Courses above to filter by course code.
-                                                                    </p>
+                                                                    ))}
                                                                 </div>
-                                                            )}
-                                                        </>
-                                                    )}
-                                                </div>
+                                                                {courseFolders.length === 0 && (
+                                                                    <div className="rounded-2xl border border-dashed border-border/60 p-8 text-center text-sm text-muted-foreground">
+                                                                        No courses found.
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        ) : (
+                                                            // Documents under the selected course
+                                                            <div className="space-y-3.5">
+                                                                <div className="flex items-center justify-between pl-1">
+                                                                    <button
+                                                                        onClick={() => router.push('/reader?tab=courses')}
+                                                                        className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground hover:text-foreground transition-colors"
+                                                                    >
+                                                                        <ArrowLeft className="h-3.5 w-3.5" />
+                                                                        <span>Back to Courses</span>
+                                                                    </button>
+                                                                    <div className="flex items-center gap-3.5 text-muted-foreground">
+                                                                        <button 
+                                                                            onClick={() => handleSetViewStyle(viewStyle === 'grid' ? 'list' : 'grid')}
+                                                                            className="p-1 hover:text-foreground transition-colors"
+                                                                        >
+                                                                            {viewStyle === 'grid' ? (
+                                                                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                                                                    <line x1="8" y1="6" x2="21" y2="6"/>
+                                                                                    <line x1="8" y1="12" x2="21" y2="12"/>
+                                                                                    <line x1="8" y1="18" x2="21" y2="18"/>
+                                                                                    <rect x="3" y="5" width="2" height="2" rx="0.5"/>
+                                                                                    <rect x="3" y="11" width="2" height="2" rx="0.5"/>
+                                                                                    <rect x="3" y="15" width="2" height="2" rx="0.5"/>
+                                                                                </svg>
+                                                                            ) : (
+                                                                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                                                                    <rect x="3" y="3" width="7" height="7"/>
+                                                                                    <rect x="14" y="3" width="7" height="7"/>
+                                                                                    <rect x="14" y="14" width="7" height="7"/>
+                                                                                    <rect x="3" y="14" width="7" height="7"/>
+                                                                                </svg>
+                                                                            )}
+                                                                        </button>
+                                                                        {/* Filter Toggle beside list/grid toggle inside Course */}
+                                                                        <button
+                                                                            onClick={() => setShowMobileFilters(prev => !prev)}
+                                                                            className={`p-1 hover:text-foreground transition-all ${
+                                                                                showMobileFilters ? 'text-primary' : 'text-muted-foreground'
+                                                                            }`}
+                                                                            title="Toggle Filters"
+                                                                        >
+                                                                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                                                                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+                                                                            </svg>
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
+                                                                <h3 className="text-sm font-bold text-foreground pl-1 mb-2">
+                                                                    {activeCourse}
+                                                                    {activeCourseTitle && (
+                                                                        <span className="ml-1.5">
+                                                                            · {activeCourseTitle}
+                                                                        </span>
+                                                                    )}
+                                                                </h3>
+                                                                <div className="space-y-5">
+                                                                    {currentCourseDocs.length > 0 && (
+                                                                        <div className="space-y-2">
+                                                                            <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground pl-1">
+                                                                                Current Materials
+                                                                            </span>
+                                                                            {renderCollection(currentCourseDocs)}
+                                                                        </div>
+                                                                    )}
+                                                                    {pastCourseDocs.length > 0 && (
+                                                                        <div className="space-y-2">
+                                                                            <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground pl-1">
+                                                                                Past Materials
+                                                                            </span>
+                                                                            {renderCollection(pastCourseDocs)}
+                                                                        </div>
+                                                                    )}
+                                                                    {currentCourseDocs.length === 0 && pastCourseDocs.length === 0 && (
+                                                                        <div className="rounded-2xl border border-dashed border-border/60 p-8 text-center text-sm text-muted-foreground">
+                                                                            No materials found in this course.
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
                                             </div>
                                         )}
                                     </div>
@@ -1216,8 +1147,8 @@ export default function HomeContent() {
                         </div>
                     </div>
 
-                    {/* DESKTOP MAIN WINDOW VIEWS - DISABLED */}
-                    <div className="hidden flex-1 overflow-y-auto px-6 py-4">
+                    {/* DESKTOP MAIN WINDOW VIEWS */}
+                    <div className="hidden md:block flex-1 overflow-y-auto px-6 py-4">
                         {loading && (
                             <div className="grid grid-cols-2 gap-6 md:grid-cols-5 py-8">
                                 {[1, 2, 3, 4, 5].map(i => (
@@ -1390,8 +1321,8 @@ export default function HomeContent() {
                 </div>
             </section>
 
-            {/* 3. RIGHT DETAILS SIDEBAR - DISABLED */}
-            <aside className="hidden flex-col w-80 shrink-0 border-l border-border/60 bg-card/35 backdrop-blur-md overflow-y-auto">
+            {/* 3. RIGHT DETAILS SIDEBAR - DESKTOP ONLY */}
+            <aside className="hidden xl:flex flex-col w-80 shrink-0 border-l border-border/60 bg-card/35 backdrop-blur-md overflow-y-auto">
                 {selectedDoc ? (
                     <div className="p-6 flex flex-col h-full">
                         {/* Header Details */}
@@ -1506,14 +1437,18 @@ export default function HomeContent() {
         return (
             <>
                 {viewStyle === 'grid' ? (
-                    /* 2-COLUMN GRID ON MOBILE, 8-COLUMN GRID ON DESKTOP */
-                    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
+                    /* 2-COLUMN GRID ON MOBILE, 5-COLUMN GRID ON DESKTOP */
+                    <div className="grid grid-cols-2 gap-3.5 md:grid-cols-5">
                         {items.map((item) => {
                             return (
                                 <div
                                     key={item.id}
                                     onClick={() => {
-                                        handleOpenReader(item);
+                                        if (window.innerWidth >= 768) {
+                                            selectDocument(item);
+                                        } else {
+                                            handleOpenReader(item);
+                                        }
                                     }}
                                     className={`group flex flex-col rounded-xl border transition-all duration-150 cursor-pointer overflow-hidden ${
                                         selectedDoc?.id === item.id ? 'border-primary bg-primary/[0.015]' : 'border-border/80 bg-surface-secondary hover:bg-surface-secondary/80'
@@ -1551,7 +1486,7 @@ export default function HomeContent() {
                         })}
                     </div>
                 ) : (
-                    /* WPS LIST VIEW - Desktop Tabular View on desktop, Card View on mobile */
+                    /* WPS LIST VIEW - No outer border card wrapper on mobile */
                     <div className="overflow-hidden">
                         {/* Desktop labels */}
                         <div className="hidden md:grid grid-cols-[1.5fr_1fr_1fr_0.6fr] gap-4 px-4 py-3 border-b border-border/40 text-xs font-semibold text-muted-foreground uppercase">
@@ -1567,7 +1502,7 @@ export default function HomeContent() {
                                 const hasStarred = isStarred(item.drive_file_id);
                                 return (
                                     <div key={item.id}>
-                                        {/* Mobile view layout */}
+                                        {/* Mobile view layout - simplified, matching image exactly */}
                                         <div
                                             onClick={() => handleOpenReader(item)}
                                             className="md:hidden flex items-center justify-between py-3.5 px-3 cursor-pointer transition-all active:bg-accent/40"
@@ -1644,10 +1579,14 @@ export default function HomeContent() {
                                             )}
                                         </div>
 
-                                        {/* Desktop view tabular layout */}
+                                        {/* Desktop view layout - preserved */}
                                         <div
                                             onClick={() => {
-                                                handleOpenReader(item);
+                                                if (window.innerWidth >= 768) {
+                                                    selectDocument(item);
+                                                } else {
+                                                    handleOpenReader(item);
+                                                }
                                             }}
                                             className={`hidden md:grid md:grid-cols-[1.5fr_1fr_1fr_0.6fr] gap-2 md:gap-4 px-4 py-3 cursor-pointer transition-all duration-150 hover:bg-accent/40 group ${
                                                 selectedDoc?.id === item.id ? 'bg-primary/5 border-l-4 border-primary pl-3' : ''
@@ -1687,7 +1626,7 @@ export default function HomeContent() {
                                                     </div>
                                                 </div>
 
-                                                {/* Star action */}
+                                                {/* Star action (Mobile only inline) */}
                                                 <button 
                                                     onClick={(e) => toggleStar(e, item.drive_file_id)}
                                                     className="md:hidden text-muted-foreground hover:text-[#fbbc05] p-1.5"
