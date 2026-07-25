@@ -3,7 +3,7 @@
 
 "use strict";
 
-const { app, BrowserWindow, dialog, shell, ipcMain } = require("electron"); // [DESKTOP TABS]
+const { app, BrowserWindow, Menu, dialog, shell, ipcMain } = require("electron"); // [DESKTOP CUSTOM TITLEBAR]
 const path = require("path"); // [ELECTRON PHASE 1]
 const fs = require("fs"); // [DESKTOP TABS]
 const net = require("net"); // [ELECTRON PHASE 1]
@@ -11,6 +11,7 @@ const http = require("http"); // [ELECTRON PHASE 1]
 const { spawn } = require("child_process"); // [ELECTRON PHASE 1]
 
 app.setName("PansGPT"); // [DESKTOP TABS] — ensures app.getPath('userData') resolves to 'PansGPT' consistently in dev and prod
+Menu.setApplicationMenu(null); // [DESKTOP CUSTOM TITLEBAR] Remove default native OS menu bar
 
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -141,10 +142,11 @@ function createWindow(url) { // [ELECTRON PHASE 1]
   mainWindow = new BrowserWindow({ // [ELECTRON PHASE 1]
     width: 1280, // [ELECTRON PHASE 1]
     height: 800, // [ELECTRON PHASE 1]
+    minWidth: 900, // [DESKTOP CUSTOM TITLEBAR]
+    minHeight: 600, // [DESKTOP CUSTOM TITLEBAR]
     title: "PansGPT", // [ELECTRON PHASE 1]
-    // frame: true is the Electron default — standard OS window chrome.
-    // Do NOT set frame: false here — that's Phase 2 scope.
-    frame: true, // [ELECTRON PHASE 1]
+    frame: false, // [DESKTOP CUSTOM TITLEBAR] Frameless custom title bar mode
+    resizable: true, // [DESKTOP CUSTOM TITLEBAR] Enables native Windows edge resizing and snap behavior
     contextIsolation: true, // [ELECTRON PHASE 1] — do not disable; security default
     webPreferences: { // [ELECTRON PHASE 1]
       nodeIntegration: false, // [ELECTRON PHASE 1] — do not enable; security default
@@ -153,6 +155,13 @@ function createWindow(url) { // [ELECTRON PHASE 1]
       preload: path.join(__dirname, "preload.js"), // [ELECTRON PHASE 1]
     }, // [ELECTRON PHASE 1]
   }); // [ELECTRON PHASE 1]
+
+  mainWindow.on("maximize", () => { // [DESKTOP CUSTOM TITLEBAR]
+    mainWindow?.webContents.send("window:maximized-change", true); // [DESKTOP CUSTOM TITLEBAR]
+  }); // [DESKTOP CUSTOM TITLEBAR]
+  mainWindow.on("unmaximize", () => { // [DESKTOP CUSTOM TITLEBAR]
+    mainWindow?.webContents.send("window:maximized-change", false); // [DESKTOP CUSTOM TITLEBAR]
+  }); // [DESKTOP CUSTOM TITLEBAR]
 
   // [ELECTRON PHASE 3] Intercept external link popups & new windows
   mainWindow.webContents.setWindowOpenHandler(({ url: targetUrl }) => { // [ELECTRON PHASE 3]
@@ -414,3 +423,33 @@ ipcMain.handle("auth:removeItem", async (_event, key) => { // [DESKTOP AUTH PERS
   delete store[key]; // [DESKTOP AUTH PERSISTENCE]
   writeAuthStore(store); // [DESKTOP AUTH PERSISTENCE]
 }); // [DESKTOP AUTH PERSISTENCE]
+
+// ─── Custom Window Controls IPC Handlers ─────────────────────────────────────
+// [DESKTOP CUSTOM TITLEBAR] Window minimize, maximize/restore, close, and state handlers
+ipcMain.handle("window:minimize", async () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.minimize();
+  }
+});
+
+ipcMain.handle("window:maximize", async () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize();
+    } else {
+      mainWindow.maximize();
+    }
+    return mainWindow.isMaximized();
+  }
+  return false;
+});
+
+ipcMain.handle("window:close", async () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.close();
+  }
+});
+
+ipcMain.handle("window:isMaximized", async () => {
+  return mainWindow && !mainWindow.isDestroyed() ? mainWindow.isMaximized() : false;
+});

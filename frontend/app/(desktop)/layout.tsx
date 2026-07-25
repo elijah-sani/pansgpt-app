@@ -4,6 +4,7 @@
 import React, { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { DesktopMainHeader } from "@/components/desktop/DesktopMainHeader";
+import { DesktopTitleBar } from "@/components/desktop/DesktopTitleBar"; // [DESKTOP CUSTOM TITLEBAR]
 import DesktopSidebar from "@/components/desktop/DesktopSidebar";
 import { DocumentTabsProvider } from "@/lib/DocumentTabsContext";
 import SearchChatsModal from "@/components/SearchChatsModal";
@@ -123,6 +124,9 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
   return (
     <DocumentTabsProvider>
       <div className="desktop-shell flex flex-col h-[100dvh] w-full overflow-hidden bg-background select-none">
+        {/* Custom Frameless Title Bar (Notion Style) */}
+        <DesktopTitleBar onOpenSidebar={() => setIsSidebarOpen((prev) => !prev)} />
+
         {/* Desktop Global Top Header */}
         <DesktopMainHeader
           desktopOnly

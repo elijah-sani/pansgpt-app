@@ -102,8 +102,8 @@ export function DesktopMainHeader({
       {/* ========================================================================= */}
       {!mobileOnly && (
         <header className="hidden md:flex h-11 w-full shrink-0 items-center justify-between bg-card px-4 z-30 select-none border-b border-border/40 gap-3">
-          {/* Left: Sidebar Toggle, Brand Title, & Integrated Document Tabs */}
-          <div className="flex items-center gap-2.5 min-w-0 flex-1 max-w-[65%]">
+          {/* Left: Brand Title */}
+          <div className="flex items-center gap-2.5 shrink-0">
             {onOpenSidebar && (
               <button
                 type="button"
@@ -115,14 +115,9 @@ export function DesktopMainHeader({
               </button>
             )}
 
-            <span className="text-base font-normal text-foreground tracking-wide shrink-0 hidden sm:inline border-r border-border/40 pr-3" style={{ fontFamily: "'Albert Sans', sans-serif" }}>
+            <span className="text-base font-normal text-foreground tracking-wide shrink-0 hidden sm:inline" style={{ fontFamily: "'Albert Sans', sans-serif" }}>
               PansGPT
             </span>
-
-            {/* Integrated Notion-Style Tab Strip */}
-            <div className="flex-1 min-w-0 flex items-center">
-              <DocumentTabStrip />
-            </div>
           </div>
 
           {/* Center: History Button (Left), Search Bar (Center), New Chat Button (Right) */}

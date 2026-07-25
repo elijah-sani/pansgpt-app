@@ -15,4 +15,15 @@ contextBridge.exposeInMainWorld("electronAPI", { // [ELECTRON PHASE 1]
   getAuthItem: (key) => ipcRenderer.invoke("auth:getItem", key), // [DESKTOP AUTH PERSISTENCE]
   setAuthItem: (key, value) => ipcRenderer.invoke("auth:setItem", key, value), // [DESKTOP AUTH PERSISTENCE]
   removeAuthItem: (key) => ipcRenderer.invoke("auth:removeItem", key), // [DESKTOP AUTH PERSISTENCE]
+  minimizeWindow: () => ipcRenderer.invoke("window:minimize"), // [DESKTOP CUSTOM TITLEBAR]
+  maximizeWindow: () => ipcRenderer.invoke("window:maximize"), // [DESKTOP CUSTOM TITLEBAR]
+  closeWindow: () => ipcRenderer.invoke("window:close"), // [DESKTOP CUSTOM TITLEBAR]
+  isMaximized: () => ipcRenderer.invoke("window:isMaximized"), // [DESKTOP CUSTOM TITLEBAR]
+  onMaximizedChange: (callback) => { // [DESKTOP CUSTOM TITLEBAR]
+    const listener = (_event, isMaximized) => callback(isMaximized);
+    ipcRenderer.on("window:maximized-change", listener);
+    return () => {
+      ipcRenderer.removeListener("window:maximized-change", listener);
+    };
+  },
 }); // [ELECTRON PHASE 1]
