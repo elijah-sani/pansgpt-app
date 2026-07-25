@@ -54,14 +54,14 @@ export function DesktopTitleBar({ onOpenSidebar }: DesktopTitleBarProps) {
 
   return (
     <header
-      className="desktop-custom-titlebar flex h-10 w-full shrink-0 items-center justify-between bg-[#0e0e0e] border-b border-border/30 px-3 z-40 select-none text-foreground"
+      className="desktop-custom-titlebar flex h-10 w-full shrink-0 items-end justify-between bg-[#0c0c0d] border-b border-border/30 px-3 z-40 select-none text-foreground"
       style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
     >
-      {/* Left: Green App Logo Pill Container, PansGPT Title & Document Tabs */}
-      <div className="flex items-center gap-2 min-w-0 flex-1 max-w-[75%]" style={{ WebkitAppRegion: "drag" } as React.CSSProperties}>
-        {/* Lighter Brand Pill Container matching WPS reference image */}
+      {/* Left: Green App Logo Browser-Style Tab Container & Document Tabs */}
+      <div className="flex items-end gap-1.5 min-w-0 flex-1 max-w-[75%] h-full" style={{ WebkitAppRegion: "drag" } as React.CSSProperties}>
+        {/* Browser-Style Tab Container matching Image 2 */}
         <div
-          className="flex items-center gap-1.5 shrink-0 bg-card border border-border/50 rounded-md px-2.5 py-1 shadow-2xs"
+          className="flex items-center gap-2 shrink-0 bg-card border-t border-l border-r border-border/50 border-b-0 rounded-t-md rounded-b-none px-3 h-[32px] shadow-2xs"
           style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         >
           <Logo className="w-3.5 h-3.5 text-[#2f9e1c] shrink-0" />
@@ -74,7 +74,7 @@ export function DesktopTitleBar({ onOpenSidebar }: DesktopTitleBarProps) {
         </div>
 
         {/* Integrated Document Tab Strip */}
-        <div className="flex-1 min-w-0 flex items-center" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
+        <div className="flex-1 min-w-0 flex items-end h-full" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
           <DocumentTabStrip />
         </div>
       </div>
@@ -84,7 +84,7 @@ export function DesktopTitleBar({ onOpenSidebar }: DesktopTitleBarProps) {
 
       {/* Right: Custom Window Controls (Electron only, or fallback for desktop) */}
       {isElectron && (
-        <div className="flex items-center gap-1 shrink-0 ml-2" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
+        <div className="flex items-center self-center gap-1 shrink-0 ml-2 mb-1" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
           {/* Minimize Button */}
           <button
             type="button"

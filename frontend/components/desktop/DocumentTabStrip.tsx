@@ -13,17 +13,17 @@ export function DocumentTabStrip() {
   }
 
   return (
-    <div className="flex items-center gap-1 overflow-x-auto no-scrollbar select-none h-8 max-w-full">
+    <div className="flex items-end gap-1 overflow-x-auto no-scrollbar select-none h-full max-w-full">
       {openTabs.map((tab) => {
         const isActive = tab.id === activeTabId;
         return (
           <div
             key={tab.id}
             onClick={() => setActiveTabId(tab.id)}
-            className={`group relative flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs transition-all duration-150 max-w-[180px] shrink-0 cursor-pointer ${
+            className={`group relative flex items-center gap-1.5 px-3 h-[32px] rounded-t-md rounded-b-none text-xs transition-all duration-150 max-w-[180px] shrink-0 cursor-pointer ${
               isActive
-                ? "bg-accent/80 text-foreground font-semibold border border-border/50 shadow-2xs"
-                : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-accent/40 font-normal border border-transparent"
+                ? "bg-card text-foreground font-semibold border-t border-l border-r border-border/50 border-b-0 shadow-2xs"
+                : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-card/40 font-normal border-t border-l border-r border-transparent hover:border-border/30 border-b-0"
             }`}
             title={tab.title}
           >
@@ -54,7 +54,7 @@ export function DocumentTabStrip() {
         onClick={() => {
           console.log("[DESKTOP UI] New tab button clicked");
         }}
-        className="w-6 h-6 shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors ml-0.5"
+        className="w-6 h-6 shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-card/60 transition-colors ml-1 mb-1"
         title="New tab"
       >
         <Plus className="w-3.5 h-3.5" />
