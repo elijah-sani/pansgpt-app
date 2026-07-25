@@ -47,12 +47,20 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
     loadRestrictionStatus,
   } = useStudentRestrictions();
 
-  // [DESKTOP UI SECURITY] Layout-level session & restriction verification
+  // [DESKTOP UI SECURITY] [DESKTOP AUTH PERSISTENCE] Layout-level session & restriction verification
   useEffect(() => {
     let isMounted = true;
 
     const loadDesktopShell = async () => {
       try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!isMounted) return;
+        if (!session?.user) {
+          setShellUser(null);
+          router.replace("/login");
+          return;
+        }
+
         const data = await fetchBootstrap();
         if (isMounted && data) {
           setIsUniversitySuspended(Boolean((data as Record<string, unknown>)?.is_university_suspended));
@@ -71,21 +79,14 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
       } catch {}
     };
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    void loadDesktopShell();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!isMounted) return;
       if (!session?.user) {
         setShellUser(null);
-        if (event === "SIGNED_OUT" || event === "INITIAL_SESSION") {
-          router.replace("/login");
-        }
+        router.replace("/login");
       } else {
-        void loadDesktopShell();
-      }
-    });
-
-    void supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!isMounted) return;
-      if (session?.user) {
         void loadDesktopShell();
       }
     });
@@ -98,7 +99,7 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
 
   const handleNewChat = () => {
     setActiveSessionId(null);
-    router.push("/main");
+    router.push("/study");
   };
 
   const handleLogout = async () => {
@@ -152,7 +153,7 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
                   retryLabel="Retry Sidebar"
                   onRetry={retry}
                   secondaryLabel="Go Home"
-                  onSecondaryAction={() => router.push("/main")}
+                  onSecondaryAction={() => router.push("/study")}
                 />
               </div>
             )}
@@ -189,8 +190,8 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
           onSelectSession={(id) => {
             setActiveSessionId(id);
             setIsSearchModalOpen(false);
-            if (typeof window !== "undefined" && window.location.pathname !== "/main") {
-              router.push("/main");
+            if (typeof window !== "undefined" && window.location.pathname !== "/study") {
+              router.push("/study");
             }
           }}
         />

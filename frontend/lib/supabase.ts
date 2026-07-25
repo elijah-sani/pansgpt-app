@@ -29,14 +29,35 @@ const browserStorage: SupportedStorage = {
   },
 };
 
+// [DESKTOP AUTH PERSISTENCE] Disk-backed storage adapter via Electron IPC
+const electronStorage: SupportedStorage = { // [DESKTOP AUTH PERSISTENCE]
+  getItem: (key: string) => { // [DESKTOP AUTH PERSISTENCE]
+    if (typeof window === 'undefined' || !(window as any).electronAPI?.getAuthItem) return null; // [DESKTOP AUTH PERSISTENCE]
+    return (window as any).electronAPI.getAuthItem(key); // [DESKTOP AUTH PERSISTENCE]
+  }, // [DESKTOP AUTH PERSISTENCE]
+  setItem: (key: string, value: string) => { // [DESKTOP AUTH PERSISTENCE]
+    if (typeof window === 'undefined' || !(window as any).electronAPI?.setAuthItem) return; // [DESKTOP AUTH PERSISTENCE]
+    void (window as any).electronAPI.setAuthItem(key, value); // [DESKTOP AUTH PERSISTENCE]
+  }, // [DESKTOP AUTH PERSISTENCE]
+  removeItem: (key: string) => { // [DESKTOP AUTH PERSISTENCE]
+    if (typeof window === 'undefined' || !(window as any).electronAPI?.removeAuthItem) return; // [DESKTOP AUTH PERSISTENCE]
+    void (window as any).electronAPI.removeAuthItem(key); // [DESKTOP AUTH PERSISTENCE]
+  }, // [DESKTOP AUTH PERSISTENCE]
+}; // [DESKTOP AUTH PERSISTENCE]
+
+function isElectronRuntime(): boolean { // [DESKTOP AUTH PERSISTENCE]
+  return typeof window !== 'undefined' && Boolean((window as any).electronAPI); // [DESKTOP AUTH PERSISTENCE]
+} // [DESKTOP AUTH PERSISTENCE]
+
 function createSupabaseBrowserClient() {
+  const activeStorage = isElectronRuntime() ? electronStorage : browserStorage; // [DESKTOP AUTH PERSISTENCE]
   return createClient(supabaseUrl, supabaseKey, {
     auth: {
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: true,
       storageKey: STORAGE_KEY,
-      storage: browserStorage,
+      storage: activeStorage,
     },
   });
 }

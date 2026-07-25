@@ -70,6 +70,9 @@ export default function AuthCallbackPage() {
                 }
 
                 let callbackDestination = shouldForceProfileCompletion ? '/main?welcome=true&profile=1' : '/main?welcome=true';
+                if (typeof window !== 'undefined' && Boolean((window as any).electronAPI)) { // [DESKTOP AUTH PERSISTENCE]
+                    callbackDestination = shouldForceProfileCompletion ? '/study?welcome=true&profile=1' : '/study?welcome=true'; // [DESKTOP AUTH PERSISTENCE]
+                } // [DESKTOP AUTH PERSISTENCE]
                 try {
                     const bootstrap = await fetchBootstrap({ force: true });
                     if (bootstrap?.is_lecturer) {

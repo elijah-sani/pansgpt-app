@@ -34,19 +34,25 @@ export function resolveDestinationFromBootstrap(bootstrap: BootstrapRouteRespons
     }
   }
 
+  // [DESKTOP AUTH PERSISTENCE] Return /study for desktop users instead of /main
+  if (typeof window !== 'undefined' && Boolean((window as any).electronAPI)) { // [DESKTOP AUTH PERSISTENCE]
+    return '/study'; // [DESKTOP AUTH PERSISTENCE]
+  } // [DESKTOP AUTH PERSISTENCE]
+
   return '/main';
 }
 
 export async function resolvePostLoginDestination(): Promise<string> {
+  const defaultFallback = (typeof window !== 'undefined' && Boolean((window as any).electronAPI)) ? '/study' : '/main'; // [DESKTOP AUTH PERSISTENCE]
   try {
     const { fetchBootstrap } = await import('@/lib/bootstrap-cache');
     const bootstrap = await fetchBootstrap();
     if (!bootstrap) {
-      return '/main';
+      return defaultFallback; // [DESKTOP AUTH PERSISTENCE]
     }
     return resolveDestinationFromBootstrap(bootstrap);
   } catch (error) {
-    console.warn('[Auth] Bootstrap redirect resolution failed, falling back to /main', error);
-    return '/main';
+    console.warn('[Auth] Bootstrap redirect resolution failed, falling back', error);
+    return defaultFallback; // [DESKTOP AUTH PERSISTENCE]
   }
 }
