@@ -47,39 +47,13 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
     loadRestrictionStatus,
   } = useStudentRestrictions();
 
-  // [DESKTOP UI SECURITY] Layout-level session verification
+  // [DESKTOP UI SECURITY] Layout-level session & restriction verification
   useEffect(() => {
     let isMounted = true;
 
-    const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!isMounted) return;
-      if (!session?.user) {
-        setShellUser(null);
-        router.replace("/login");
-        return;
-      }
-    };
-
-    void checkSession();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!session?.user) {
-        setShellUser(null);
-        router.replace("/login");
-      }
-    });
-
-    return () => {
-      isMounted = false;
-      subscription.unsubscribe();
-    };
-  }, [router]);
-
-  useEffect(() => {
-    let isMounted = true;
-    fetchBootstrap()
-      .then((data) => {
+    const loadDesktopShell = async () => {
+      try {
+        const data = await fetchBootstrap();
         if (isMounted && data) {
           setIsUniversitySuspended(Boolean((data as Record<string, unknown>)?.is_university_suspended));
           if (data.profile) {
@@ -94,12 +68,33 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
           }
           void loadRestrictionStatus({ foreground: true });
         }
-      })
-      .catch(() => {});
+      } catch {}
+    };
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!isMounted) return;
+      if (!session?.user) {
+        setShellUser(null);
+        if (event === "SIGNED_OUT" || event === "INITIAL_SESSION") {
+          router.replace("/login");
+        }
+      } else {
+        void loadDesktopShell();
+      }
+    });
+
+    void supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!isMounted) return;
+      if (session?.user) {
+        void loadDesktopShell();
+      }
+    });
+
     return () => {
       isMounted = false;
+      subscription.unsubscribe();
     };
-  }, [loadRestrictionStatus, setIsUniversitySuspended]);
+  }, [loadRestrictionStatus, router, setIsUniversitySuspended]);
 
   const handleNewChat = () => {
     setActiveSessionId(null);
