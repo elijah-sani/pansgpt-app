@@ -1,12 +1,12 @@
 // [DESKTOP UI]
 "use client";
 
-import React from "react";
+import React, { Suspense } from "react";
 import DesktopHomeContent from "@/components/desktop/DesktopHomeContent";
 import { DesktopMainConversation } from "@/components/desktop/DesktopMainConversation";
 import { useMainPageController } from "@/hooks/useMainPageController";
 
-export default function DesktopStudyPage() {
+function DesktopStudyPageContent() {
   const controller = useMainPageController();
   const { user, activeSessionId, setPendingAttachments } = controller;
 
@@ -71,5 +71,13 @@ export default function DesktopStudyPage() {
         <DesktopHomeContent />
       )}
     </div>
+  );
+}
+
+export default function DesktopStudyPage() {
+  return (
+    <Suspense fallback={<div className="h-full bg-background" />}>
+      <DesktopStudyPageContent />
+    </Suspense>
   );
 }
