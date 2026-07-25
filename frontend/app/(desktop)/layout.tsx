@@ -17,6 +17,10 @@ import ErrorRecoveryView from "@/components/ErrorRecoveryView";
 import type { MainUser } from "@/components/main/types";
 import { fetchBootstrap } from "@/lib/bootstrap-cache";
 import { supabase } from "@/lib/supabase";
+// [DESKTOP UI SECURITY]
+import { useStudentRestrictions } from "@/hooks/useStudentRestrictions";
+import { StudentRestrictionBlocker } from "@/components/StudentRestrictionBlocker";
+import UniversitySuspendedBlocker from "@/components/UniversitySuspendedBlocker";
 
 export default function DesktopLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -34,26 +38,39 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
   const [renameDraft, setRenameDraft] = useState("");
   const [shellUser, setShellUser] = useState<MainUser | null>(null);
 
+  // [DESKTOP UI SECURITY] Shared student restriction & suspension state
+  const {
+    restriction,
+    restrictionNow,
+    isUniversitySuspended,
+    setIsUniversitySuspended,
+    loadRestrictionStatus,
+  } = useStudentRestrictions();
+
   useEffect(() => {
     let isMounted = true;
     fetchBootstrap()
       .then((data) => {
-        if (isMounted && data && data.profile) {
-          setShellUser({
-            id: "desktop-user",
-            name: data.profile.full_name || "User",
-            email: "",
-            level: data.profile.level || "300L",
-            university: data.profile.university || data.university_name || "PansGPT University",
-            avatarUrl: data.profile.avatar_url || "",
-          });
+        if (isMounted && data) {
+          setIsUniversitySuspended(Boolean((data as Record<string, unknown>)?.is_university_suspended));
+          if (data.profile) {
+            setShellUser({
+              id: "desktop-user",
+              name: data.profile.full_name || "User",
+              email: "",
+              level: data.profile.level || "300L",
+              university: data.profile.university || data.university_name || "PansGPT University",
+              avatarUrl: data.profile.avatar_url || "",
+            });
+          }
+          void loadRestrictionStatus({ foreground: true });
         }
       })
       .catch(() => {});
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [loadRestrictionStatus, setIsUniversitySuspended]);
 
   const handleNewChat = () => {
     setActiveSessionId(null);
@@ -69,6 +86,15 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
     await supabase.auth.signOut();
     router.push("/login");
   };
+
+  // [DESKTOP UI SECURITY] Access Control Blocker rendering
+  if (isUniversitySuspended) {
+    return <UniversitySuspendedBlocker onLogout={handleLogout} />;
+  }
+
+  if (restriction) {
+    return <StudentRestrictionBlocker restriction={restriction} now={restrictionNow} />;
+  }
 
   return (
     <DocumentTabsProvider>
