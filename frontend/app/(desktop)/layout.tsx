@@ -11,6 +11,9 @@ import SearchChatsModal from "@/components/SearchChatsModal";
 import SettingsModal from "@/components/SettingsModal";
 import ReportProblemModal from "@/components/ReportProblemModal";
 import PersonalInformationModal from "@/components/PersonalInformationModal";
+import ProfileSidebar from "@/components/ProfileSidebar"; // [DESKTOP UI]
+import QuizPerformanceModal from "@/components/QuizPerformanceModal"; // [DESKTOP UI]
+import WeeklyTimetableModal from "@/components/WeeklyTimetableModal"; // [DESKTOP UI]
 import { useChatSession } from "@/lib/ChatSessionContext";
 import LocalErrorBoundary from "@/components/LocalErrorBoundary";
 import ErrorRecoveryView from "@/components/ErrorRecoveryView";
@@ -32,6 +35,10 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isReportProblemOpen, setIsReportProblemOpen] = useState(false);
   const [isPersonalInfoOpen, setIsPersonalInfoOpen] = useState(false);
+  const [isProfileSidebarOpen, setIsProfileSidebarOpen] = useState(false); // [DESKTOP UI]
+  const [isQuizPerformanceOpen, setIsQuizPerformanceOpen] = useState(false); // [DESKTOP UI]
+  const [isWeeklyTimetableOpen, setIsWeeklyTimetableOpen] = useState(false); // [DESKTOP UI]
+  const [isAdmin, setIsAdmin] = useState(false); // [DESKTOP UI]
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
@@ -57,18 +64,20 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
         if (!isMounted) return;
         if (!session?.user) {
           setShellUser(null);
+          setIsAdmin(false);
           router.replace("/login");
           return;
         }
 
         const data = await fetchBootstrap();
         if (isMounted && data) {
+          setIsAdmin(Boolean((data as Record<string, unknown>)?.is_admin)); // [DESKTOP UI]
           setIsUniversitySuspended(Boolean((data as Record<string, unknown>)?.is_university_suspended));
           if (data.profile) {
             setShellUser({
-              id: "desktop-user",
+              id: session.user.id,
               name: data.profile.full_name || "User",
-              email: "",
+              email: session.user.email || "",
               level: data.profile.level || "300L",
               university: data.profile.university || data.university_name || "PansGPT University",
               avatarUrl: data.profile.avatar_url || "",
@@ -85,6 +94,7 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
       if (!isMounted) return;
       if (!session?.user) {
         setShellUser(null);
+        setIsAdmin(false);
         router.replace("/login");
       } else {
         void loadDesktopShell();
@@ -131,9 +141,9 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
         <DesktopMainHeader
           desktopOnly
           activeSessionId={activeSessionId}
-          isProfileOpen={isPersonalInfoOpen}
+          isProfileOpen={isProfileSidebarOpen}
           onNewChat={handleNewChat}
-          onOpenProfile={() => setIsPersonalInfoOpen(true)}
+          onOpenProfile={() => setIsProfileSidebarOpen(true)} // [DESKTOP UI]
           onOpenSidebar={() => setIsSidebarOpen((prev) => !prev)}
           onSearchOpen={() => setIsSearchModalOpen(true)}
           sessions={sessions}
@@ -208,6 +218,44 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
         onOpenReportProblem={() => setIsReportProblemOpen(true)}
       />
 
+      {/* [DESKTOP UI] Profile Sidebar Drawer */}
+      {isProfileSidebarOpen && (
+        <div
+          className="fixed inset-0 z-[150] flex justify-end bg-black/50 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={() => setIsProfileSidebarOpen(false)}
+        >
+          <div
+            className="w-full max-w-sm h-full bg-background border-l border-border shadow-2xl animate-in slide-in-from-right duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <ProfileSidebar
+              user={{
+                name: shellUser?.name || "User",
+                email: shellUser?.email || "",
+                avatarUrl: shellUser?.avatarUrl || "",
+                university: shellUser?.university || "PansGPT University",
+                level: shellUser?.level || "300L",
+                subscriptionTier: shellUser?.subscriptionTier || "free",
+              }}
+              isAdmin={isAdmin}
+              onClose={() => setIsProfileSidebarOpen(false)}
+              onOpenPersonalInfo={() => {
+                setIsProfileSidebarOpen(false);
+                setIsPersonalInfoOpen(true);
+              }}
+              onOpenQuizPerformance={() => {
+                setIsProfileSidebarOpen(false);
+                setIsQuizPerformanceOpen(true);
+              }}
+              onOpenTimetable={() => {
+                setIsProfileSidebarOpen(false);
+                setIsWeeklyTimetableOpen(true);
+              }}
+            />
+          </div>
+        </div>
+      )}
+
       {shellUser && (
         <PersonalInformationModal
           isOpen={isPersonalInfoOpen}
@@ -226,6 +274,16 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
           }}
         />
       )}
+
+      {/* [DESKTOP UI] Profile Sub-Modals */}
+      <QuizPerformanceModal
+        isOpen={isQuizPerformanceOpen}
+        onClose={() => setIsQuizPerformanceOpen(false)}
+      />
+      <WeeklyTimetableModal
+        isOpen={isWeeklyTimetableOpen}
+        onClose={() => setIsWeeklyTimetableOpen(false)}
+      />
 
       {isReportProblemOpen && (
         <ReportProblemModal
