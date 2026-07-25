@@ -34,8 +34,8 @@ export function DesktopMainSidebarContent({
 }: MainSidebarContentProps) {
   return (
     <nav className="flex flex-col items-center py-1 gap-1">
-      <SidebarLink icon={MessageSquare} label="AI Chat" onClick={() => { handleNewChat(); routerPush('/main'); }} active={true} isIconOnly={true} />
       <SidebarLink icon={Home} label="Home" onClick={() => routerPush('/study')} isIconOnly={true} />
+      <SidebarLink icon={MessageSquare} label="AI Chat" onClick={() => { handleNewChat(); routerPush('/main'); }} active={true} isIconOnly={true} />
       <SidebarLink icon={HelpCircle} label="Quiz" onClick={() => routerPush('/quiz')} isIconOnly={true} />
     </nav>
   );

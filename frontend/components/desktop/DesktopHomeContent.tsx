@@ -859,7 +859,7 @@ export default function DesktopHomeContent() {
                                             <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground/60 pl-1">
                                                 Courses ({displaySearchCourses.length})
                                             </span>
-                                            <div className="grid grid-cols-2 gap-3.5">
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3.5">
                                                 {displaySearchCourses.map(folder => (
                                                     <div
                                                         key={`search-mob-folder-card-${folder}`}
@@ -1032,7 +1032,7 @@ export default function DesktopHomeContent() {
                                                                         All Courses
                                                                     </span>
                                                                 </div>
-                                                                <div className="grid grid-cols-2 gap-3.5">
+                                                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3.5">
                                                                     {courseFolders.map(folder => (
                                                                         <div
                                                                             key={`mob-folder-card-${folder}`}
@@ -1438,8 +1438,8 @@ export default function DesktopHomeContent() {
         return (
             <>
                 {viewStyle === 'grid' ? (
-                    /* 2-COLUMN GRID ON MOBILE, 5-COLUMN GRID ON DESKTOP */
-                    <div className="grid grid-cols-2 gap-3.5 md:grid-cols-5">
+                    /* RESPONSIVE WRAPPING GRID ON MOBILE & DESKTOP - PREVENTS CARD SQUEEZING */
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
                         {items.map((item) => {
                             return (
                                 <div
