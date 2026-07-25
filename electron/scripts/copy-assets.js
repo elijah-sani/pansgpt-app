@@ -55,24 +55,46 @@ async function main() { // [ELECTRON PHASE 1]
   const destNextDist1 = path.join(frontendDir, ".next-electron", "node_modules", "next", "dist"); // [ELECTRON PHASE 1 RELIABILITY]
   const destNextDist2 = path.join(standaloneDir, "node_modules", "next", "dist"); // [ELECTRON PHASE 1 RELIABILITY]
 
-  const safeCopy = async (src, dest) => {
-    try {
-      await fs.copy(src, dest, { overwrite: true });
-    } catch (err) {
-      console.warn(`[ELECTRON PHASE 1 RELIABILITY] Non-fatal notice copying ${src} to ${dest}:`, err?.message || err);
+  const copyWithRetry = (src, dest, retries = 5, delay = 200) => {
+    fs.mkdirSync(dest, { recursive: true });
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        fs.cpSync(src, dest, { recursive: true, force: true });
+        return;
+      } catch (err) {
+        if (attempt === retries) {
+          throw new Error(`[ELECTRON PHASE 1 RELIABILITY] Failed to copy ${src} to ${dest} after ${retries} attempts: ${err?.message || err}`);
+        }
+        const end = Date.now() + delay;
+        while (Date.now() < end) {}
+      }
     }
   };
 
   if (fs.existsSync(srcNextDist)) { // [ELECTRON PHASE 1 RELIABILITY]
-    console.log("[ELECTRON PHASE 1 RELIABILITY] Syncing node_modules/next/dist..."); // [ELECTRON PHASE 1 RELIABILITY]
-    if (fs.existsSync(path.dirname(destNextDist1)) && !fs.existsSync(destNextDist1)) { // [ELECTRON PHASE 1 RELIABILITY]
-      await safeCopy(srcNextDist, destNextDist1);
-    } // [ELECTRON PHASE 1 RELIABILITY]
-    if (fs.existsSync(path.dirname(destNextDist2)) && !fs.existsSync(destNextDist2)) { // [ELECTRON PHASE 1 RELIABILITY]
-      await safeCopy(srcNextDist, destNextDist2);
-    } // [ELECTRON PHASE 1 RELIABILITY]
-    console.log("[ELECTRON PHASE 1 RELIABILITY] ✓ Done: next/dist synced cleanly"); // [ELECTRON PHASE 1 RELIABILITY]
-  } // [ELECTRON PHASE 1 RELIABILITY]
+    console.log("[ELECTRON PHASE 1 RELIABILITY] Syncing node_modules/next/dist into standalone..."); // [ELECTRON PHASE 1 RELIABILITY]
+    fs.mkdirSync(path.dirname(destNextDist2), { recursive: true });
+    copyWithRetry(srcNextDist, destNextDist2);
+
+    // LOUD VERIFICATION: Verify critical runtime submodules actually exist on disk
+    const requiredRuntimeFiles = [
+      path.join(destNextDist2, "server", "lib", "cpu-profile.js"),
+      path.join(destNextDist2, "server", "lib", "start-server.js"),
+      path.join(destNextDist2, "lib", "picocolors.js"),
+    ];
+
+    for (const reqFile of requiredRuntimeFiles) {
+      if (!fs.existsSync(reqFile)) {
+        console.error(`[ELECTRON PHASE 1 RELIABILITY] CRITICAL FATAL ERROR: Required runtime file missing after sync: ${reqFile}`);
+        process.exit(1);
+      }
+    }
+
+    console.log("[ELECTRON PHASE 1 RELIABILITY] ✓ Done: next/dist synced cleanly and verified"); // [ELECTRON PHASE 1 RELIABILITY]
+  } else {
+    console.error(`[ELECTRON PHASE 1 RELIABILITY] CRITICAL FATAL ERROR: Source next/dist not found at ${srcNextDist}`);
+    process.exit(1);
+  }
 
   for (const { src, dest, label } of copies) { // [ELECTRON PHASE 1]
     if (!(await fs.pathExists(src))) { // [ELECTRON PHASE 1]
