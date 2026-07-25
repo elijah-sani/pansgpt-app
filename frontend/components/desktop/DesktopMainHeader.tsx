@@ -101,24 +101,9 @@ export function DesktopMainHeader({
       {/* DESKTOP GLOBAL TOP HEADER (Full Width, bg-card matching AppSidebar)       */}
       {/* ========================================================================= */}
       {!mobileOnly && (
-        <header className="hidden md:flex h-11 w-full shrink-0 items-center justify-between bg-card px-4 z-30 select-none border-b border-border/40 gap-3">
-          {/* Left: Brand Title */}
-          <div className="flex items-center gap-2.5 shrink-0">
-            {onOpenSidebar && (
-              <button
-                type="button"
-                onClick={onOpenSidebar}
-                title="Toggle Sidebar"
-                className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent/60 rounded-md transition-colors shrink-0"
-              >
-                <PanelLeft size={16} />
-              </button>
-            )}
-
-            <span className="text-base font-normal text-foreground tracking-wide shrink-0 hidden sm:inline" style={{ fontFamily: "'Albert Sans', sans-serif" }}>
-              PansGPT
-            </span>
-          </div>
+        <header className="hidden md:flex h-14 w-full shrink-0 items-center justify-between bg-card px-6 z-30 select-none border-b border-border/40 gap-3">
+          {/* Left: Empty spacing handle */}
+          <div className="shrink-0" />
 
           {/* Center: History Button (Left), Search Bar (Center), New Chat Button (Right) */}
           <div className="flex-1 max-w-2xl mx-4 flex items-center gap-2.5">

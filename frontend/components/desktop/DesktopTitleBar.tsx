@@ -2,7 +2,8 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Minus, Square, Copy, X, PanelLeft } from "lucide-react";
+import { Minus, Square, Copy, X } from "lucide-react";
+import Logo from "@/components/Logo";
 import { DocumentTabStrip } from "@/components/desktop/DocumentTabStrip";
 
 type DesktopTitleBarProps = {
@@ -53,29 +54,23 @@ export function DesktopTitleBar({ onOpenSidebar }: DesktopTitleBarProps) {
 
   return (
     <header
-      className="desktop-custom-titlebar flex h-10 w-full shrink-0 items-center justify-between bg-card/95 border-b border-border/40 px-3 z-40 select-none text-foreground"
+      className="desktop-custom-titlebar flex h-9 w-full shrink-0 items-center justify-between bg-card/95 border-b border-border/40 px-3 z-40 select-none text-foreground"
       style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
     >
-      {/* Left: Sidebar Toggle, App Title & Document Tabs */}
+      {/* Left: Green App Logo, PansGPT Title & Document Tabs */}
       <div className="flex items-center gap-2.5 min-w-0 flex-1 max-w-[75%]" style={{ WebkitAppRegion: "drag" } as React.CSSProperties}>
-        {onOpenSidebar && (
-          <button
-            type="button"
-            onClick={onOpenSidebar}
-            title="Toggle Sidebar"
-            className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent/60 rounded-md transition-colors shrink-0"
-            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-          >
-            <PanelLeft size={16} />
-          </button>
-        )}
-
-        <span
-          className="text-xs font-semibold text-foreground tracking-wide shrink-0 border-r border-border/40 pr-2.5"
-          style={{ fontFamily: "'Albert Sans', sans-serif", WebkitAppRegion: "no-drag" } as React.CSSProperties}
+        <div
+          className="flex items-center gap-1.5 shrink-0 border-r border-border/40 pr-2.5"
+          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         >
-          PansGPT
-        </span>
+          <Logo className="w-4 h-4 text-[#2f9e1c] shrink-0" />
+          <span
+            className="text-xs font-semibold text-foreground tracking-wide"
+            style={{ fontFamily: "'Albert Sans', sans-serif" }}
+          >
+            PansGPT
+          </span>
+        </div>
 
         {/* Integrated Document Tab Strip */}
         <div className="flex-1 min-w-0 flex items-center" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
