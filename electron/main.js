@@ -3,11 +3,15 @@
 
 "use strict";
 
-const { app, BrowserWindow, dialog, shell } = require("electron"); // [ELECTRON PHASE 3]
+const { app, BrowserWindow, dialog, shell, ipcMain } = require("electron"); // [DESKTOP TABS]
 const path = require("path"); // [ELECTRON PHASE 1]
+const fs = require("fs"); // [DESKTOP TABS]
 const net = require("net"); // [ELECTRON PHASE 1]
 const http = require("http"); // [ELECTRON PHASE 1]
 const { spawn } = require("child_process"); // [ELECTRON PHASE 1]
+
+app.setName("PansGPT"); // [DESKTOP TABS] — ensures app.getPath('userData') resolves to 'PansGPT' consistently in dev and prod
+
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -324,3 +328,43 @@ app.on("before-quit", () => { // [ELECTRON PHASE 1]
   isQuitting = true; // [ELECTRON PHASE 1]
   killServerProcess(); // [ELECTRON PHASE 1]
 }); // [ELECTRON PHASE 1]
+
+// ─── Desktop Document Tabs IPC Handlers ─────────────────────────────────────
+ipcMain.handle("tabs:get", async () => { // [DESKTOP TABS]
+  try { // [DESKTOP TABS]
+    const filePath = path.join(app.getPath("userData"), "open-tabs.json"); // [DESKTOP TABS]
+    if (!fs.existsSync(filePath)) { // [DESKTOP TABS]
+      return { openTabs: [], activeTabId: null }; // [DESKTOP TABS]
+    } // [DESKTOP TABS]
+    const raw = fs.readFileSync(filePath, "utf-8"); // [DESKTOP TABS]
+    const parsed = JSON.parse(raw); // [DESKTOP TABS]
+    if (parsed && typeof parsed === "object") { // [DESKTOP TABS]
+      return { // [DESKTOP TABS]
+        openTabs: Array.isArray(parsed.openTabs) ? parsed.openTabs : [], // [DESKTOP TABS]
+        activeTabId: typeof parsed.activeTabId === "string" ? parsed.activeTabId : null, // [DESKTOP TABS]
+      }; // [DESKTOP TABS]
+    } // [DESKTOP TABS]
+    return { openTabs: [], activeTabId: null }; // [DESKTOP TABS]
+  } catch (err) { // [DESKTOP TABS]
+    console.warn("[DESKTOP TABS] Failed to read open-tabs.json:", err); // [DESKTOP TABS]
+    return { openTabs: [], activeTabId: null }; // [DESKTOP TABS]
+  } // [DESKTOP TABS]
+}); // [DESKTOP TABS]
+
+ipcMain.handle("tabs:set", async (event, data) => { // [DESKTOP TABS]
+  try { // [DESKTOP TABS]
+    if (!data || typeof data !== "object" || !Array.isArray(data.openTabs)) { // [DESKTOP TABS]
+      return { success: false, reason: "invalid_data" }; // [DESKTOP TABS]
+    } // [DESKTOP TABS]
+    const filePath = path.join(app.getPath("userData"), "open-tabs.json"); // [DESKTOP TABS]
+    const payload = { // [DESKTOP TABS]
+      openTabs: data.openTabs, // [DESKTOP TABS]
+      activeTabId: typeof data.activeTabId === "string" ? data.activeTabId : null, // [DESKTOP TABS]
+    }; // [DESKTOP TABS]
+    fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), "utf-8"); // [DESKTOP TABS]
+    return { success: true }; // [DESKTOP TABS]
+  } catch (err) { // [DESKTOP TABS]
+    console.error("[DESKTOP TABS] Failed to write open-tabs.json:", err); // [DESKTOP TABS]
+    return { success: false, error: err.message }; // [DESKTOP TABS]
+  } // [DESKTOP TABS]
+}); // [DESKTOP TABS]

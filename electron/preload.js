@@ -5,14 +5,11 @@
 
 "use strict";
 
-const { contextBridge } = require("electron"); // [ELECTRON PHASE 1]
+const { contextBridge, ipcRenderer } = require("electron"); // [DESKTOP TABS]
 
-// [ELECTRON PHASE 1] Expose a minimal window.electronAPI object.
-// version: app.getVersion() requires ipcMain round-trip with remote; since this is Phase 1
-// groundwork only (not yet consumed by the app), we use process.env.npm_package_version
-// which is set by npm at launch time and is sufficient for Phase 3's platform-check pattern.
-// This will be replaced with a proper ipcRenderer.invoke('get-version') call in Phase 3.
 contextBridge.exposeInMainWorld("electronAPI", { // [ELECTRON PHASE 1]
   platform: "electron", // [ELECTRON PHASE 1] — identifies runtime as Electron (not web browser)
   version: process.env.npm_package_version ?? "1.0.0", // [ELECTRON PHASE 1]
+  getPersistedTabs: () => ipcRenderer.invoke("tabs:get"), // [DESKTOP TABS]
+  setPersistedTabs: (data) => ipcRenderer.invoke("tabs:set", data), // [DESKTOP TABS]
 }); // [ELECTRON PHASE 1]
