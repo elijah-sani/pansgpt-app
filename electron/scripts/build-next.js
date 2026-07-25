@@ -34,6 +34,15 @@ envVars.NEXT_PUBLIC_IS_ELECTRON = "true";
 console.log("[ELECTRON API CONFIG] Explicitly loading frontend/.env.electron...");
 console.log(`[ELECTRON API CONFIG] Target NEXT_PUBLIC_API_URL=${envVars.NEXT_PUBLIC_API_URL}`);
 
+const nextElectronDir = path.join(repoRoot, "frontend", ".next-electron");
+if (fs.existsSync(nextElectronDir)) {
+  try {
+    fs.rmSync(nextElectronDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  } catch (err) {
+    console.warn("[ELECTRON API CONFIG] Warning clearing .next-electron dir:", err.message);
+  }
+}
+
 try {
   execSync("npm run build --workspace=frontend", {
     cwd: repoRoot,
