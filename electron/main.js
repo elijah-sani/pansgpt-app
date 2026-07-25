@@ -206,8 +206,8 @@ app.whenReady().then(async () => { // [ELECTRON PHASE 1]
     // ── DEV MODE ──────────────────────────────────────────────────────────────
     // Assumes `npm run dev` (or `next dev`) is already running in another terminal on port 3000.
     // Do NOT spawn a child process here — fast-iteration path only.
-    console.log("[ELECTRON PHASE 1] Dev mode: connecting to http://localhost:3000"); // [ELECTRON PHASE 1]
-    createWindow("http://localhost:3000"); // [ELECTRON PHASE 1]
+    console.log("[ELECTRON PHASE 1] Dev mode: connecting to http://localhost:3000/study"); // [ELECTRON PHASE 1]
+    createWindow("http://localhost:3000/study"); // [ELECTRON PHASE 1]
   } else { // [ELECTRON PHASE 1]
     // ── PRODUCTION / PACKAGED MODE ────────────────────────────────────────────
     // Locate the standalone server.js relative to the Electron __dirname.
@@ -310,8 +310,8 @@ app.whenReady().then(async () => { // [ELECTRON PHASE 1]
       return; // [ELECTRON PHASE 1]
     } // [ELECTRON PHASE 1]
 
-    console.log(`[ELECTRON PHASE 1] Server ready — opening window at http://127.0.0.1:${port}`); // [ELECTRON PHASE 1]
-    createWindow(`http://127.0.0.1:${port}`); // [ELECTRON PHASE 1]
+    console.log(`[ELECTRON PHASE 1] Server ready — opening window at http://127.0.0.1:${port}/study`); // [ELECTRON PHASE 1]
+    createWindow(`http://127.0.0.1:${port}/study`); // [ELECTRON PHASE 1]
 
   } // [ELECTRON PHASE 1]
 }); // [ELECTRON PHASE 1]
