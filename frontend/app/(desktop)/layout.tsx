@@ -47,6 +47,35 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
     loadRestrictionStatus,
   } = useStudentRestrictions();
 
+  // [DESKTOP UI SECURITY] Layout-level session verification
+  useEffect(() => {
+    let isMounted = true;
+
+    const checkSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!isMounted) return;
+      if (!session?.user) {
+        setShellUser(null);
+        router.replace("/login");
+        return;
+      }
+    };
+
+    void checkSession();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session?.user) {
+        setShellUser(null);
+        router.replace("/login");
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
+  }, [router]);
+
   useEffect(() => {
     let isMounted = true;
     fetchBootstrap()
