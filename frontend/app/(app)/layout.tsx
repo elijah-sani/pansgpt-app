@@ -28,10 +28,29 @@ import { buildWhatsAppSupportUrl } from "@/lib/support-config";
 import { useStudentRestrictions, type ActiveRestriction } from "@/hooks/useStudentRestrictions";
 import { StudentRestrictionBlocker } from "@/components/StudentRestrictionBlocker";
 
+// [DESKTOP UI]
+import { DesktopTitleBar } from "@/components/desktop/DesktopTitleBar";
+import DesktopSidebar from "@/components/desktop/DesktopSidebar";
+import { DocumentTabStrip } from "@/components/desktop/DocumentTabStrip";
+import { DocumentTabsProvider } from "@/lib/DocumentTabsContext";
+import ProfileSidebar from "@/components/ProfileSidebar";
+import QuizPerformanceModal from "@/components/QuizPerformanceModal";
+import WeeklyTimetableModal from "@/components/WeeklyTimetableModal";
+
 function AppLayoutContent({ children }: { children: React.ReactNode }) {
     const router = useRouter();
     const pathname = usePathname();
     const { clearHistory, deleteSession, sessions, setSessions, setActiveSessionId, activeSessionId, pendingPath, setPendingPath } = useChatSession();
+    const [isDesktop, setIsDesktop] = useState(false);
+    const [isQuizPerformanceOpen, setIsQuizPerformanceOpen] = useState(false);
+    const [isWeeklyTimetableOpen, setIsWeeklyTimetableOpen] = useState(false);
+    const [isProfileOpen, setIsProfileOpen] = useState(false);
+
+    useEffect(() => {
+        if (typeof window !== "undefined" && ((window as any).electronAPI || window.location.pathname.startsWith("/study"))) {
+            setIsDesktop(true);
+        }
+    }, []);
 
     useEffect(() => {
         setPendingPath(null);
@@ -319,7 +338,87 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                 toggle: () => setIsSidebarOpen((prev) => !prev),
             }}
         >
-            {isUniversitySuspended ? (
+            {isDesktop ? (
+                <DocumentTabsProvider>
+                    <div className="desktop-shell flex flex-col h-[100dvh] w-full overflow-hidden bg-background select-none">
+                        <DesktopTitleBar onOpenSidebar={() => setIsSidebarOpen((prev) => !prev)} />
+                        <div className="flex flex-1 min-h-0 w-full overflow-hidden relative">
+                            <DesktopSidebar
+                                isOpen={isSidebarOpen}
+                                onClose={() => setIsSidebarOpen((prev) => !prev)}
+                                onSearchOpen={() => setIsSearchModalOpen(true)}
+                                onOpenReportProblem={() => setIsReportProblemOpen(true)}
+                                onOpenSettings={() => setIsSettingsOpen(true)}
+                                onDeleteRequest={(id) => {
+                                    setDeleteTargetId(id);
+                                    setIsDeleteModalOpen(true);
+                                }}
+                                onRenameRequest={(id, title) => {
+                                    setRenamingChatId(id);
+                                    setRenameDraft(title);
+                                }}
+                            />
+                            <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-background">
+                                <DocumentTabStrip />
+                                <main className="flex-1 min-w-0 overflow-x-hidden overflow-y-auto overscroll-none">
+                                    {children}
+                                </main>
+                            </div>
+                        </div>
+                    </div>
+
+                    {isProfileOpen && shellUser && (
+                        <ProfileSidebar
+                            user={shellUser}
+                            isAdmin={isAdmin}
+                            onClose={() => setIsProfileOpen(false)}
+                            onOpenPersonalInfo={() => setIsPersonalInfoOpen(true)}
+                            onOpenQuizPerformance={() => setIsQuizPerformanceOpen(true)}
+                            onOpenTimetable={() => setIsWeeklyTimetableOpen(true)}
+                        />
+                    )}
+                    <QuizPerformanceModal
+                        isOpen={isQuizPerformanceOpen}
+                        onClose={() => setIsQuizPerformanceOpen(false)}
+                    />
+                    <WeeklyTimetableModal
+                        isOpen={isWeeklyTimetableOpen}
+                        onClose={() => setIsWeeklyTimetableOpen(false)}
+                    />
+                    <SettingsModal
+                        isOpen={isSettingsOpen}
+                        onClose={() => setIsSettingsOpen(false)}
+                        onOpenPersonalInfo={() => setIsPersonalInfoOpen(true)}
+                        onLogout={handleLogout}
+                        onDeleteAccount={handleDeleteAccount}
+                        onClearHistory={handleClearHistory}
+                        user={shellUser}
+                        onOpenReportProblem={() => setIsReportProblemOpen(true)}
+                    />
+                    {shellUser && (
+                        <PersonalInformationModal
+                            isOpen={isPersonalInfoOpen}
+                            onClose={() => setIsPersonalInfoOpen(false)}
+                            user={shellUser}
+                            onSave={(data) => {
+                                setShellUser((prev) => prev ? {
+                                    ...prev,
+                                    name: data.name,
+                                    level: data.level,
+                                    university: data.university,
+                                } : prev);
+                            }}
+                            onAvatarChange={(url) => {
+                                setShellUser((prev) => prev ? { ...prev, avatarUrl: url } : prev);
+                            }}
+                        />
+                    )}
+                    <ReportProblemModal
+                        isOpen={isReportProblemOpen}
+                        onClose={() => setIsReportProblemOpen(false)}
+                    />
+                </DocumentTabsProvider>
+            ) : isUniversitySuspended ? (
                 <UniversitySuspendedBlocker onLogout={handleLogout} />
             ) : restriction ? (
                 <StudentRestrictionBlocker restriction={restriction} now={restrictionNow} />
