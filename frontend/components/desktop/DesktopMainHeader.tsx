@@ -102,8 +102,12 @@ export function DesktopMainHeader({
       {/* ========================================================================= */}
       {!mobileOnly && (
         <header className="hidden md:flex h-14 w-full shrink-0 items-center justify-between bg-card px-6 z-30 select-none border-b border-border/40 gap-3">
-          {/* Left: Empty spacing handle */}
-          <div className="shrink-0" />
+          {/* Left: App Logo/Name */}
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-base font-medium text-foreground" style={{ fontFamily: "'Albert Sans', sans-serif" }}>
+              PansGPT
+            </span>
+          </div>
 
           {/* Center: History Button (Left), Search Bar (Center), New Chat Button (Right) */}
           <div className="flex-1 max-w-2xl mx-4 flex items-center gap-2.5">
@@ -226,12 +230,12 @@ export function DesktopMainHeader({
             )}
           </div>
 
-          {/* Right: Actions (Notifications, Theme, Profile) */}
-          <div className="flex items-center gap-2 min-w-[180px] justify-end">
+          {/* Right: Actions (Notifications, Profile) */}
+          <div className="flex items-center gap-2 shrink-0 justify-end">
             {/* Notification Bell */}
             <button
               type="button"
-              className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted/70 rounded-lg transition-colors relative"
+              className="w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/70 rounded-full transition-colors relative"
               title="Notifications"
             >
               <Bell size={18} />
@@ -242,7 +246,7 @@ export function DesktopMainHeader({
               <button
                 type="button"
                 onClick={onOpenProfile}
-                className="ml-1 w-8 h-8 rounded-full ring-1 ring-primary/40 hover:ring-primary flex items-center justify-center overflow-hidden bg-muted shrink-0 transition-all relative"
+                className="w-8 h-8 rounded-full ring-1 ring-primary/40 hover:ring-primary flex items-center justify-center overflow-hidden bg-muted shrink-0 transition-all relative"
                 title="Profile & Account"
               >
                 {user.avatarUrl ? (
@@ -255,7 +259,7 @@ export function DesktopMainHeader({
                     className="w-full h-full object-cover"
                   />
                 ) : (
-                  <User size={18} className="text-muted-foreground" />
+                  <User size={16} className="text-muted-foreground" />
                 )}
               </button>
             )}

@@ -105,15 +105,17 @@ export default function MainPage() {
       <div className={`flex-1 w-full min-w-0 min-h-0 relative flex flex-col bg-background transition-transform duration-300 ease-out md:translate-x-0 ${
         isProfileOpen ? 'max-md:-translate-x-full' : 'max-md:translate-x-0'
       }`}>
-        <MainHeader
-          activeSessionId={activeSessionId}
-          isProfileOpen={isProfileOpen}
-          onNewChat={handleNewChat}
-          onOpenProfile={toggleProfile}
-          onOpenSidebar={openSidebar}
-          sessions={sessions}
-          user={user}
-        />
+        <div className="md:hidden">
+          <MainHeader
+            activeSessionId={activeSessionId}
+            isProfileOpen={isProfileOpen}
+            onNewChat={handleNewChat}
+            onOpenProfile={toggleProfile}
+            onOpenSidebar={openSidebar}
+            sessions={sessions}
+            user={user}
+          />
+        </div>
         <MainConversation
           activeSessionId={activeSessionId}
           chatEndRef={chatEndRef}

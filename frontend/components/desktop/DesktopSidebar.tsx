@@ -829,67 +829,65 @@ export default function DesktopSidebar({
               active={isSettingsMenuOpen}
             />
 
-            {isSettingsMenuOpen && (
+            {isSettingsMenuOpen && typeof document !== "undefined" && createPortal(
               <div
-                className={`absolute bottom-full z-[70] mb-2 rounded-xl border border-border bg-card shadow-sm ${
-                  isIconOnly ? "left-3 w-72" : "left-2 right-2"
-                }`}
+                ref={settingsMenuRef}
+                className="fixed left-20 bottom-4 z-[180] w-56 rounded-xl border border-border bg-card shadow-2xl p-2 animate-in fade-in zoom-in-95 duration-150"
               >
-                <div className="p-2">
-                  <button
-                    onClick={() => {
-                      closeSettingsMenu();
-                      onOpenSettings();
-                    }}
-                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-popover-foreground transition-colors hover:bg-muted active:bg-muted/80"
-                    style={{ WebkitTapHighlightColor: 'transparent' }}
-                  >
-                    <Settings className="h-4 w-4 shrink-0" />
-                    <span className="flex-1">Settings</span>
-                  </button>
+                <button
+                  onClick={() => {
+                    closeSettingsMenu();
+                    onOpenSettings();
+                  }}
+                  className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-popover-foreground transition-colors hover:bg-muted active:bg-muted/80"
+                  style={{ WebkitTapHighlightColor: 'transparent' }}
+                >
+                  <Settings className="h-4 w-4 shrink-0" />
+                  <span className="flex-1">Settings</span>
+                </button>
 
-                  <div
-                    className="relative"
+                <div
+                  className="relative"
+                  onPointerEnter={() => {
+                    if (!isMobileViewport()) {
+                      openHelpMenu();
+                    }
+                  }}
+                  onPointerLeave={() => {
+                    if (!isMobileViewport()) {
+                      scheduleHideHelpMenu();
+                    }
+                  }}
+                >
+                  <button
+                    ref={helpRowRef}
                     onPointerEnter={() => {
                       if (!isMobileViewport()) {
                         openHelpMenu();
                       }
                     }}
-                    onPointerLeave={() => {
-                      if (!isMobileViewport()) {
-                        scheduleHideHelpMenu();
+                    onClick={() => {
+                      if (isHelpSubmenuOpen) {
+                        setIsHelpSubmenuOpen(false);
+                        setDesktopHelpMenuPosition(null);
+                      } else {
+                        openHelpMenu();
                       }
                     }}
+                    className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-popover-foreground transition-colors hover:bg-muted active:bg-muted/80"
+                    style={{ WebkitTapHighlightColor: 'transparent' }}
                   >
-                    <button
-                      ref={helpRowRef}
-                      onPointerEnter={() => {
-                        if (!isMobileViewport()) {
-                          openHelpMenu();
-                        }
-                      }}
-                      onClick={() => {
-                        if (isHelpSubmenuOpen) {
-                          setIsHelpSubmenuOpen(false);
-                          setDesktopHelpMenuPosition(null);
-                        } else {
-                          openHelpMenu();
-                        }
-                      }}
-                      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-popover-foreground transition-colors hover:bg-muted active:bg-muted/80"
-                      style={{ WebkitTapHighlightColor: 'transparent' }}
-                    >
-                      <CircleHelp className="h-4 w-4 shrink-0" />
-                      <span className="flex-1">Help</span>
-                      <ChevronRight
-                        className={`h-4 w-4 text-muted-foreground transition-transform ${
-                          isHelpSubmenuOpen ? "rotate-90 md:rotate-0" : ""
-                        }`}
-                      />
-                    </button>
-                  </div>
+                    <CircleHelp className="h-4 w-4 shrink-0" />
+                    <span className="flex-1">Help</span>
+                    <ChevronRight
+                      className={`h-4 w-4 text-muted-foreground transition-transform ${
+                        isHelpSubmenuOpen ? "rotate-90 md:rotate-0" : ""
+                      }`}
+                    />
+                  </button>
                 </div>
-              </div>
+              </div>,
+              document.body
             )}
           </div>
         </div>
