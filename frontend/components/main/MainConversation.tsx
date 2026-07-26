@@ -2,14 +2,17 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'; // changed: added useLayoutEffect for synchronous scroll anchoring after DOM paint
 import type { CSSProperties, ChangeEvent, ClipboardEvent, Dispatch, RefObject, SetStateAction } from 'react';
-import { AlertCircle, ArrowDown, BookOpen, Check, ChevronDown, Copy, FileText, GraduationCap, HelpCircle, Layers, Pencil, RotateCw } from 'lucide-react';
+import { AlertCircle, ArrowDown, BookOpen, CalendarDays, Check, ChevronDown, Copy, FileText, GraduationCap, HelpCircle, Layers, Pencil, RotateCw, Search } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
+import Logo from '@/components/Logo';
 import ChatInput from '@/components/ChatInput';
 import Image from 'next/image'; // [IMG OPTIMIZATION]
 import ChatSkeleton from '@/components/ChatSkeleton';
 import WelcomeSkeleton from '@/components/WelcomeSkeleton';
 import MessageBubble, { type Message } from '@/components/MessageBubble';
 import { api } from '@/lib/api';
+import { useChatSession } from '@/lib/ChatSessionContext';
+import { SidebarConversationList } from '@/components/sidebar/SidebarConversationList';
 import {
   CHAT_TEXT_SIZE_EVENT,
   CHAT_TEXT_SIZE_KEY,
@@ -317,6 +320,15 @@ export function MainConversation({
   const [isSavingBookmark, setIsSavingBookmark] = useState(false);
   const [selectedExistingNoteId, setSelectedExistingNoteId] = useState<string | null>(null);
   const [existingNoteSearch, setExistingNoteSearch] = useState('');
+  const { sessions = [], setActiveSessionId, deleteSession, isLoadingHistory = false } = useChatSession();
+  const [recentChatsQuery, setRecentChatsQuery] = useState('');
+  const [isDateGroupingEnabled, setIsDateGroupingEnabled] = useState(false);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+
+  const filteredRecentSessions = sessions.filter((s) =>
+    !recentChatsQuery.trim() || s.title.toLowerCase().includes(recentChatsQuery.toLowerCase().trim())
+  );
+
   const [activeCard, setActiveCard] = useState<typeof QUICK_ACTION_CARDS[number] | null>(null); // [QUICK ACTION CARDS]
   const [welcomeCopy, setWelcomeCopy] = useState<WelcomeCopy>(() => ({
     greeting: `Hello Pharm, ${studentFirstName || 'there'}`,
@@ -647,66 +659,149 @@ export function MainConversation({
           (chatScrollRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
           (scrollContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
         }}
-        className="flex-1 min-h-0 overflow-y-auto pt-16 pb-4"
+        className="flex-1 min-h-0 overflow-y-auto pt-16 md:pt-4 pb-4"
         style={{ ...CHAT_TEXT_SIZE_STYLES[chatTextSize], overflowAnchor: 'none' }} // changed: overflowAnchor:'none' lets our useLayoutEffect own scroll anchoring
       >
-        <div className="max-w-[741px] mx-auto px-4 min-h-full flex flex-col">
+        <div className={`mx-auto px-4 sm:px-8 md:px-12 min-h-full flex flex-col ${!hasMessages ? 'w-full max-w-[1600px]' : 'max-w-[741px]'}`}>
           {isLoadingChat ? (
             activeSessionId ? <ChatSkeleton /> : <WelcomeSkeleton />
           ) : !hasMessages ? (
-            <div className="flex-1 flex flex-col items-start justify-start px-4 pb-0 pt-16 text-left sm:items-center sm:justify-center sm:px-0 sm:pb-56 sm:pt-40 sm:text-center">
-              <div className="w-full max-w-[440px] flex flex-col flex-1 sm:mx-auto sm:max-w-4xl sm:block">
-                <div className="text-left sm:px-4 sm:text-center">
-                  <div className="mb-4 flex flex-col items-start justify-start gap-3 sm:mb-3 sm:flex-row sm:items-center sm:justify-center">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center sm:h-9 sm:w-9">
-                      <Image src="/avatar.png" alt="PansGPT" width={32} height={32} className="h-8 w-8 object-contain drop-shadow-sm sm:h-7 sm:w-7" priority /> {/* [IMG OPTIMIZATION] */}
+            <>
+              {/* ========================================================================= */}
+              {/* DESKTOP SPLIT-SCREEN LANDING DASHBOARD (2-Column Grid)                    */}
+              {/* ========================================================================= */}
+              <div className="hidden md:flex flex-1 w-full pt-[70px] pb-6">
+                <div className="grid grid-cols-12 gap-12 lg:gap-16 xl:gap-20 w-full items-start">
+                  {/* Left Column: Greeting, Input, Recent Chats */}
+                  <div className="col-span-6 flex flex-col gap-6 h-full min-h-0">
+                    {/* Greeting Header */}
+                    <div className="text-left">
+                      <Logo className="h-8 w-8 mb-3 text-[#2f9e1c] dark:!text-[#2f9e1c] shrink-0" />
+                      <h2 className="text-2xl md:text-3xl font-bold text-foreground mb-1.5">
+                        {welcomeCopy.greeting}
+                      </h2>
+                      <p className="text-sm text-muted-foreground">
+                        {typedWelcomeSubtext || currentWelcomeSubtext || 'What are we studying today?'}
+                      </p>
                     </div>
-                    <h2
-                      className="text-2xl font-semibold leading-tight text-foreground sm:text-[26px] sm:font-medium sm:text-4xl"
-                    >
-                      <span className="sm:hidden">{welcomeCopy.mobileGreeting}</span>
-                      <span className="hidden sm:inline">{welcomeCopy.greeting}</span>
-                    </h2>
+
+                    {/* Chat Input Area */}
+                    <div className="w-full">
+                      {renderChatInput(true, 'welcome', 'Ask Anything...')}
+                    </div>
+
+                    {/* Recent Chats Section under Input */}
+                    <div className="flex flex-col gap-3 pt-2 flex-1 min-h-0">
+                      <div className="flex items-center justify-between px-1 shrink-0">
+                        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Recent chats</span>
+                        <div className="flex items-center gap-2">
+                          <div className="relative">
+                            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                            <input
+                              type="text"
+                              placeholder="Search chats..."
+                              value={recentChatsQuery}
+                              onChange={(e) => setRecentChatsQuery(e.target.value)}
+                              className="h-7 w-36 rounded-md border border-border/80 bg-background/80 pl-7 pr-2 text-xs focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setIsDateGroupingEnabled((prev) => !prev)}
+                            aria-pressed={isDateGroupingEnabled}
+                            title={isDateGroupingEnabled ? "Disable date grouping" : "Enable date grouping"}
+                            className={`p-1.5 rounded-md border border-border/80 text-xs transition-colors ${
+                              isDateGroupingEnabled ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted"
+                            }`}
+                          >
+                            <CalendarDays size={14} />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex-1 overflow-y-auto min-h-0 px-1 pb-4">
+                        <SidebarConversationList
+                          activeSessionId={activeSessionId}
+                          emptyText="No recent chats"
+                          handleLoadSession={(id) => setActiveSessionId(id)}
+                          isDateGroupingEnabled={isDateGroupingEnabled}
+                          isLoadingHistory={isLoadingHistory}
+                          loadingText="Loading chats..."
+                          onDeleteRequest={(id) => deleteSession(id)}
+                          openMenuId={openMenuId}
+                          sessions={filteredRecentSessions}
+                          setOpenMenuId={setOpenMenuId}
+                        />
+                      </div>
+                    </div>
                   </div>
-                  <p className="mt-4 min-h-[24px] text-sm leading-relaxed text-muted-foreground sm:hidden">
-                    {typedWelcomeSubtext}
-                    {typedWelcomeSubtext.length < currentWelcomeSubtext.length && (
-                      <span className="ml-0.5 inline-block h-[1em] w-px translate-y-0.5 animate-pulse bg-muted-foreground" />
-                    )}
-                  </p>
-                </div>
 
-                <div className="mt-6 hidden sm:block">
-                  {renderChatInput(true, 'welcome', typedWelcomeSubtext || currentWelcomeSubtext || 'Ask anything...')}
+                  {/* Right Column: Featured Academic Tool Cards */}
+                  <div className="col-span-6 flex flex-col gap-4">
+                    <div className="flex items-center justify-between px-1">
+                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Academic Tools</span>
+                    </div>
+                    <QuickActionCards onCardClick={setActiveCard} layoutMode="grid" />
+                  </div>
                 </div>
-
-                <div className="hidden sm:block">
-                  <QuickActionModal // [QUICK ACTION CARDS]
-                    isOpen={activeCard !== null} // [QUICK ACTION CARDS]
-                    onClose={() => setActiveCard(null)} // [QUICK ACTION CARDS]
-                    card={activeCard} // [QUICK ACTION CARDS]
-                    onSubmit={handleQuickActionSubmit} // [QUICK ACTION CARDS]
-                  /> {/* [QUICK ACTION CARDS] */}
-                </div>
-
-                {activeCard === null && !inputMessage.trim() ? (
-                  <>
-                    <div className="flex-1 sm:hidden" />
-                    <AnimatePresence>
-                      <motion.div
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: 10 }}
-                        transition={{ duration: 0.2, ease: "easeOut" }}
-                        className="mt-24 sm:mt-0"
-                      >
-                        <QuickActionCards onCardClick={setActiveCard} />
-                      </motion.div>
-                    </AnimatePresence>
-                  </>
-                ) : null}
               </div>
-            </div>
+
+              {/* Quick Action Modal */}
+              <div className="hidden sm:block">
+                <QuickActionModal
+                  isOpen={activeCard !== null}
+                  onClose={() => setActiveCard(null)}
+                  card={activeCard}
+                  onSubmit={handleQuickActionSubmit}
+                />
+              </div>
+
+              {/* ========================================================================= */}
+              {/* MOBILE LANDING DASHBOARD (Preserved 100% for mobile viewports)             */}
+              {/* ========================================================================= */}
+              <div className="md:hidden flex-1 flex flex-col items-start justify-start px-4 pb-0 pt-16 text-left">
+                <div className="w-full max-w-[440px] flex flex-col flex-1 sm:mx-auto sm:max-w-4xl sm:block">
+                  <div className="text-left sm:px-4 sm:text-center">
+                    <div className="mb-4 flex flex-col items-start justify-start gap-3 sm:mb-3 sm:flex-row sm:items-center sm:justify-center">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center sm:h-9 sm:w-9">
+                        <Image src="/avatar.png" alt="PansGPT" width={32} height={32} className="h-8 w-8 object-contain drop-shadow-sm sm:h-7 sm:w-7" priority />
+                      </div>
+                      <h2 className="text-2xl font-semibold leading-tight text-foreground sm:text-[26px] sm:font-medium sm:text-4xl">
+                        <span className="sm:hidden">{welcomeCopy.mobileGreeting}</span>
+                        <span className="hidden sm:inline">{welcomeCopy.greeting}</span>
+                      </h2>
+                    </div>
+                    <p className="mt-4 min-h-[24px] text-sm leading-relaxed text-muted-foreground sm:hidden">
+                      {typedWelcomeSubtext}
+                      {typedWelcomeSubtext.length < currentWelcomeSubtext.length && (
+                        <span className="ml-0.5 inline-block h-[1em] w-px translate-y-0.5 animate-pulse bg-muted-foreground" />
+                      )}
+                    </p>
+                  </div>
+
+                  <div className="mt-6 hidden sm:block">
+                    {renderChatInput(true, 'welcome', typedWelcomeSubtext || currentWelcomeSubtext || 'Ask anything...')}
+                  </div>
+
+                  {activeCard === null && !inputMessage.trim() ? (
+                    <>
+                      <div className="flex-1 sm:hidden" />
+                      <AnimatePresence>
+                        <motion.div
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: 10 }}
+                          transition={{ duration: 0.2, ease: "easeOut" }}
+                          className="mt-24 sm:mt-0"
+                        >
+                          <QuickActionCards onCardClick={setActiveCard} layoutMode="row" />
+                        </motion.div>
+                      </AnimatePresence>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+            </>
           ) : (
             <div className="py-4 flex flex-col">
               {/* changed: sentinel div removed — scroll listener replaces IntersectionObserver */}

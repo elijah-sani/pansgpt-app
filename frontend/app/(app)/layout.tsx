@@ -343,6 +343,15 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                 <DocumentTabsProvider>
                     <div className="desktop-shell flex flex-col h-[100dvh] w-full overflow-hidden bg-background select-none">
                         <DesktopTitleBar onOpenSidebar={() => setIsSidebarOpen((prev) => !prev)} />
+                        <DesktopMainHeader
+                            desktopOnly
+                            activeSessionId={activeSessionId}
+                            user={shellUser}
+                            isProfileOpen={isProfileOpen}
+                            onOpenProfile={() => setIsProfileOpen(true)}
+                            onOpenSidebar={() => setIsSidebarOpen((prev) => !prev)}
+                            onSearchOpen={() => setIsSearchModalOpen(true)}
+                        />
                         <div className="flex flex-1 min-h-0 w-full overflow-hidden relative">
                             <DesktopSidebar
                                 isOpen={isSidebarOpen}
@@ -360,15 +369,6 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                                 }}
                             />
                             <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-background">
-                                <DesktopMainHeader
-                                    desktopOnly
-                                    activeSessionId={activeSessionId}
-                                    user={shellUser}
-                                    isProfileOpen={isProfileOpen}
-                                    onOpenProfile={() => setIsProfileOpen(true)}
-                                    onOpenSidebar={() => setIsSidebarOpen((prev) => !prev)}
-                                    onSearchOpen={() => setIsSearchModalOpen(true)}
-                                />
                                 <DocumentTabStrip />
                                 <main className="flex-1 min-w-0 overflow-x-hidden overflow-y-auto overscroll-none">
                                     {children}
