@@ -21,16 +21,27 @@ _supabase_service_client = None
 
 # --- Model → provider mapping (mirrors llm_engine.py constants) ---
 _MODEL_PROVIDER_MAP: dict[str, str] = {
+    # Groq
+    "openai/gpt-oss-120b": "groq",
+    "llama-3.3-70b-versatile": "groq",
+    "llama-3.1-8b-instant": "groq",
+    "qwen/qwen3.6-27b": "groq",
+    "whisper-large-v3-turbo": "groq",
+    "whisper-large-v3": "groq",
+    "meta-llama/llama-4-scout-17b-16e-instruct": "groq",
     # Google AI Studio
     "gemma-4-31b-it": "google",
     "gemma-4-26b-a4b-it": "google",
-    # Groq
-    "meta-llama/llama-4-scout-17b-16e-instruct": "groq",
-    "llama-3.1-8b-instant": "groq",
+    "gemma-4-32b-it": "google",
     # OpenRouter
+    "nvidia/nemotron-3-super-120b-a12b:free": "openrouter",
+    "nvidia/nemotron-3-ultra-550b-a55b:free": "openrouter",
+    "nvidia/nemotron-3-nano-30b-a3b:free": "openrouter",
+    "nvidia/nemotron-nano-2-vl:free": "openrouter",
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": "openrouter",
+    "qwen/qwen3-vl-235b-a22b-thinking": "openrouter",
     "meta-llama/llama-3.3-70b-instruct:free": "openrouter",
     "qwen/qwen-2.5-72b-instruct:free": "openrouter",
-    "qwen/qwen3-vl-235b-a22b-thinking": "openrouter",
 }
 
 
@@ -47,12 +58,12 @@ def _provider_for_model(model_name: str) -> str:
     if lower in _MODEL_PROVIDER_MAP:
         return _MODEL_PROVIDER_MAP[lower]
     # Heuristic fallbacks
-    if "gemma" in lower:
-        return "google"
-    if "groq" in lower or "llama" in lower and "openrouter" not in lower:
-        return "groq"
-    if "openrouter" in lower or ":" in lower:
+    if lower.startswith("nvidia/") or ":free" in lower or "openrouter" in lower:
         return "openrouter"
+    if "gemma" in lower or "gemini" in lower:
+        return "google"
+    if "gpt-oss" in lower or "qwen3.6" in lower or "groq" in lower or "llama" in lower or "whisper" in lower:
+        return "groq"
     return "unknown"
 
 
