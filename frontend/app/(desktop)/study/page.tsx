@@ -3,7 +3,7 @@
 
 import React, { Suspense } from "react";
 import DesktopHomeContent from "@/components/desktop/DesktopHomeContent";
-import { DesktopMainConversation } from "@/components/desktop/DesktopMainConversation";
+import { MainConversation } from "@/components/main/MainConversation";
 import { useMainPageController } from "@/hooks/useMainPageController";
 
 function DesktopStudyPageContent() {
@@ -15,7 +15,7 @@ function DesktopStudyPageContent() {
   return (
     <div className="w-full h-full">
       {activeSessionId ? (
-        <DesktopMainConversation
+        <MainConversation
           activeSessionId={controller.activeSessionId}
           chatEndRef={controller.chatEndRef}
           chatError={controller.chatError}

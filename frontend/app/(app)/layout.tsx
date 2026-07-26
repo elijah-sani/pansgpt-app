@@ -30,6 +30,7 @@ import { StudentRestrictionBlocker } from "@/components/StudentRestrictionBlocke
 
 // [DESKTOP UI]
 import { DesktopTitleBar } from "@/components/desktop/DesktopTitleBar";
+import { DesktopMainHeader } from "@/components/desktop/DesktopMainHeader";
 import DesktopSidebar from "@/components/desktop/DesktopSidebar";
 import { DocumentTabStrip } from "@/components/desktop/DocumentTabStrip";
 import { DocumentTabsProvider } from "@/lib/DocumentTabsContext";
@@ -359,6 +360,15 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                                 }}
                             />
                             <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-background">
+                                <DesktopMainHeader
+                                    desktopOnly
+                                    activeSessionId={activeSessionId}
+                                    user={shellUser}
+                                    isProfileOpen={isProfileOpen}
+                                    onOpenProfile={() => setIsProfileOpen(true)}
+                                    onOpenSidebar={() => setIsSidebarOpen((prev) => !prev)}
+                                    onSearchOpen={() => setIsSearchModalOpen(true)}
+                                />
                                 <DocumentTabStrip />
                                 <main className="flex-1 min-w-0 overflow-x-hidden overflow-y-auto overscroll-none">
                                     {children}
