@@ -1205,11 +1205,11 @@ async def transcribe_audio(request: Request, audio: UploadFile = File(...)):
             with open(temp_file_path, "rb") as temp_audio_file:
                 transcription = await shared.groq_client.audio.transcriptions.create(
                     file=temp_audio_file,
-                    model="whisper-large-v3-turbo",
+                    model=llm_engine.AUDIO_PRIMARY,
                 )
             _latency_ms = (time.perf_counter() - started) * 1000
             asyncio.create_task(ai_usage_tracker.log_usage(
-                model_used="whisper-large-v3-turbo",
+                model_used=llm_engine.AUDIO_PRIMARY,
                 request_type="transcription",
                 latency_ms=_latency_ms,
                 status="success",
@@ -1217,16 +1217,16 @@ async def transcribe_audio(request: Request, audio: UploadFile = File(...)):
             ))
             return {"text": transcription.text}
         except Exception as primary_error:
-            logger.warning(f"Groq turbo transcription failed, falling back to whisper-large-v3: {primary_error}")
+            logger.warning(f"Groq turbo transcription failed, falling back to {llm_engine.AUDIO_SECONDARY}: {primary_error}")
             try:
                 with open(temp_file_path, "rb") as temp_audio_file:
                     transcription = await shared.groq_client.audio.transcriptions.create(
                         file=temp_audio_file,
-                        model="whisper-large-v3",
+                        model=llm_engine.AUDIO_SECONDARY,
                     )
                 _latency_ms = (time.perf_counter() - started) * 1000
                 asyncio.create_task(ai_usage_tracker.log_usage(
-                    model_used="whisper-large-v3",
+                    model_used=llm_engine.AUDIO_SECONDARY,
                     request_type="transcription",
                     latency_ms=_latency_ms,
                     status="success",
@@ -1236,7 +1236,7 @@ async def transcribe_audio(request: Request, audio: UploadFile = File(...)):
             except Exception as secondary_error:
                 _latency_ms = (time.perf_counter() - started) * 1000
                 asyncio.create_task(ai_usage_tracker.log_usage(
-                    model_used="whisper-large-v3",
+                    model_used=llm_engine.AUDIO_SECONDARY,
                     request_type="transcription",
                     latency_ms=_latency_ms,
                     status="error",

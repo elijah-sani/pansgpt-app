@@ -1777,7 +1777,7 @@ async def _generate_quiz_json_response(
         has_images=False,
         stream=False,
         force_google=False,
-        requested_model=llm_engine.TEXT_TERTIARY,
+        requested_model=llm_engine.QUIZ_PRIMARY,
         response_format=response_format,
         audit_meta=audit_meta,
         per_provider_timeout_seconds=per_provider_timeout_seconds,

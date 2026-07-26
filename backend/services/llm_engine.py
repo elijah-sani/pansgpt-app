@@ -10,49 +10,102 @@ logger = logging.getLogger("PansGPT")
 
 OPENROUTER_FALLBACK_MAX_TOKENS = 1024
 
-TEXT_PRIMARY = "gemma-4-31b-it"           # Google AI Studio
-TEXT_SECONDARY = "gemma-4-26b-a4b-it"         # Google AI Studio fallback
-TEXT_TERTIARY = "meta-llama/llama-4-scout-17b-16e-instruct"  # [GROQ TERTIARY FIX]
-# Compatibility alias for callers still referencing TEXT_FALLBACK.
-TEXT_FALLBACK = TEXT_SECONDARY
+# ---------------------------------------------------------------------------
+# Purpose-Driven Model Constants
+# ---------------------------------------------------------------------------
 
-# Small Tasks Stack (Chat Titles, Summaries, Quick Tasks)
-SMALL_PRIMARY = "llama-3.1-8b-instant"                                       # Groq (Llama 3.1 8B Instant)
-SMALL_SECONDARY = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"       # OpenRouter (Nemotron 30B Free)
-SMALL_TERTIARY = "nvidia/nemotron-3-nano-30b-a3b:free"                       # Compatibility alias (OpenRouter)
+# Fast Chat Stack
+FAST_CHAT_PRIMARY = "openai/gpt-oss-120b"                  # Groq (500+ tok/s MoE)
+FAST_CHAT_SECONDARY = "nvidia/nemotron-3-super-120b-a12b:free" # OpenRouter (Ultra-fast 1M context)
+FAST_CHAT_TERTIARY = "llama-3.3-70b-versatile"               # Groq (Stable fallback)
+FAST_CHAT_QUATERNARY = "gemma-4-26b-a4b-it"                 # Google AI Studio (thinking: False)
 
-# Learn Mode Stack (Section Explanations, Check Questions, Diagnostic Retests)
-LEARN_PRIMARY = "llama-3.3-70b-versatile"                                    # Groq (Llama 3.3 70B Versatile)
-LEARN_SECONDARY = "meta-llama/llama-3.3-70b-instruct"                        # Groq (Llama 3.3 70B Instruct)
-LEARN_TERTIARY = SMALL_TERTIARY                                               # OpenRouter (Nemotron 30B Free)
+# Think Chat Stack
+THINK_CHAT_PRIMARY = "nvidia/nemotron-3-ultra-550b-a55b:free" # OpenRouter (Elite 550B reasoning)
+THINK_CHAT_SECONDARY = "gemma-4-31b-it"                        # Google AI Studio (Native dense reasoning)
+THINK_CHAT_TERTIARY = "qwen/qwen3.6-27b"                       # Groq (Extreme scientific reasoning)
+THINK_CHAT_QUATERNARY = "gemma-4-26b-a4b-it"                   # Google AI Studio (thinking: True)
 
-TEXT_FAST = SMALL_PRIMARY                # Smaller and faster model for quick tasks (e.g. titles)
-FAST_TEXT_MODEL_ORDER = [TEXT_TERTIARY, LEARN_PRIMARY, SMALL_PRIMARY, SMALL_SECONDARY, TEXT_SECONDARY]
-THINK_TEXT_MODEL_ORDER = [TEXT_PRIMARY, TEXT_SECONDARY, SMALL_TERTIARY]
-FAST_TEXT_PRIMARY = FAST_TEXT_MODEL_ORDER[0]
-QUIZ_TEXT_MODEL_ORDER = [TEXT_TERTIARY, LEARN_PRIMARY, SMALL_PRIMARY, TEXT_SECONDARY, TEXT_PRIMARY]
-QUIZ_TEXT_PRIMARY = QUIZ_TEXT_MODEL_ORDER[0]
+# Quiz Stack
+QUIZ_PRIMARY = "openai/gpt-oss-120b"                  # Groq (Knowledge accuracy & fast formatting)
+QUIZ_SECONDARY = "llama-3.3-70b-versatile"               # Groq (Reliable schema adherence)
+QUIZ_TERTIARY = "nvidia/nemotron-3-ultra-550b-a55b:free" # OpenRouter (550B scale, thoughts stripped)
+QUIZ_QUATERNARY = "gemma-4-32b-it"                        # Google AI Studio (thinking: True)
 
-VISION_PRIMARY = "meta-llama/llama-4-scout-17b-16e-instruct"
-VISION_SECONDARY = "gemma-4-31b-it"
-VISION_TERTIARY = "gemma-4-26b-a4b-it"
-VISION_QUATERNARY = "qwen/qwen3-vl-235b-a22b-thinking"
-VISION_MODEL_ORDER = [
-    VISION_PRIMARY,
-    VISION_SECONDARY,
-    VISION_TERTIARY,
-    VISION_QUATERNARY,
-]
+# Learn Mode Stack
+LEARN_PRIMARY = "nvidia/nemotron-3-ultra-550b-a55b:free" # OpenRouter (1M token native window)
+LEARN_SECONDARY = "gemma-4-31b-it"                        # Google AI Studio (Dense text comprehension)
+LEARN_TERTIARY = "openai/gpt-oss-120b"                  # Groq (Fast retrieval & synthesis)
+LEARN_QUATERNARY = "gemma-4-26b-a4b-it"                   # Google AI Studio (thinking: True)
+
+# Small Utility Tasks Stack
+SMALL_TASK_PRIMARY = "llama-3.1-8b-instant"                  # Groq (Instant string transforms)
+SMALL_TASK_SECONDARY = "nvidia/nemotron-3-nano-30b-a3b:free" # OpenRouter (MoE-Mamba processing)
+
+# Fast Vision Stack
+FAST_VISION_PRIMARY = "gemma-4-26b-a4b-it"                    # Google AI Studio (thinking: False)
+FAST_VISION_SECONDARY = "nvidia/nemotron-nano-2-vl:free"      # OpenRouter (Specialized for charts/OCR)
+FAST_VISION_TERTIARY = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free" # OpenRouter (reasoning: False)
+
+# Think Vision Stack
+THINK_VISION_PRIMARY = "gemma-4-31b-it"                        # Google AI Studio (Clinical OCR, thinking: True)
+THINK_VISION_SECONDARY = "qwen/qwen3.6-27b"                     # Groq (Multimodal reasoning engine)
+THINK_VISION_TERTIARY = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free" # OpenRouter (reasoning: True)
+THINK_VISION_QUATERNARY = "gemma-4-26b-a4b-it"                   # Google AI Studio (thinking: True)
+
+# Audio Stack
+AUDIO_PRIMARY = "whisper-large-v3-turbo"                      # Groq Audio Transcriptions
+AUDIO_SECONDARY = "whisper-large-v3"                          # Groq Audio Transcriptions fallback
+
+# ---------------------------------------------------------------------------
+# Purpose-Driven Model Order Sequences
+# ---------------------------------------------------------------------------
+FAST_TEXT_MODEL_ORDER = [FAST_CHAT_PRIMARY, FAST_CHAT_SECONDARY, FAST_CHAT_TERTIARY, FAST_CHAT_QUATERNARY]
+THINK_TEXT_MODEL_ORDER = [THINK_CHAT_PRIMARY, THINK_CHAT_SECONDARY, THINK_CHAT_TERTIARY, THINK_CHAT_QUATERNARY]
+QUIZ_TEXT_MODEL_ORDER = [QUIZ_PRIMARY, QUIZ_SECONDARY, QUIZ_TERTIARY, QUIZ_QUATERNARY]
+LEARN_MODEL_ORDER = [LEARN_PRIMARY, LEARN_SECONDARY, LEARN_TERTIARY, LEARN_QUATERNARY]
+SMALL_MODEL_ORDER = [SMALL_TASK_PRIMARY, SMALL_TASK_SECONDARY]
+FAST_VISION_MODEL_ORDER = [FAST_VISION_PRIMARY, FAST_VISION_SECONDARY, FAST_VISION_TERTIARY]
+THINK_VISION_MODEL_ORDER = [THINK_VISION_PRIMARY, THINK_VISION_SECONDARY, THINK_VISION_TERTIARY, THINK_VISION_QUATERNARY]
+VISION_MODEL_ORDER = THINK_VISION_MODEL_ORDER
+
 VISION_MODEL_MAX_TOKENS = {
-    VISION_PRIMARY: 768,
-    VISION_SECONDARY: 640,
-    VISION_TERTIARY: 512,
-    VISION_QUATERNARY: 384,
+    FAST_VISION_PRIMARY: 768,
+    FAST_VISION_SECONDARY: 640,
+    FAST_VISION_TERTIARY: 512,
+    THINK_VISION_PRIMARY: 768,
+    THINK_VISION_SECONDARY: 640,
+    THINK_VISION_TERTIARY: 512,
+    THINK_VISION_QUATERNARY: 384,
 }
-FAST_VISION_MODEL_ORDER = [VISION_PRIMARY, VISION_TERTIARY, VISION_SECONDARY]
-THINK_VISION_MODEL_ORDER = [VISION_SECONDARY, VISION_TERTIARY, VISION_QUATERNARY]
+
 SYSTEM_ROLE_SAFE_TEXT_MODEL_ORDER = THINK_TEXT_MODEL_ORDER
 SYSTEM_ROLE_SAFE_VISION_MODEL_ORDER = THINK_VISION_MODEL_ORDER
+
+# ---------------------------------------------------------------------------
+# Backward Compatibility Aliases for Legacy Code
+# ---------------------------------------------------------------------------
+TEXT_PRIMARY = THINK_CHAT_SECONDARY
+TEXT_SECONDARY = FAST_CHAT_QUATERNARY
+TEXT_TERTIARY = FAST_CHAT_PRIMARY
+TEXT_FALLBACK = TEXT_SECONDARY
+TEXT_FAST = SMALL_TASK_PRIMARY
+
+SMALL_PRIMARY = SMALL_TASK_PRIMARY
+SMALL_SECONDARY = SMALL_TASK_SECONDARY
+SMALL_TERTIARY = SMALL_TASK_SECONDARY
+
+LEARN_PRIMARY = LEARN_PRIMARY
+LEARN_SECONDARY = LEARN_SECONDARY
+LEARN_TERTIARY = LEARN_TERTIARY
+
+FAST_TEXT_PRIMARY = FAST_TEXT_MODEL_ORDER[0]
+QUIZ_TEXT_PRIMARY = QUIZ_TEXT_MODEL_ORDER[0]
+
+VISION_PRIMARY = FAST_VISION_PRIMARY
+VISION_SECONDARY = THINK_VISION_PRIMARY
+VISION_TERTIARY = FAST_VISION_PRIMARY
+VISION_QUATERNARY = THINK_VISION_SECONDARY
 
 openrouter_client = None
 google_client = None
@@ -157,11 +210,30 @@ def _response_format_mode(response_format: Optional[dict]) -> str:
 
 
 def _client_for_text_model(model_name: str) -> Any:
-    if model_name in {TEXT_TERTIARY, SMALL_PRIMARY, LEARN_PRIMARY, LEARN_SECONDARY, "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "meta-llama/llama-3.3-70b-instruct"}:
+    if model_name in {
+        FAST_CHAT_PRIMARY, FAST_CHAT_TERTIARY,
+        QUIZ_PRIMARY, QUIZ_SECONDARY,
+        LEARN_TERTIARY, SMALL_TASK_PRIMARY,
+        THINK_CHAT_TERTIARY, THINK_VISION_SECONDARY,
+        AUDIO_PRIMARY, AUDIO_SECONDARY,
+        "openai/gpt-oss-120b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "qwen/qwen3.6-27b",
+        "whisper-large-v3-turbo", "whisper-large-v3"
+    }:
         return groq_text_client or groq_client
-    if model_name in {TEXT_PRIMARY, TEXT_SECONDARY}:
+    if model_name in {
+        FAST_CHAT_QUATERNARY, THINK_CHAT_SECONDARY, THINK_CHAT_QUATERNARY,
+        QUIZ_QUATERNARY, LEARN_SECONDARY, LEARN_QUATERNARY,
+        FAST_VISION_PRIMARY, THINK_VISION_PRIMARY, THINK_VISION_QUATERNARY,
+        "gemma-4-31b-it", "gemma-4-26b-a4b-it", "gemma-4-32b-it"
+    }:
         return google_client
-    if model_name in {SMALL_SECONDARY, LEARN_TERTIARY, "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "nvidia/nemotron-3-nano-30b-a3b:free"}:
+    if model_name in {
+        FAST_CHAT_SECONDARY, THINK_CHAT_PRIMARY, QUIZ_TERTIARY, LEARN_PRIMARY,
+        SMALL_TASK_SECONDARY, FAST_VISION_SECONDARY, FAST_VISION_TERTIARY,
+        THINK_VISION_TERTIARY, "nvidia/nemotron-3-super-120b-a12b:free",
+        "nvidia/nemotron-3-ultra-550b-a55b:free", "nvidia/nemotron-nano-2-vl:free",
+        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "nvidia/nemotron-3-nano-30b-a3b:free"
+    }:
         return openrouter_client
     if openrouter_client is not None:
         return openrouter_client

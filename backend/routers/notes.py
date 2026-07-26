@@ -119,26 +119,23 @@ async def _fix_typos(text: str, user_id: Optional[str] = None) -> str:
         if llm_engine.google_client is None:
             return text
 
-        response = await asyncio.wait_for(
-            llm_engine.google_client.chat.completions.create(
-                model=llm_engine.TEXT_SECONDARY,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": (
-                            "Fix ONLY spelling mistakes, typos, and obvious grammatical errors in the text below. "
-                            "Do NOT change wording, meaning, structure, or add new content. "
-                            "Do NOT add explanations — respond with ONLY the corrected text. "
-                            "If the text has no errors, return it exactly as-is.\n\n"
-                            f"Text: {text}"
-                        ),
-                    },
-                ],
-                temperature=0.1,
-                max_tokens=500,
-                stream=False,
-            ),
-            timeout=5.0,
+        response = await llm_engine.generate_small_completion_with_failover(
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        "Fix ONLY spelling mistakes, typos, and obvious grammatical errors in the text below. "
+                        "Do NOT change wording, meaning, structure, or add new content. "
+                        "Do NOT add explanations — respond with ONLY the corrected text. "
+                        "If the text has no errors, return it exactly as-is.\n\n"
+                        f"Text: {text}"
+                    ),
+                },
+            ],
+            temperature=0.1,
+            max_tokens=500,
+            stream=False,
+            audit_meta={"request_type": "notes_fix", "user_id": user_id},
         )
 
         _latency_ms = (time.perf_counter() - started) * 1000

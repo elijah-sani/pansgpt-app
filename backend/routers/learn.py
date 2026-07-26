@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from dependencies import get_current_user, User
 from services import llm_engine
+from utils.thinking_token_utils import strip_thinking_tokens
 
 logger = logging.getLogger("PansGPT")
 
@@ -303,6 +304,7 @@ async def _generate_retest_question(question: dict, selected: str, correct_answe
         )  # [LEARN RETEST]
         if resp and getattr(resp, 'choices', None):  # [LEARN RETEST]
             raw_text = (resp.choices[0].message.content or "").strip()  # [LEARN RETEST]
+            raw_text, _ = strip_thinking_tokens(raw_text)  # [LEARN RETEST]
             raw_text = re.sub(r"<thought>.*?(?:</thought>|$)", "", raw_text, flags=re.DOTALL).strip()  # [LEARN RETEST]
             if raw_text.startswith("```"):  # [LEARN RETEST]
                 raw_text = "\n".join(raw_text.split("\n")[1:])  # [LEARN RETEST]
@@ -416,11 +418,13 @@ async def _generate_section_content(section: dict, chunks: list, tier: str, user
             return str(resp)  # last-resort fallback if shape is unexpected
 
     explanation = _extract(explain_resp).strip()
+    explanation, _ = strip_thinking_tokens(explanation)
     explanation = re.sub(r"<thought>.*?(?:</thought>|$)", "", explanation, flags=re.DOTALL).strip()
 
     # Parse questions JSON robustly
     questions: list = []
     raw_q = _extract(questions_resp).strip()
+    raw_q, _ = strip_thinking_tokens(raw_q)
     raw_q = re.sub(r"<thought>.*?(?:</thought>|$)", "", raw_q, flags=re.DOTALL).strip()
     # Strip markdown fences if the model wrapped the JSON
     if raw_q.startswith("```"):
@@ -905,6 +909,7 @@ async def submit_section_answer(
             # Extract text from completion object (.choices[0].message.content)
             if followup_resp and getattr(followup_resp, 'choices', None):
                 followup_text = (followup_resp.choices[0].message.content or "").strip()
+                followup_text, _ = strip_thinking_tokens(followup_text)
                 followup_text = re.sub(r"<thought>.*?(?:</thought>|$)", "", followup_text, flags=re.DOTALL).strip()
                 followup = followup_text or None
             else:
