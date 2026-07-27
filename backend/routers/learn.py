@@ -393,13 +393,13 @@ async def _generate_section_content(section: dict, chunks: list, tier: str, user
             llm_engine.generate_learn_completion_with_failover(
                 messages=explain_messages,
                 temperature=0.3,
-                max_tokens=1024,
+                max_tokens=5000,
                 audit_meta={"request_type": "learn_explain", "user_id": user_id, "document_id": doc_id},
             ),
             llm_engine.generate_learn_completion_with_failover(
                 messages=questions_messages,
                 temperature=0.15,
-                max_tokens=1024,
+                max_tokens=3000,
                 audit_meta={"request_type": "learn_questions", "user_id": user_id, "document_id": doc_id},
             ),
         )
@@ -419,13 +419,13 @@ async def _generate_section_content(section: dict, chunks: list, tier: str, user
 
     explanation = _extract(explain_resp).strip()
     explanation, _ = strip_thinking_tokens(explanation)
-    explanation = re.sub(r"<thought>.*?(?:</thought>|$)", "", explanation, flags=re.DOTALL).strip()
+    explanation = re.sub(r"<(?:think|thinking|thought|scratchpad)>.*?(?:</(?:think|thinking|thought|scratchpad)>|$)", "", explanation, flags=re.DOTALL|re.IGNORECASE).strip()
 
     # Parse questions JSON robustly
     questions: list = []
     raw_q = _extract(questions_resp).strip()
     raw_q, _ = strip_thinking_tokens(raw_q)
-    raw_q = re.sub(r"<thought>.*?(?:</thought>|$)", "", raw_q, flags=re.DOTALL).strip()
+    raw_q = re.sub(r"<(?:think|thinking|thought|scratchpad)>.*?(?:</(?:think|thinking|thought|scratchpad)>|$)", "", raw_q, flags=re.DOTALL|re.IGNORECASE).strip()
     # Strip markdown fences if the model wrapped the JSON
     if raw_q.startswith("```"):
         raw_q = "\n".join(raw_q.split("\n")[1:])
