@@ -116,9 +116,6 @@ async def _fix_typos(text: str, user_id: Optional[str] = None) -> str:
         return text
     started = time.perf_counter()
     try:
-        if llm_engine.google_client is None:
-            return text
-
         response = await llm_engine.generate_small_completion_with_failover(
             messages=[
                 {
@@ -143,7 +140,7 @@ async def _fix_typos(text: str, user_id: Optional[str] = None) -> str:
 
         from services import ai_usage_tracker
         asyncio.create_task(ai_usage_tracker.log_usage(
-            model_used=llm_engine.TEXT_SECONDARY,
+            model_used=llm_engine.SMALL_TASK_PRIMARY,
             request_type="notes_fix",
             prompt_character_count=len(text),
             completion_character_count=len(corrected or ""),
@@ -159,7 +156,7 @@ async def _fix_typos(text: str, user_id: Optional[str] = None) -> str:
         _latency_ms = (time.perf_counter() - started) * 1000
         from services import ai_usage_tracker
         asyncio.create_task(ai_usage_tracker.log_usage(
-            model_used=llm_engine.TEXT_SECONDARY,
+            model_used=llm_engine.SMALL_TASK_PRIMARY,
             request_type="notes_fix",
             prompt_character_count=len(text),
             latency_ms=_latency_ms,
@@ -174,7 +171,7 @@ async def _fix_typos(text: str, user_id: Optional[str] = None) -> str:
         _latency_ms = (time.perf_counter() - started) * 1000
         from services import ai_usage_tracker
         asyncio.create_task(ai_usage_tracker.log_usage(
-            model_used=llm_engine.TEXT_SECONDARY,
+            model_used=llm_engine.SMALL_TASK_PRIMARY,
             request_type="notes_fix",
             prompt_character_count=len(text),
             latency_ms=_latency_ms,

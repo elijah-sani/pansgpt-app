@@ -149,39 +149,141 @@ function BreakdownRow({
 function DailyChart({ series, days }: { series: DailyPoint[]; days: number }) {
     if (!series.length) {
         return (
-            <div className="flex h-36 items-center justify-center text-sm text-muted-foreground">
+            <div className="flex h-72 items-center justify-center p-4 text-sm text-muted-foreground">
                 No data for this period
             </div>
         );
     }
 
-    const maxRequests = Math.max(...series.map((d) => d.requests), 1);
-    // Only show the last N days worth of bars (avoid overcrowding)
+    // Chronological order
     const visible = series.slice(-Math.min(days, 60));
+    const maxRequests = Math.max(...visible.map((d) => d.requests), 1);
+    
+    // Y-axis ticks
+    const yTicks = [
+        maxRequests,
+        Math.floor(maxRequests * 0.75),
+        Math.floor(maxRequests * 0.5),
+        Math.floor(maxRequests * 0.25),
+        0
+    ];
+
+    const firstDate = visible[0].date;
+    const lastDate = visible[visible.length - 1].date;
+    
+    const formatLabel = (d: string) => {
+        const date = new Date(d);
+        if (isNaN(date.getTime())) return d;
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    };
+
+    // Coordinate helpers (0-100% space)
+    const getX = (index: number) => {
+        if (visible.length === 1) return 50;
+        return (index / (visible.length - 1)) * 100;
+    };
+    const getY = (requests: number) => {
+        return 100 - (requests / maxRequests) * 100;
+    };
+
+    let linePath = "";
+    let areaPath = "";
+
+    if (visible.length === 1) {
+        const y = getY(visible[0].requests);
+        linePath = `M 0 ${y} L 100 ${y}`;
+        areaPath = `M 0 ${y} L 100 ${y} L 100 100 L 0 100 Z`;
+    } else {
+        const pts = visible.map((pt, i) => `${getX(i)} ${getY(pt.requests)}`);
+        linePath = `M ${pts.join(" L ")}`;
+        areaPath = `${linePath} L 100 100 L 0 100 Z`;
+    }
 
     return (
-        <div className="flex h-36 items-end gap-[2px] overflow-x-auto pb-1">
-            {visible.map((point) => {
-                const h = Math.max(4, Math.round((point.requests / maxRequests) * 128));
-                return (
-                    <div
-                        key={point.date}
-                        className="group relative flex shrink-0 flex-col items-center"
-                        style={{ width: `${Math.max(8, Math.floor(560 / visible.length))}px` }}
-                    >
-                        <div
-                            className="w-full cursor-default rounded-t-sm bg-indigo-500/70 transition-colors group-hover:bg-indigo-400"
-                            style={{ height: `${h}px` }}
-                        />
-                        {/* Tooltip */}
-                        <div className="pointer-events-none absolute bottom-full mb-2 hidden w-36 rounded-lg border border-border bg-popover px-2 py-1.5 text-xs shadow-lg group-hover:block z-10">
-                            <p className="font-semibold text-foreground">{point.date}</p>
-                            <p className="text-muted-foreground">{fmt(point.requests)} requests</p>
-                            <p className="text-muted-foreground">{fmt(point.total_tokens)} tokens</p>
-                        </div>
+        <div className="flex h-72 w-full p-4 pb-8 font-sans">
+            {/* Y-axis */}
+            <div className="flex w-12 flex-col justify-between pr-2 text-right text-[10px] text-muted-foreground">
+                {yTicks.map((val, i) => (
+                    <div key={i} className="relative w-full text-right">
+                        <span className="-translate-y-1/2 block">{fmt(val)}</span>
+                        <div className="absolute right-[-8px] top-0 h-[1px] w-1 bg-border/40" />
                     </div>
-                );
-            })}
+                ))}
+            </div>
+
+            {/* Chart Area */}
+            <div className="relative flex-1 border-b border-l border-border/40 group">
+                
+                {/* SVG Graph */}
+                <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full overflow-visible">
+                    <defs>
+                        <linearGradient id="areaGradient" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#9b72cf" stopOpacity={0.4} />
+                            <stop offset="100%" stopColor="#9b72cf" stopOpacity={0.0} />
+                        </linearGradient>
+                    </defs>
+                    <path d={areaPath} fill="url(#areaGradient)" />
+                    <path d={linePath} fill="none" stroke="#9b72cf" strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+
+                {/* Interactive Points */}
+                {visible.map((pt, i) => {
+                    const x = getX(i);
+                    const y = getY(pt.requests);
+                    const isRightSide = x > 50;
+                    
+                    return (
+                        <div
+                            key={pt.date}
+                            className="absolute group/pt"
+                            style={{ left: `${x}%`, top: `${y}%` }}
+                        >
+                            {/* Large invisible hover zone */}
+                            <div className="absolute left-1/2 top-1/2 h-48 w-8 -translate-x-1/2 -translate-y-1/2 cursor-crosshair z-10" />
+                            
+                            {/* Dot indicator */}
+                            <div className="absolute left-1/2 top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-[2px] border-[#9b72cf] bg-[#0a0a0a] opacity-0 transition-opacity duration-200 group-hover/pt:opacity-100 z-20 pointer-events-none" />
+                            
+                            {/* Tooltip */}
+                            <div 
+                                className={`pointer-events-none absolute bottom-full z-30 mb-3 hidden w-44 flex-col rounded-[10px] border border-[#1f1f1f] bg-[#0a0a0a] p-3 text-[11px] shadow-2xl group-hover/pt:flex ${
+                                    isRightSide ? 'right-1/2 translate-x-4' : 'left-1/2 -translate-x-4'
+                                }`}
+                            >
+                                <div className="mb-2 font-medium text-[#e0e0e0]">{formatLabel(pt.date)}</div>
+                                <div className="flex flex-col gap-2">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                            <div className="h-2 w-2 rounded-full bg-[#9b72cf]" />
+                                            <span className="text-[#a0a0a0]">Requests</span>
+                                        </div>
+                                        <span className="font-mono text-[#e0e0e0]">{fmt(pt.requests)}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                            <div className="h-2 w-2 rounded-full bg-[#4285F4]" />
+                                            <span className="text-[#a0a0a0]">Tokens</span>
+                                        </div>
+                                        <span className="font-mono text-[#e0e0e0]">{fmt(pt.total_tokens)}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })}
+
+                {/* X-axis labels */}
+                <div className="absolute -bottom-6 left-0 text-[10px] text-muted-foreground">
+                    {formatLabel(firstDate)}
+                </div>
+                <div className="absolute -bottom-6 right-0 text-[10px] text-muted-foreground">
+                    {formatLabel(lastDate)}
+                </div>
+                
+                {/* X-axis ticks */}
+                <div className="absolute -bottom-1 left-0 h-1 w-[1px] bg-border/40" />
+                <div className="absolute -bottom-1 right-0 h-1 w-[1px] bg-border/40" />
+            </div>
         </div>
     );
 }

@@ -20,52 +20,57 @@ async def test_llm_engine_routing():
     print("Running LLM engine routing tests...")
     
     # Verify model names are defined
-    assert hasattr(llm_engine, "TEXT_PRIMARY")
-    assert hasattr(llm_engine, "TEXT_SECONDARY")
-    assert hasattr(llm_engine, "TEXT_TERTIARY")
+    assert hasattr(llm_engine, "THINK_CHAT_PRIMARY")
+    assert hasattr(llm_engine, "FAST_CHAT_PRIMARY")
+    assert hasattr(llm_engine, "THINK_CHAT_TERTIARY")
     
-    # Mock google_client and openrouter_client to prevent real API calls
+    # Mock clients to prevent real API calls
     mock_google = AsyncMock()
     mock_openrouter = AsyncMock()
+    mock_groq_text = AsyncMock()
     
     with patch("services.llm_engine.google_client", mock_google), \
-         patch("services.llm_engine.openrouter_client", mock_openrouter):
+         patch("services.llm_engine.openrouter_client", mock_openrouter), \
+         patch("services.llm_engine.groq_text_client", mock_groq_text):
         
-        # Test 1: Requested model TEXT_SECONDARY (Fast Mode)
+        # Test 1: Requested model FAST_CHAT_PRIMARY (Fast Mode - Groq text)
         messages = [{"role": "user", "content": "hello"}]
         
-        # We simulate google_client success
-        mock_google.chat.completions.create.return_value = AsyncMock()
+        # We simulate groq_text_client success
+        mock_groq_text.chat.completions.create.return_value = AsyncMock()
         
         await llm_engine.generate_completion_with_failover(
             messages=messages,
             temperature=0.7,
             max_tokens=100,
-            requested_model="TEXT_SECONDARY",
+            requested_model="FAST_CHAT_PRIMARY",
         )
         
-        # Check that it called the Google client with the secondary model first
-        mock_google.chat.completions.create.assert_called_with(
-            model=llm_engine.TEXT_SECONDARY,
+        # Check that it called the Groq text client
+        mock_groq_text.chat.completions.create.assert_called_with(
+            model=llm_engine.FAST_CHAT_PRIMARY,
             messages=messages,
             temperature=0.7,
             max_tokens=100,
             stream=False,
         )
         
-        # Reset and test 2: Requested model TEXT_PRIMARY (Thinking Mode)
-        mock_google.chat.completions.create.reset_mock()
+        # Reset and test 2: Requested model THINK_CHAT_PRIMARY (Thinking Mode)
+        mock_openrouter.chat.completions.create.reset_mock()
+        
+        # We simulate openrouter_client success
+        mock_openrouter.chat.completions.create.return_value = AsyncMock()
         
         await llm_engine.generate_completion_with_failover(
             messages=messages,
             temperature=0.7,
             max_tokens=100,
-            requested_model="TEXT_PRIMARY",
+            requested_model="THINK_CHAT_PRIMARY",
         )
         
-        # Check that it called the Google client with the primary model first
-        mock_google.chat.completions.create.assert_called_with(
-            model=llm_engine.TEXT_PRIMARY,
+        # Check that it called the OpenRouter client with the primary model first
+        mock_openrouter.chat.completions.create.assert_called_with(
+            model=llm_engine.THINK_CHAT_PRIMARY,
             messages=messages,
             temperature=0.7,
             max_tokens=100,
@@ -78,7 +83,7 @@ async def test_llm_engine_routing():
         mock_groq = AsyncMock()
         with patch("services.llm_engine.groq_client", mock_groq), \
              patch("services.llm_engine.groq_text_client", None):
-            # Case 3a: SMALL_PRIMARY (Groq) succeeds
+            # Case 3a: SMALL_TASK_PRIMARY (Groq) succeeds
             mock_google.chat.completions.create.reset_mock()
             mock_groq.chat.completions.create.reset_mock()
             mock_openrouter.chat.completions.create.reset_mock()
@@ -91,7 +96,7 @@ async def test_llm_engine_routing():
                 max_tokens=100,
             )
             mock_groq.chat.completions.create.assert_called_with(
-                model=llm_engine.SMALL_PRIMARY,
+                model=llm_engine.SMALL_TASK_PRIMARY,
                 messages=messages,
                 temperature=0.7,
                 max_tokens=100,
@@ -100,7 +105,7 @@ async def test_llm_engine_routing():
             mock_google.chat.completions.create.assert_not_called()
             mock_openrouter.chat.completions.create.assert_not_called()
 
-            # Case 3b: SMALL_PRIMARY (Groq) fails, SMALL_SECONDARY (OpenRouter) succeeds
+            # Case 3b: SMALL_TASK_PRIMARY (Groq) fails, SMALL_TASK_SECONDARY (OpenRouter) succeeds
             mock_google.chat.completions.create.reset_mock()
             mock_groq.chat.completions.create.reset_mock()
             mock_openrouter.chat.completions.create.reset_mock()
@@ -114,14 +119,14 @@ async def test_llm_engine_routing():
                 max_tokens=100,
             )
             mock_groq.chat.completions.create.assert_called_with(
-                model=llm_engine.SMALL_PRIMARY,
+                model=llm_engine.SMALL_TASK_PRIMARY,
                 messages=messages,
                 temperature=0.7,
                 max_tokens=100,
                 stream=False,
             )
             mock_openrouter.chat.completions.create.assert_called_with(
-                model=llm_engine.SMALL_SECONDARY,
+                model=llm_engine.SMALL_TASK_SECONDARY,
                 messages=messages,
                 temperature=0.7,
                 max_tokens=100,
@@ -146,7 +151,7 @@ async def test_llm_engine_streaming_response_does_not_touch_choices():
             messages=messages,
             temperature=0.7,
             max_tokens=100,
-            requested_model="TEXT_SECONDARY",
+            requested_model="THINK_CHAT_SECONDARY",
             stream=True,
         )
 

@@ -39,12 +39,14 @@ from services.policy_guard import (  # noqa: E402
 from services.llm_engine import (  # noqa: E402
     SYSTEM_ROLE_SAFE_TEXT_MODEL_ORDER,
     SYSTEM_ROLE_SAFE_VISION_MODEL_ORDER,
-    SMALL_TERTIARY,
-    TEXT_PRIMARY,
-    TEXT_SECONDARY,
-    VISION_QUATERNARY,
-    VISION_SECONDARY,
-    VISION_TERTIARY,
+    THINK_CHAT_PRIMARY,
+    THINK_CHAT_SECONDARY,
+    THINK_CHAT_TERTIARY,
+    THINK_CHAT_QUATERNARY,
+    THINK_VISION_PRIMARY,
+    THINK_VISION_SECONDARY,
+    THINK_VISION_TERTIARY,
+    THINK_VISION_QUATERNARY,
 )
 
 
@@ -282,14 +284,16 @@ def test_quiz_grading_helper_blocks_leaked_output(monkeypatch: pytest.MonkeyPatc
 
 def test_system_role_safe_model_orders_match_current_think_routing():
     assert SYSTEM_ROLE_SAFE_TEXT_MODEL_ORDER == [
-        TEXT_PRIMARY,
-        TEXT_SECONDARY,
-        SMALL_TERTIARY,
+        THINK_CHAT_PRIMARY,
+        THINK_CHAT_SECONDARY,
+        THINK_CHAT_TERTIARY,
+        THINK_CHAT_QUATERNARY,
     ]
     assert SYSTEM_ROLE_SAFE_VISION_MODEL_ORDER == [
-        VISION_SECONDARY,
-        VISION_TERTIARY,
-        VISION_QUATERNARY,
+        THINK_VISION_PRIMARY,
+        THINK_VISION_SECONDARY,
+        THINK_VISION_TERTIARY,
+        THINK_VISION_QUATERNARY,
     ]
 
 

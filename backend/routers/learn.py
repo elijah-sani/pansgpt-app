@@ -360,7 +360,7 @@ async def _background_generate_and_save_retest(  # [LEARN RETEST]
 
 async def _generate_section_content(section: dict, chunks: list, tier: str, user_id: Optional[str] = None) -> tuple[str, list]:  # [LEARN MODE TIERS] added tier param
     """
-    Generate explanation and check_questions for a section using TEXT_SECONDARY.
+    Generate explanation and check_questions for a section.
     Selects system prompts from _EXPLAIN_SYSTEM_BY_TIER / _QUESTIONS_SYSTEM_BY_TIER based on tier.
     Returns (explanation_text, check_questions_list).
     """
@@ -799,7 +799,7 @@ async def submit_section_answer(
 ):
     """
     Grade a single check-question answer.
-    On a wrong answer, generates a short diagnostic follow-up using TEXT_SECONDARY.
+    On a wrong answer, generates a short diagnostic follow-up.
     """
     await _assert_document_access(document_id, current_user)
 

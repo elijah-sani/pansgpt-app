@@ -172,7 +172,7 @@ def run_query_timing(question: str, thinking_mode: bool):
     actual_model = stages.get("actual_model_attempted", selected_model)
     requested_model = stages.get(
         "requested_model",
-        llm_engine.TEXT_PRIMARY if thinking_mode else llm_engine.FAST_TEXT_PRIMARY,
+        llm_engine.THINK_CHAT_PRIMARY if thinking_mode else llm_engine.FAST_CHAT_PRIMARY,
     )
     
     # Parse parameter values from logged metadata

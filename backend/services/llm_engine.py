@@ -85,27 +85,8 @@ SYSTEM_ROLE_SAFE_VISION_MODEL_ORDER = THINK_VISION_MODEL_ORDER
 # ---------------------------------------------------------------------------
 # Backward Compatibility Aliases for Legacy Code
 # ---------------------------------------------------------------------------
-TEXT_PRIMARY = THINK_CHAT_SECONDARY
-TEXT_SECONDARY = FAST_CHAT_QUATERNARY
-TEXT_TERTIARY = FAST_CHAT_PRIMARY
-TEXT_FALLBACK = TEXT_SECONDARY
-TEXT_FAST = SMALL_TASK_PRIMARY
-
-SMALL_PRIMARY = SMALL_TASK_PRIMARY
-SMALL_SECONDARY = SMALL_TASK_SECONDARY
-SMALL_TERTIARY = SMALL_TASK_SECONDARY
-
-LEARN_PRIMARY = LEARN_PRIMARY
-LEARN_SECONDARY = LEARN_SECONDARY
-LEARN_TERTIARY = LEARN_TERTIARY
-
-FAST_TEXT_PRIMARY = FAST_TEXT_MODEL_ORDER[0]
-QUIZ_TEXT_PRIMARY = QUIZ_TEXT_MODEL_ORDER[0]
-
-VISION_PRIMARY = FAST_VISION_PRIMARY
-VISION_SECONDARY = THINK_VISION_PRIMARY
-VISION_TERTIARY = FAST_VISION_PRIMARY
-VISION_QUATERNARY = THINK_VISION_SECONDARY
+# ALL LEGACY ALIASES (TEXT_PRIMARY, VISION_PRIMARY, etc.) HAVE BEEN REMOVED.
+# Use FAST_CHAT_*, THINK_CHAT_*, QUIZ_*, LEARN_*, SMALL_TASK_*, FAST_VISION_*, THINK_VISION_* explicitly.
 
 openrouter_client = None
 google_client = None
@@ -210,31 +191,36 @@ def _response_format_mode(response_format: Optional[dict]) -> str:
 
 
 def _client_for_text_model(model_name: str) -> Any:
+    # GROQ
     if model_name in {
-        FAST_CHAT_PRIMARY, FAST_CHAT_TERTIARY,
-        QUIZ_PRIMARY, QUIZ_SECONDARY,
-        LEARN_TERTIARY, SMALL_TASK_PRIMARY,
-        THINK_CHAT_TERTIARY, THINK_VISION_SECONDARY,
-        AUDIO_PRIMARY, AUDIO_SECONDARY,
-        "openai/gpt-oss-120b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "qwen/qwen3.6-27b",
-        "whisper-large-v3-turbo", "whisper-large-v3"
+        "openai/gpt-oss-120b",
+        "llama-3.3-70b-versatile",
+        "qwen/qwen3.6-27b",
+        "llama-3.1-8b-instant",
+        "whisper-large-v3-turbo",
+        "whisper-large-v3"
     }:
         return groq_text_client or groq_client
+
+    # GOOGLE AI STUDIO
     if model_name in {
-        FAST_CHAT_QUATERNARY, THINK_CHAT_SECONDARY, THINK_CHAT_QUATERNARY,
-        QUIZ_QUATERNARY, LEARN_SECONDARY, LEARN_QUATERNARY,
-        FAST_VISION_PRIMARY, THINK_VISION_PRIMARY, THINK_VISION_QUATERNARY,
-        "gemma-4-31b-it", "gemma-4-26b-a4b-it", "gemma-4-32b-it"
+        "gemma-4-26b-a4b-it",
+        "gemma-4-31b-it",
+        "gemma-4-32b-it"
     }:
         return google_client
+
+    # OPENROUTER
     if model_name in {
-        FAST_CHAT_SECONDARY, THINK_CHAT_PRIMARY, QUIZ_TERTIARY, LEARN_PRIMARY,
-        SMALL_TASK_SECONDARY, FAST_VISION_SECONDARY, FAST_VISION_TERTIARY,
-        THINK_VISION_TERTIARY, "nvidia/nemotron-3-super-120b-a12b:free",
-        "nvidia/nemotron-3-ultra-550b-a55b:free", "nvidia/nemotron-nano-2-vl:free",
-        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "nvidia/nemotron-3-nano-30b-a3b:free"
+        "nvidia/nemotron-3-super-120b-a12b:free",
+        "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "nvidia/nemotron-3-nano-30b-a3b:free",
+        "nvidia/nemotron-nano-2-vl:free",
+        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
     }:
         return openrouter_client
+
+    # Default fallback if unmapped model string
     if openrouter_client is not None:
         return openrouter_client
     return None
@@ -242,26 +228,17 @@ def _client_for_text_model(model_name: str) -> Any:
 
 def _all_text_order() -> list[tuple[str, str]]:
     return [
-        ("TEXT_PRIMARY", TEXT_PRIMARY),
-        ("TEXT_SECONDARY", TEXT_SECONDARY),
-        ("TEXT_TERTIARY", TEXT_TERTIARY),
-        ("SMALL_PRIMARY", SMALL_PRIMARY),
-        ("SMALL_SECONDARY", SMALL_SECONDARY),
-        ("SMALL_TERTIARY", SMALL_TERTIARY),
-    ]
-
-
-def _all_vision_order() -> list[str]:
-    return [
-        VISION_PRIMARY,
-        VISION_SECONDARY,
-        VISION_TERTIARY,
-        VISION_QUATERNARY,
+        ("THINK_CHAT_PRIMARY", THINK_CHAT_PRIMARY),
+        ("THINK_CHAT_SECONDARY", THINK_CHAT_SECONDARY),
+        ("FAST_CHAT_PRIMARY", FAST_CHAT_PRIMARY),
+        ("FAST_CHAT_SECONDARY", FAST_CHAT_SECONDARY),
+        ("SMALL_TASK_PRIMARY", SMALL_TASK_PRIMARY),
+        ("SMALL_TASK_SECONDARY", SMALL_TASK_SECONDARY),
     ]
 
 
 def _max_tokens_for_text_model(model_name: str, requested_max_tokens: int) -> int:
-    if model_name in {TEXT_TERTIARY, SMALL_PRIMARY, SMALL_TERTIARY}:
+    if model_name in {FAST_CHAT_TERTIARY, SMALL_TASK_PRIMARY, SMALL_TASK_SECONDARY}:
         return min(requested_max_tokens, OPENROUTER_FALLBACK_MAX_TOKENS)
     return requested_max_tokens
 
@@ -311,6 +288,10 @@ async def _create_completion_with_audit(
     try:
         request = client.chat.completions.create(**kwargs)
         res = await asyncio.wait_for(request, timeout=timeout_seconds) if timeout_seconds else await request
+        
+        if _should_reject_response_content(res, stream=kwargs.get("stream", False)):
+            raise ValueError(f"{model} returned empty or thinking-only response content")
+
         _latency_ms = (time.perf_counter() - started) * 1000
         _log_quiz_provider_timing(
             "llm_provider_call_completed",
@@ -418,11 +399,12 @@ async def generate_completion_with_failover(
     per_provider_timeout_seconds: Optional[float] = None,
     preferred_models: Optional[list[str]] = None,
     require_system_role_support: bool = False,
+    vision_mode: str = "think",
 ) -> Optional[Any]:
     if force_google:
         if google_client is None:
             raise RuntimeError("Google fallback client not initialized.")
-        forced_model = VISION_SECONDARY if has_images else TEXT_PRIMARY
+        forced_model = THINK_VISION_PRIMARY if has_images else THINK_CHAT_SECONDARY
         logger.info(f"[INFO] Forcing generation with Google model: {forced_model}")
         logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "FORCE_GOOGLE", forced_model)
         
@@ -436,61 +418,46 @@ async def generate_completion_with_failover(
         if response_format:
             kwargs["response_format"] = response_format
         try:
-            res = await _create_completion_with_audit(
+            return await _create_completion_with_audit(
                 google_client,
                 kwargs,
                 audit_meta=audit_meta,
                 timeout_seconds=per_provider_timeout_seconds,
             )
-            if _should_reject_response_content(res, stream=stream):
-                raise ValueError("Google client returned empty or thinking-only response content")
-            return res
         except Exception as exc:
             if response_format:
                 logger.warning(f"Google forced model failed with response_format, retrying with standard json_object format: {exc}")
                 try:
                     kwargs["response_format"] = {"type": "json_object"}
-                    res = await _create_completion_with_audit(
+                    return await _create_completion_with_audit(
                         google_client,
                         kwargs,
                         audit_meta=audit_meta,
                         timeout_seconds=per_provider_timeout_seconds,
                     )
-                    if _should_reject_response_content(res, stream=stream):
-                        raise ValueError("Google client returned empty or thinking-only response content under json_object")
-                    return res
                 except Exception as inner_exc:
                     logger.warning(f"Google forced model failed with standard json_object format, retrying without format: {inner_exc}")
                     kwargs.pop("response_format", None)
-                    res = await _create_completion_with_audit(
+                    return await _create_completion_with_audit(
                         google_client,
                         kwargs,
                         audit_meta=audit_meta,
                         timeout_seconds=per_provider_timeout_seconds,
                     )
-                    if _should_reject_response_content(res, stream=stream):
-                        raise ValueError("Google client returned empty or thinking-only response content without format")
-                    return res
             raise exc
 
     # --- Vision path ---
     if has_images:
         last_exc = None
-        default_vision_order = SYSTEM_ROLE_SAFE_VISION_MODEL_ORDER if require_system_role_support else VISION_MODEL_ORDER
+        base_vision_order = FAST_VISION_MODEL_ORDER if vision_mode == "fast" else THINK_VISION_MODEL_ORDER
+        default_vision_order = SYSTEM_ROLE_SAFE_VISION_MODEL_ORDER if require_system_role_support else base_vision_order
         if preferred_models:
-            known_vision_models = _all_vision_order()
-            preferred_set = [model_name for model_name in preferred_models if model_name in known_vision_models]
-            vision_order = preferred_set + [model_name for model_name in default_vision_order if model_name not in preferred_set]
+            preferred_set = set(preferred_models)
+            vision_order = list(preferred_models) + [model_name for model_name in default_vision_order if model_name not in preferred_set]
         else:
             vision_order = default_vision_order
         for model_name in vision_order:
-            if model_name == VISION_PRIMARY:
-                client = groq_text_client
-            elif model_name in {VISION_SECONDARY, VISION_TERTIARY}:
-                client = google_client
-            else:
-                client = openrouter_client
-
+            client = _client_for_text_model(model_name)
             if client is None:
                 continue
 
@@ -499,7 +466,7 @@ async def generate_completion_with_failover(
                 if client is openrouter_client:
                     vision_max_tokens = min(vision_max_tokens, OPENROUTER_FALLBACK_MAX_TOKENS)
 
-                logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "VISION_PRIMARY", model_name)
+                logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or ("FAST_VISION_PRIMARY" if vision_mode == "fast" else "THINK_VISION_PRIMARY"), model_name)
                 kwargs = {
                     "model": model_name,
                     "messages": messages,
@@ -507,15 +474,12 @@ async def generate_completion_with_failover(
                     "max_tokens": vision_max_tokens,
                     "stream": stream,
                 }
-                res = await _create_completion_with_audit(
+                return await _create_completion_with_audit(
                     client,
                     kwargs,
                     audit_meta=audit_meta,
                     timeout_seconds=per_provider_timeout_seconds,
                 )
-                if _should_reject_response_content(res, stream=stream):
-                    raise ValueError(f"{model_name} returned empty or thinking-only response content")
-                return res
             except Exception as exc:
                 last_exc = exc
                 logger.warning(f"Vision model failed ({model_name}), trying next: {exc}")
@@ -529,17 +493,9 @@ async def generate_completion_with_failover(
     system_safe_order = _all_text_order()
     full_order = system_safe_order if require_system_role_support else default_text_order
     if preferred_models:
-        preferred_set = {
-            model_name
-            for model_name in preferred_models
-            if any(name == model_name for _, name in full_order)
-        }
-        model_order = [
-            item
-            for preferred_name in preferred_models
-            for item in full_order
-            if item[1] == preferred_name
-        ] + [item for item in full_order if item[1] not in preferred_set]
+        preferred_set = set(preferred_models)
+        model_order = [(name, name) for name in preferred_models]
+        model_order += [item for item in full_order if item[1] not in preferred_set]
     else:
         matched_tuple = None
         if requested_model:
@@ -569,41 +525,32 @@ async def generate_completion_with_failover(
             if response_format:
                 kwargs["response_format"] = response_format
             try:
-                res = await _create_completion_with_audit(
+                return await _create_completion_with_audit(
                     client,
                     kwargs,
                     audit_meta=audit_meta,
                     timeout_seconds=per_provider_timeout_seconds,
                 )
-                if _should_reject_response_content(res, stream=stream):
-                    raise ValueError(f"{model_name} returned empty or thinking-only response content")
-                return res
             except Exception as exc:
                 if response_format:
                     logger.warning(f"Model {model_name} failed with response_format, retrying with standard json_object format: {exc}")
                     try:
                         kwargs["response_format"] = {"type": "json_object"}
-                        res = await _create_completion_with_audit(
+                        return await _create_completion_with_audit(
                             client,
                             kwargs,
                             audit_meta=audit_meta,
                             timeout_seconds=per_provider_timeout_seconds,
                         )
-                        if _should_reject_response_content(res, stream=stream):
-                            raise ValueError(f"{model_name} returned empty or thinking-only response content under json_object")
-                        return res
                     except Exception as inner_exc:
                         logger.warning(f"Model {model_name} failed with standard json_object format, retrying without format: {inner_exc}")
                         kwargs.pop("response_format", None)
-                        res = await _create_completion_with_audit(
+                        return await _create_completion_with_audit(
                             client,
                             kwargs,
                             audit_meta=audit_meta,
                             timeout_seconds=per_provider_timeout_seconds,
                         )
-                        if _should_reject_response_content(res, stream=stream):
-                            raise ValueError(f"{model_name} returned empty or thinking-only response content without format")
-                        return res
                 raise exc
         except Exception as exc:
             last_exc = exc
@@ -625,6 +572,7 @@ async def generate_dual_cloud_stream(
     preferred_models: Optional[list[str]] = None,
     require_system_role_support: bool = False,
     audit_meta: Optional[dict] = None,
+    vision_mode: str = "think",
 ) -> AsyncIterator[Any]:
     started = time.perf_counter()
     completion_stream = await generate_completion_with_failover(
@@ -637,13 +585,14 @@ async def generate_dual_cloud_stream(
         preferred_models=preferred_models,
         require_system_role_support=require_system_role_support,
         audit_meta=audit_meta,
+        vision_mode=vision_mode,
     )
     if completion_stream is None:
         return
 
     _meta = audit_meta or {}
     accumulated_chars = 0
-    actual_model = requested_model or (VISION_PRIMARY if has_images else FAST_TEXT_PRIMARY)
+    actual_model = requested_model or ((FAST_VISION_PRIMARY if vision_mode == "fast" else THINK_VISION_PRIMARY) if has_images else FAST_CHAT_PRIMARY)
 
     try:
         async for chunk in completion_stream:
@@ -719,52 +668,32 @@ async def generate_small_completion_with_failover(
     audit_meta: Optional[dict] = None,
 ) -> Optional[Any]:
     """
-    Failover chain for small/fast tasks (Chat Titles, Summaries):
-    1. SMALL_PRIMARY (llama-3.1-8b-instant) via Groq
-    2. SMALL_SECONDARY (nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free) via OpenRouter
-    3. Fall back to main generate_completion_with_failover if small providers fail.
+    Failover chain for small/fast tasks (Chat Titles, Summaries).
+    Uses SMALL_MODEL_ORDER and dynamically resolves the client.
     """
-    g_client = groq_text_client or groq_client
+    for model_name in SMALL_MODEL_ORDER:
+        client = _client_for_text_model(model_name)
+        if client is None:
+            continue
 
-    # 1. Try Groq Llama 3.1 8B (SMALL_PRIMARY)
-    if g_client is not None:
         try:
-            logger.info(f"[INFO] SMALL failover chain: attempting Groq SMALL_PRIMARY ({SMALL_PRIMARY})")
+            logger.info(f"[INFO] SMALL failover chain: attempting {model_name}")
             kwargs = {
-                "model": SMALL_PRIMARY,
+                "model": model_name,
                 "messages": messages,
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "stream": stream,
             }
             return await _create_completion_with_audit(
-                g_client,
+                client,
                 kwargs,
                 audit_meta=audit_meta,
             )
         except Exception as exc:
-            logger.warning(f"SMALL_PRIMARY failed ({SMALL_PRIMARY}), trying next: {exc}")
+            logger.warning(f"{model_name} failed, trying next: {exc}")
 
-    # 2. Try OpenRouter Nvidia Nemotron (SMALL_SECONDARY)
-    if openrouter_client is not None:
-        try:
-            logger.info(f"[INFO] SMALL failover chain: attempting OpenRouter SMALL_SECONDARY ({SMALL_SECONDARY})")
-            kwargs = {
-                "model": SMALL_SECONDARY,
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "stream": stream,
-            }
-            return await _create_completion_with_audit(
-                openrouter_client,
-                kwargs,
-                audit_meta=audit_meta,
-            )
-        except Exception as exc:
-            logger.warning(f"SMALL_SECONDARY failed ({SMALL_SECONDARY}), trying next: {exc}")
-
-    # 3. Final fallback: Use main chain
+    # Final fallback: Use main chain
     logger.info("All small models failed or clients uninitialized, falling back to main failover chain.")
     return await generate_completion_with_failover(
         messages=messages,
@@ -783,72 +712,32 @@ async def generate_learn_completion_with_failover(
     audit_meta: Optional[dict] = None,
 ) -> Optional[Any]:
     """
-    Failover chain for Learn Mode tasks (Section Explanations, Check Questions, Diagnostic Retests):
-    1. LEARN_PRIMARY (llama-3.3-70b-versatile) via Groq
-    2. LEARN_SECONDARY (meta-llama/llama-3.3-70b-instruct) via Groq
-    3. LEARN_TERTIARY (nvidia/nemotron-3-nano-30b-a3b:free) via OpenRouter
-    4. Fall back to main generate_completion_with_failover if all learn providers fail.
+    Failover chain for Learn Mode tasks (Section Explanations, Check Questions, Diagnostic Retests).
+    Uses LEARN_MODEL_ORDER and dynamically resolves the client.
     """
-    g_client = groq_text_client or groq_client
+    for model_name in LEARN_MODEL_ORDER:
+        client = _client_for_text_model(model_name)
+        if client is None:
+            continue
 
-    # 1. Try Groq Llama 3.3 70B Versatile (LEARN_PRIMARY)
-    if g_client is not None:
         try:
-            logger.info(f"[INFO] LEARN failover chain: attempting Groq LEARN_PRIMARY ({LEARN_PRIMARY})")
+            logger.info(f"[INFO] LEARN failover chain: attempting {model_name}")
             kwargs = {
-                "model": LEARN_PRIMARY,
+                "model": model_name,
                 "messages": messages,
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "stream": stream,
             }
             return await _create_completion_with_audit(
-                g_client,
+                client,
                 kwargs,
                 audit_meta=audit_meta,
             )
         except Exception as exc:
-            logger.warning(f"LEARN_PRIMARY failed ({LEARN_PRIMARY}), trying next: {exc}")
+            logger.warning(f"{model_name} failed, trying next: {exc}")
 
-    # 2. Try Groq Llama 3.3 70B Instruct (LEARN_SECONDARY)
-    if g_client is not None:
-        try:
-            logger.info(f"[INFO] LEARN failover chain: attempting Groq LEARN_SECONDARY ({LEARN_SECONDARY})")
-            kwargs = {
-                "model": LEARN_SECONDARY,
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "stream": stream,
-            }
-            return await _create_completion_with_audit(
-                g_client,
-                kwargs,
-                audit_meta=audit_meta,
-            )
-        except Exception as exc:
-            logger.warning(f"LEARN_SECONDARY failed ({LEARN_SECONDARY}), trying next: {exc}")
-
-    # 3. Try OpenRouter Nvidia Nemotron 30b (LEARN_TERTIARY)
-    if openrouter_client is not None:
-        try:
-            logger.info(f"[INFO] LEARN failover chain: attempting OpenRouter LEARN_TERTIARY ({LEARN_TERTIARY})")
-            kwargs = {
-                "model": LEARN_TERTIARY,
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "stream": stream,
-            }
-            return await _create_completion_with_audit(
-                openrouter_client,
-                kwargs,
-                audit_meta=audit_meta,
-            )
-        except Exception as exc:
-            logger.warning(f"LEARN_TERTIARY failed ({LEARN_TERTIARY}), falling back to main chain: {exc}")
-
-    # 4. Final fallback: Use main chain
+    # Final fallback: Use main chain
     logger.info("All learn models failed or clients uninitialized, falling back to main failover chain.")
     return await generate_completion_with_failover(
         messages=messages,

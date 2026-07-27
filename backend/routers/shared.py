@@ -744,6 +744,7 @@ Emoji Use: Strictly Minimal. Use max 1 emoji per response, and only if it acts a
 Accuracy: Prioritize clinical accuracy. If a concept has exceptions (e.g., side effects), mention them briefly.
 Formatting: Use Markdown (bolding, lists) to break up walls of text. Use LaTeX formatting for all mathematical equations, scientific calculations, units, and Greek symbols (e.g., $t_{1/2}$, $\Phi$, $\varphi$, $\mu\text{g/mL}$, $V_d$, or $$CL = \frac{Dose}{AUC}$$).
 Greetings: Do NOT greet the user first. Jump straight into answering their query. Only greet back if the user explicitly greets you (e.g., "hi", "hello", "good morning").
+Grounding: If the retrieved document context does not clearly and directly answer the student's question, state this plainly and offer to help in another way (such as suggesting they check a different section or point to a specific topic). Do not generate or fabricate answers that are not grounded in the provided context.  # [GROUNDING FALLBACK]
 """
 
 
@@ -1010,6 +1011,12 @@ async def get_relevant_context(
             "complete list", "full list", "entire list",
             "what groups", "who presented", "summarize the material",
             "overview of this", "outline of this", "contents of this",
+            # [BROAD QUERY EXPANSION]
+            "what document is this", "what is this document", "what document am i",  # [BROAD QUERY EXPANSION]
+            "learning objective", "learning outcome", "objective of this", "objective", "outcome",  # [BROAD QUERY EXPANSION]
+            "what is on page", "what's on page", "first page", "page one", "page 1", "page ",  # [BROAD QUERY EXPANSION]
+            "what is this about", "tell me about this document",  # [BROAD QUERY EXPANSION]
+            "outline", "table of contents",  # [BROAD QUERY EXPANSION]
         }
         question_lower = user_question.lower()
         is_broad_query = any(kw in question_lower for kw in _BROAD_QUERY_KEYWORDS)
@@ -1116,16 +1123,17 @@ async def get_relevant_context(
                     "Fetch all document chunks for broad query",
                 )
                 raw_chunks = all_chunks_response.data or []
-                # Sample evenly across the full document so no section is missed
-                # 40 samples × 80 chars = ~3200 chars = ~800 tokens — well under free tier
+                # [BROAD QUERY TRUNCATION FIX] Sample 15 evenly-spaced chunks capped at 500 chars each (~7,500 chars total / ~1,875 tokens) to provide full contextual substance for overview queries while staying safely within token budgets
+                max_samples = 15  # [BROAD QUERY TRUNCATION FIX]
+                chunk_char_cap = 500  # [BROAD QUERY TRUNCATION FIX]
                 total = len(raw_chunks)
-                if total <= 40:
-                    sampled = raw_chunks
+                if total <= max_samples:  # [BROAD QUERY TRUNCATION FIX]
+                    sampled = raw_chunks  # [BROAD QUERY TRUNCATION FIX]
                 else:
-                    step = total / 40
-                    sampled = [raw_chunks[int(i * step)] for i in range(40)]
+                    step = total / max_samples  # [BROAD QUERY TRUNCATION FIX]
+                    sampled = [raw_chunks[int(i * step)] for i in range(max_samples)]  # [BROAD QUERY TRUNCATION FIX]
                 condensed_chunks = [
-                    {**row, 'content': (row.get('content') or '')[:80]}
+                    {**row, 'content': (row.get('content') or '')[:chunk_char_cap]}  # [BROAD QUERY TRUNCATION FIX]
                     for row in sampled
                 ]
                 class _MergedResponse:

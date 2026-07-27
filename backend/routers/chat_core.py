@@ -1709,6 +1709,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                             max_tokens=300,
                             has_images=True,
                             stream=False,
+                            vision_mode="fast",
                         )
                         if extraction_response is not None:
                             extracted_content = extraction_response.choices[0].message.content
@@ -1782,6 +1783,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                         max_tokens=300,
                         has_images=True,
                         stream=False,
+                        vision_mode="fast",
                     )
                     if extraction_response is not None:
                         extracted_content = extraction_response.choices[0].message.content
@@ -1928,7 +1930,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                 )
                 messages = _shape_vision_messages(messages, vision_system_prompt)
 
-                selected_model = llm_engine.VISION_PRIMARY
+                selected_model = llm_engine.THINK_VISION_PRIMARY if request.thinking_mode else llm_engine.FAST_VISION_PRIMARY
                 logger.info(f"Smart Router: Detected images, switching to {selected_model}")
                 yield {"status": "thinking"}
 
@@ -1958,8 +1960,9 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                     has_images=True,
                     temperature=temperature,
                     max_tokens=VISION_MAX_OUTPUT_TOKENS,
-                    requested_model="VISION_PRIMARY",
+                    requested_model="THINK_VISION_PRIMARY" if request.thinking_mode else "FAST_VISION_PRIMARY",
                     require_system_role_support=True,
+                    vision_mode="think" if request.thinking_mode else "fast",
                 )
                 yield {"status": "preparing_response"}
                 async for event in _stream_completion_events(completion_stream):
@@ -2001,13 +2004,13 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
 
         try:
             if contains_image(messages):
-                selected_model = llm_engine.VISION_PRIMARY
+                selected_model = llm_engine.THINK_VISION_PRIMARY if request.thinking_mode else llm_engine.FAST_VISION_PRIMARY
                 logger.info(f"Smart Router: Found images in history, using {selected_model}")
                 is_vision_mode = True
                 pipeline_params = _apply_vision_pipeline_budget(pipeline_params)
                 rag_chunk_count = pipeline_params["rag_chunk_count"]
             else:
-                selected_model = llm_engine.TEXT_PRIMARY if request.thinking_mode else llm_engine.FAST_TEXT_PRIMARY
+                selected_model = llm_engine.THINK_CHAT_PRIMARY if request.thinking_mode else llm_engine.FAST_CHAT_PRIMARY
                 logger.info(f"Smart Router: Pure text detected, processing efficiently with {selected_model}")
                 is_vision_mode = False
 
@@ -2074,7 +2077,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                 has_images=is_vision_mode,
                 temperature=temperature,
                 max_tokens=VISION_MAX_OUTPUT_TOKENS if is_vision_mode else 2048,
-                requested_model="VISION_PRIMARY" if is_vision_mode else (llm_engine.TEXT_PRIMARY if request.thinking_mode else llm_engine.FAST_TEXT_PRIMARY),
+                requested_model="THINK_VISION_PRIMARY" if is_vision_mode and request.thinking_mode else "FAST_VISION_PRIMARY" if is_vision_mode else (llm_engine.THINK_CHAT_PRIMARY if request.thinking_mode else llm_engine.FAST_CHAT_PRIMARY),
                 preferred_models=(
                     llm_engine.THINK_VISION_MODEL_ORDER if is_vision_mode and request.thinking_mode else
                     llm_engine.FAST_VISION_MODEL_ORDER if is_vision_mode else
@@ -2082,6 +2085,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                     llm_engine.FAST_TEXT_MODEL_ORDER
                 ),
                 require_system_role_support=True,
+                vision_mode="think" if request.thinking_mode else "fast",
             )
             yield {"status": "preparing_response"}
             async for event in _stream_completion_events(completion_stream):
@@ -2608,6 +2612,7 @@ async def edit_message(
                                 max_tokens=300,
                                 has_images=True,
                                 stream=False,
+                                vision_mode="fast",
                             )
                             if extraction_response is not None:
                                 extracted_content = extraction_response.choices[0].message.content
@@ -2681,6 +2686,7 @@ async def edit_message(
                             max_tokens=300,
                             has_images=True,
                             stream=False,
+                            vision_mode="fast",
                         )
                         if extraction_response is not None:
                             extracted_content = extraction_response.choices[0].message.content
@@ -2793,13 +2799,13 @@ async def edit_message(
             logger.info(f"Re-generating after edit for session {payload.session_id}")
 
             if contains_image(llm_messages):
-                selected_model = llm_engine.VISION_PRIMARY
+                selected_model = llm_engine.THINK_VISION_PRIMARY if payload.thinking_mode else llm_engine.FAST_VISION_PRIMARY
                 logger.info(f"Smart Router: Images detected in context, using {selected_model}")
                 is_vision_mode = True
                 pipeline_params = _apply_vision_pipeline_budget(pipeline_params)
                 rag_chunk_count = pipeline_params["rag_chunk_count"]
             else:
-                selected_model = llm_engine.TEXT_PRIMARY if payload.thinking_mode else llm_engine.FAST_TEXT_PRIMARY
+                selected_model = llm_engine.THINK_CHAT_PRIMARY if payload.thinking_mode else llm_engine.FAST_CHAT_PRIMARY
                 logger.info(f"Smart Router: Text-only context, using {selected_model}")
                 is_vision_mode = False
             yield {"status": "thinking"}
@@ -2845,7 +2851,7 @@ async def edit_message(
                 has_images=is_vision_mode,
                 temperature=temperature,
                 max_tokens=VISION_MAX_OUTPUT_TOKENS if is_vision_mode else 2048,
-                requested_model="VISION_PRIMARY" if is_vision_mode else (llm_engine.TEXT_PRIMARY if payload.thinking_mode else llm_engine.FAST_TEXT_PRIMARY),
+                requested_model="THINK_VISION_PRIMARY" if is_vision_mode and payload.thinking_mode else "FAST_VISION_PRIMARY" if is_vision_mode else (llm_engine.THINK_CHAT_PRIMARY if payload.thinking_mode else llm_engine.FAST_CHAT_PRIMARY),
                 preferred_models=(
                     llm_engine.THINK_VISION_MODEL_ORDER if is_vision_mode and payload.thinking_mode else
                     llm_engine.FAST_VISION_MODEL_ORDER if is_vision_mode else
@@ -2853,6 +2859,7 @@ async def edit_message(
                     llm_engine.FAST_TEXT_MODEL_ORDER
                 ),
                 require_system_role_support=True,
+                vision_mode="think" if payload.thinking_mode else "fast",
             )
             yield {"status": "preparing_response"}
             async for event in _stream_completion_events(completion_stream):
@@ -3106,6 +3113,7 @@ async def regenerate_response(
                                 max_tokens=300,
                                 has_images=True,
                                 stream=False,
+                                vision_mode="fast",
                             )
                             if extraction_response is not None:
                                 extracted_content = extraction_response.choices[0].message.content
@@ -3179,6 +3187,7 @@ async def regenerate_response(
                             max_tokens=300,
                             has_images=True,
                             stream=False,
+                            vision_mode="fast",
                         )
                         if extraction_response is not None:
                             extracted_content = extraction_response.choices[0].message.content
@@ -3277,13 +3286,13 @@ async def regenerate_response(
 
             logger.info(f"Regenerating response for session {session_id}")
             if contains_image(llm_messages):
-                selected_model = llm_engine.VISION_PRIMARY
+                selected_model = llm_engine.THINK_VISION_PRIMARY if payload.thinking_mode else llm_engine.FAST_VISION_PRIMARY
                 logger.info(f"Smart Router: Images detected in context, using {selected_model}")
                 is_vision_mode = True
                 pipeline_params = _apply_vision_pipeline_budget(pipeline_params)
                 rag_chunk_count = pipeline_params["rag_chunk_count"]
             else:
-                selected_model = llm_engine.TEXT_PRIMARY if payload.thinking_mode else llm_engine.FAST_TEXT_PRIMARY
+                selected_model = llm_engine.THINK_CHAT_PRIMARY if payload.thinking_mode else llm_engine.FAST_CHAT_PRIMARY
                 logger.info(f"Smart Router: Text-only context, using {selected_model}")
                 is_vision_mode = False
             yield {"status": "thinking"}
@@ -3329,7 +3338,7 @@ async def regenerate_response(
                 has_images=is_vision_mode,
                 temperature=temperature,
                 max_tokens=VISION_MAX_OUTPUT_TOKENS if is_vision_mode else 2048,
-                requested_model="VISION_PRIMARY" if is_vision_mode else (llm_engine.TEXT_PRIMARY if payload.thinking_mode else llm_engine.FAST_TEXT_PRIMARY),
+                requested_model="THINK_VISION_PRIMARY" if is_vision_mode and payload.thinking_mode else "FAST_VISION_PRIMARY" if is_vision_mode else (llm_engine.THINK_CHAT_PRIMARY if payload.thinking_mode else llm_engine.FAST_CHAT_PRIMARY),
                 preferred_models=(
                     llm_engine.THINK_VISION_MODEL_ORDER if is_vision_mode and payload.thinking_mode else
                     llm_engine.FAST_VISION_MODEL_ORDER if is_vision_mode else
@@ -3337,6 +3346,7 @@ async def regenerate_response(
                     llm_engine.FAST_TEXT_MODEL_ORDER
                 ),
                 require_system_role_support=True,
+                vision_mode="think" if payload.thinking_mode else "fast",
             )
             yield {"status": "preparing_response"}
             async for event in _stream_completion_events(completion_stream):

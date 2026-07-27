@@ -25,6 +25,7 @@ import time
 from functools import partial
 import re
 from datetime import datetime, timezone
+import hashlib  # [IMAGE DEDUP FIX]
 
 # RAG & Extraction Imports
 from google import genai  # v1 SDK
@@ -472,27 +473,7 @@ class ProgressUpsert(BaseModel):
     current_page: int
     total_pages: int
 
-# --- Google Vision Client (OpenAI Compatible) ---
-# Note: Using Synchronous Client for background threads
-from openai import OpenAI
-
-# Initialize Google Client
-vision_client = None
-if GOOGLE_API_KEY:
-    try:
-        vision_client = OpenAI(
-            api_key=GOOGLE_API_KEY,
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
-        )
-        logger.info("[INFO] Google Vision Client Initialized")
-    except Exception as e:
-        logger.error(f"[ERROR] Failed to init Vision Client: {e}")
-else:
-    logger.warning("[WARNING] GOOGLE_API_KEY not set, Vision features will fail")
-
 # --- Global Model Constants ---
-HEAVY_VISION_MODEL = "gemma-4-31b-it"  # For images/multimodal
-FAST_TEXT_MODEL = "gemma-4-31b-it"     # For pure text
 MAX_VISION_RETRIES = 5
 VISION_RETRY_BASE_DELAY_SECONDS = 1.0
 VISION_REQUEST_THROTTLE_SECONDS = 2.1
@@ -687,10 +668,6 @@ async def analyze_image_with_llama(
 ) -> str:
     """Sends image bytes to Gemma Vision (via Google) for a concise description.
     Retries with capped exponential backoff on transient/rate-limit failures."""
-    if not vision_client:
-        logger.warning("Vision client not configured, skipping image analysis")
-        return ""
-
     base64_image = base64.b64encode(image_bytes).decode("utf-8")
     for attempt in range(MAX_VISION_RETRIES):
         try:
@@ -701,16 +678,18 @@ async def analyze_image_with_llama(
                     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
                 ]
             }]
-            messages = merge_system_into_user_sync(messages)
 
-            response = await asyncio.to_thread(
-                partial(
-                    vision_client.chat.completions.create,
-                    model=HEAVY_VISION_MODEL,
-                    messages=messages,
-                    max_tokens=500
-                )
+            response = await llm_engine.generate_completion_with_failover(
+                messages=messages,
+                temperature=0.2,
+                max_tokens=500,
+                has_images=True,
+                stream=False,
+                vision_mode="fast"
             )
+            if not response:
+                raise RuntimeError("Vision analysis failed on all clients")
+
             description = strip_thinking_tokens(response.choices[0].message.content or "")
             return f"\n\n[Visual Description: {description}]\n\n"
         except Exception as e:
@@ -749,10 +728,12 @@ async def analyze_image_with_llama(
 def process_page_images(page) -> list[bytes]:
     """Extracts valid images from a single fitz page, filtering junk."""
     valid_images = []
-    image_list = page.get_images(full=True)
+    image_list = page.get_image_info(xrefs=True)  # [IMAGE DEDUP FIX]
 
-    for img in image_list:
-        xref = img[0]
+    for img in image_list:  # [IMAGE DEDUP FIX]
+        xref = img.get("xref", 0)  # [IMAGE DEDUP FIX]
+        if not xref:  # [IMAGE DEDUP FIX]
+            continue  # [IMAGE DEDUP FIX]
         try:
             base_image = page.parent.extract_image(xref)
             image_bytes = base_image["image"]
@@ -848,9 +829,18 @@ def extract_hybrid_content(file_content: bytes, document_id: str, ingestion_run_
     page_segments = []  # [PAGE TRACKING]
 
     # --- Pre-scan: Count total images to know denominator ---
+    seen_image_hashes: set[str] = set()  # [IMAGE DEDUP FIX]
     total_images = 0
+    prescan_seen_hashes: set[str] = set()  # [IMAGE DEDUP FIX]
+    page_images_cache: list[list[bytes]] = []  # [IMAGE EXTRACT DEDUP-CALL FIX]
     for page in doc:
-        total_images += len(process_page_images(page))
+        p_images = process_page_images(page)  # [IMAGE EXTRACT DEDUP-CALL FIX]
+        page_images_cache.append(p_images)  # [IMAGE EXTRACT DEDUP-CALL FIX]
+        for img_bytes in p_images:  # [IMAGE EXTRACT DEDUP-CALL FIX]
+            img_hash = hashlib.md5(img_bytes).hexdigest()  # [IMAGE DEDUP FIX]
+            if img_hash not in prescan_seen_hashes:  # [IMAGE DEDUP FIX]
+                prescan_seen_hashes.add(img_hash)  # [IMAGE DEDUP FIX]
+                total_images += 1  # [IMAGE DEDUP FIX]
     
     total_steps = total_pages + total_images
     steps_done = 0
@@ -876,8 +866,13 @@ def extract_hybrid_content(file_content: bytes, document_id: str, ingestion_run_
         logger.info(f"[INFO] Page {page_num + 1}/{total_pages} text extracted ({extraction_pct}%)")
 
         # Queue valid images for sequential vision analysis
-        images = process_page_images(page)
+        images = page_images_cache[page_num]  # [IMAGE EXTRACT DEDUP-CALL FIX]
         for img_bytes in images:
+            img_hash = hashlib.md5(img_bytes).hexdigest()  # [IMAGE DEDUP FIX]
+            if img_hash in seen_image_hashes:  # [IMAGE DEDUP FIX]
+                logger.info(f"[INFO] Skipping duplicate image from page {page_num + 1}")  # [IMAGE DEDUP FIX]
+                continue  # [IMAGE DEDUP FIX]
+            seen_image_hashes.add(img_hash)  # [IMAGE DEDUP FIX]
             pending_images.append((page_num + 1, img_bytes))
             logger.info(f"[INFO] Queued image from page {page_num + 1}")
 
@@ -919,7 +914,7 @@ async def generate_document_sections(
 ) -> bool:
     """
     Asynchronously generates a logical, topic-based section outline for the document
-    using the TEXT_PRIMARY LLM and saves it to the document_sections table.
+    using the main LLM and saves it to the document_sections table.
     Ensures heartbeats are sent so recovery worker does not reap the job.
     """
     try:
@@ -995,7 +990,7 @@ async def generate_document_sections(
             has_images=False,
             stream=False,
             force_google=False,
-            requested_model=llm_engine.TEXT_PRIMARY,
+            requested_model=llm_engine.THINK_CHAT_PRIMARY,
             response_format={"type": "json_object"},
             audit_meta={"document_id": document_id, "request_type": "document_processing", "action": "generate_document_sections"}
         )
