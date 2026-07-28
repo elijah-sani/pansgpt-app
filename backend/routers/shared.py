@@ -1024,7 +1024,7 @@ async def get_relevant_context(
         if rag_match_count is not None:  # [AGENTIC LAYER]
             _resolved_match_count = rag_match_count  # [AGENTIC LAYER]
         else:  # [AGENTIC LAYER]
-            _resolved_match_count = 20 if is_broad_query else 4  # [AGENTIC LAYER - superseded heuristic]
+            _resolved_match_count = 20 if is_broad_query else 6  # [AGENTIC LAYER - superseded heuristic]
         rag_match_count = _resolved_match_count  # [AGENTIC LAYER]
         rag_threshold = 0.25 if is_broad_query else match_threshold
 
@@ -1527,7 +1527,7 @@ STREAMING_PLANNER_DEFAULTS = {
 }
 
 FAST_MODE_DEFAULTS = {
-    "rag_chunk_count": 4,
+    "rag_chunk_count": 6,
     "run_web_search": False,
     "fetch_timetable": False,
     "fetch_faculty": True,
