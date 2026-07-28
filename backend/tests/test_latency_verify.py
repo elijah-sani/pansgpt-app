@@ -33,11 +33,11 @@ async def test_llm_engine_routing():
          patch("services.llm_engine.openrouter_client", mock_openrouter), \
          patch("services.llm_engine.groq_text_client", mock_groq_text):
         
-        # Test 1: Requested model FAST_CHAT_PRIMARY (Fast Mode - Groq text)
+        # Test 1: Requested model FAST_CHAT_PRIMARY (Fast Mode - Google AI Studio)
         messages = [{"role": "user", "content": "hello"}]
         
-        # We simulate groq_text_client success
-        mock_groq_text.chat.completions.create.return_value = AsyncMock()
+        # We simulate google_client success
+        mock_google.chat.completions.create.return_value = AsyncMock()
         
         await llm_engine.generate_completion_with_failover(
             messages=messages,
@@ -46,8 +46,8 @@ async def test_llm_engine_routing():
             requested_model="FAST_CHAT_PRIMARY",
         )
         
-        # Check that it called the Groq text client
-        mock_groq_text.chat.completions.create.assert_called_with(
+        # Check that it called the Google AI Studio client
+        mock_google.chat.completions.create.assert_called_with(
             model=llm_engine.FAST_CHAT_PRIMARY,
             messages=messages,
             temperature=0.7,

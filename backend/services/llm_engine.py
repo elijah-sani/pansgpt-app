@@ -15,10 +15,10 @@ OPENROUTER_FALLBACK_MAX_TOKENS = 1024
 # ---------------------------------------------------------------------------
 
 # Fast Chat Stack
-FAST_CHAT_PRIMARY = "openai/gpt-oss-120b"                  # Groq (500+ tok/s MoE)
-FAST_CHAT_SECONDARY = "nvidia/nemotron-3-super-120b-a12b:free" # OpenRouter (Ultra-fast 1M context)
-FAST_CHAT_TERTIARY = "llama-3.3-70b-versatile"               # Groq (Stable fallback)
-FAST_CHAT_QUATERNARY = "gemma-4-26b-a4b-it"                 # Google AI Studio (thinking: False)
+FAST_CHAT_PRIMARY = "gemma-4-26b-a4b-it"                 # Google AI Studio (thinking: False)
+FAST_CHAT_SECONDARY = "openai/gpt-oss-120b"               # Groq (500+ tok/s MoE)
+FAST_CHAT_TERTIARY = "nvidia/nemotron-3-super-120b-a12b:free" # OpenRouter (Ultra-fast 1M context)
+FAST_CHAT_QUATERNARY = "llama-3.3-70b-versatile"            # Groq (Stable fallback)
 
 # Think Chat Stack
 THINK_CHAT_PRIMARY = "nvidia/nemotron-3-ultra-550b-a55b:free" # OpenRouter (Elite 550B reasoning)
