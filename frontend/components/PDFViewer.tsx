@@ -556,7 +556,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     const handleGoToPage = () => {
         const target = parseInt(goToPageInput, 10);
         if (!isNaN(target) && target >= 1 && target <= numPages) {
-            document.getElementById(`page-container-${target}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            document.getElementById(`page-container-${fileId}-${target}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
         setShowGoToPage(false);
         setGoToPageInput('');
@@ -714,7 +714,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         const visibilityMap = new Map<number, number>(); // pageNum -> intersectionRatio
 
         for (let i = 1; i <= numPages; i++) {
-            const el = document.getElementById(`page-container-${i}`);
+            const el = document.getElementById(`page-container-${fileId}-${i}`);
             if (!el) continue;
 
             const observer = new IntersectionObserver(
@@ -743,7 +743,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         }
 
         return () => observers.forEach(obs => obs.disconnect());
-    }, [numPages]);
+    }, [numPages, fileId]);
 
     // --- FETCH SAVED PROGRESS & AUTO-RESUME ---
     // localStorage key: pansgpt_progress_{fileId} => { current_page, total_pages }
@@ -765,7 +765,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 if (cached.current_page > 1) {
                     restoredPage = cached.current_page;
                     setTimeout(() => {
-                        const target = document.getElementById(`page-container-${restoredPage}`);
+                        const target = document.getElementById(`page-container-${fileId}-${restoredPage}`);
                         if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
                     }, 400);
                 }
@@ -783,7 +783,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
             // Only scroll if network value differs meaningfully from what we already restored
             if (savedPage > 1 && savedPage !== restoredPage) {
                 setTimeout(() => {
-                    const target = document.getElementById(`page-container-${savedPage}`);
+                    const target = document.getElementById(`page-container-${fileId}-${savedPage}`);
                     if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 }, 400);
             }
@@ -798,6 +798,34 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         restoreProgress();
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [numPages, fileId]);
+
+    // Keyboard navigation (ArrowLeft / ArrowRight)
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (viewerContainerRef.current?.closest('.hidden')) return;
+            const activeElement = document.activeElement as HTMLElement | null;
+            const isEditable = activeElement && (() => {
+                const el = activeElement;
+                const tag = el.tagName.toLowerCase();
+                if (tag === 'textarea' || tag === 'input' || tag === 'select') return true;
+                if (el.isContentEditable) return true;
+                return Boolean(el.closest('textarea, input, select, [contenteditable="true"], [role="textbox"]'));
+            })();
+            if (isEditable) return;
+
+            if (e.key === 'ArrowRight') {
+                e.preventDefault();
+                const next = Math.min(currentPage + 1, numPages);
+                document.getElementById(`page-container-${fileId}-${next}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } else if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                const prev = Math.max(currentPage - 1, 1);
+                document.getElementById(`page-container-${fileId}-${prev}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        };
+        document.addEventListener('keydown', handleKeyDown);
+        return () => document.removeEventListener('keydown', handleKeyDown);
+    }, [currentPage, numPages, fileId]);
 
     // --- DEBOUNCED PROGRESS SAVE ---
     // Saves to localStorage immediately (synchronous), then to the backend after 2.5s idle.
@@ -2078,7 +2106,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
     };
 
     const handleJumpToSource = (source: { page: number; rect?: NoteSourceRect }) => {
-        const pageElement = document.getElementById(`page-container-${source.page}`) as HTMLElement | null;
+        const pageElement = document.getElementById(`page-container-${fileId}-${source.page}`) as HTMLElement | null;
         if (!pageElement || !pdfWrapperRef.current) return;
 
         pageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -2613,7 +2641,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                             {Array.from(new Array(numPages), (el, index) => (
                                                 <div
                                                     key={`page_${index + 1}`}
-                                                    id={`page-container-${index + 1}`}
+                                                    id={`page-container-${fileId}-${index + 1}`}
                                                     data-page-number={index + 1}
                                                     className="relative mb-4 md:mb-6 shadow-none md:shadow-2xl rounded-2xl md:rounded-sm overflow-hidden w-full flex justify-center transition-transform duration-200"
                                                 >
@@ -2905,7 +2933,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                     <button
                                         onClick={() => {
                                             const prev = Math.max(1, currentPage - 1);
-                                            document.getElementById(`page-container-${prev}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                            document.getElementById(`page-container-${fileId}-${prev}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
                                         }}
                                         disabled={currentPage <= 1}
                                         className="p-1 rounded-full text-muted-foreground hover:text-foreground hover:bg-background disabled:opacity-30 disabled:cursor-not-allowed transition-all"
@@ -2922,7 +2950,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                     <button
                                         onClick={() => {
                                             const next = Math.min(numPages, currentPage + 1);
-                                            document.getElementById(`page-container-${next}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                            document.getElementById(`page-container-${fileId}-${next}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
                                         }}
                                         disabled={currentPage >= numPages}
                                         className="p-1 rounded-full text-muted-foreground hover:text-foreground hover:bg-background disabled:opacity-30 disabled:cursor-not-allowed transition-all"
