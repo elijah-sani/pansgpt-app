@@ -35,6 +35,7 @@ import { clearAdminWorkspaceUniversity } from '@/lib/admin-workspace';
 import { supabase } from '@/lib/supabase';
 import { useReaderCache, type ReaderDocument } from '@/lib/ReaderCacheContext';
 import { fetchBootstrap } from '@/lib/bootstrap-cache';
+import { useDocumentTabs } from '@/lib/DocumentTabsContext'; // [DESKTOP TABS]
 
 interface PDFDocument {
     id: number;
@@ -171,6 +172,7 @@ function DocumentThumbnail({ doc }: { doc: PDFDocument }) {
 
 export default function DesktopHomeContent() {
     const openSidebar = useSidebarTrigger();
+    const { openTab } = useDocumentTabs(); // [DESKTOP TABS]
     const {
         documents,
         setDocuments,
@@ -568,7 +570,25 @@ export default function DesktopHomeContent() {
     const handleOpenReader = (doc: PDFDocument) => {
         setLoadingDocId(doc.drive_file_id);
         setLastOpenedDocument(doc as ReaderDocument);
-        router.push(`/reader/${doc.drive_file_id}?size=${doc.file_size || ''}&course=${doc.course_code || ''}`);
+        if (typeof window !== 'undefined' && window.innerWidth >= 768) {
+            // [DESKTOP TABS] Open document in multi-document tab strip
+            openTab({
+                id: doc.drive_file_id,
+                title: doc.topic || doc.title || doc.file_name || 'Document',
+                drive_file_id: doc.drive_file_id,
+                course_code: doc.course_code,
+                course_title: doc.course_title,
+                lecturer_name: doc.lecturer_name,
+                topic: doc.topic,
+                file_name: doc.file_name,
+                file_size: doc.file_size,
+                academic_session: doc.academic_session,
+                semester: doc.semester,
+                db_id: doc.id,
+            });
+        } else {
+            router.push(`/reader/${doc.drive_file_id}?size=${doc.file_size || ''}&course=${doc.course_code || ''}`);
+        }
     };
 
     // Toggle star local storage state
@@ -1447,6 +1467,7 @@ export default function DesktopHomeContent() {
                                     onClick={() => {
                                         if (window.innerWidth >= 768) {
                                             selectDocument(item);
+                                            handleOpenReader(item);
                                         } else {
                                             handleOpenReader(item);
                                         }
@@ -1585,6 +1606,7 @@ export default function DesktopHomeContent() {
                                             onClick={() => {
                                                 if (window.innerWidth >= 768) {
                                                     selectDocument(item);
+                                                    handleOpenReader(item);
                                                 } else {
                                                     handleOpenReader(item);
                                                 }
