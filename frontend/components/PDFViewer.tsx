@@ -2347,7 +2347,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         `}</style>
         <div
             ref={viewerContainerRef}
-            className="pdf-viewer-root flex flex-col h-[100dvh] bg-background relative overflow-hidden font-sans"
+            className="pdf-viewer-root flex flex-col h-full w-full bg-background relative overflow-hidden font-sans"
             onContextMenu={(e) => e.preventDefault()}
             onTouchStart={() => setSelectionMenu(null)}
 
@@ -2458,7 +2458,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
 
                     {/* Desktop Header */}
-                    <div className="hidden md:flex fixed top-0 left-0 right-0 h-16 bg-card border-b border-border z-30 items-center justify-between px-6 shadow-sm">
+                    <div className="hidden md:flex sticky top-0 w-full shrink-0 h-16 bg-card border-b border-border z-30 items-center justify-between px-6 shadow-sm">
                         <div className="flex items-center gap-4">
                             <button
                                 onClick={() => {
@@ -2466,7 +2466,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                     if (course) {
                                         router.push(`/reader?course=${course}`);
                                     } else {
-                                        router.push('/reader');
+                                        router.push('/study');
                                     }
                                 }}
                                 className="p-2 hover:bg-muted/50 rounded-lg text-muted-foreground hover:text-foreground transition-colors"
@@ -2506,7 +2506,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                     </div>
 
                     {/* Main Content Area */}
-                    <div className={`flex-1 flex md:pt-16 h-full overflow-hidden transition-all duration-300 ${mobileHeaderVisible ? 'pt-14' : 'pt-0'}`}>
+                    <div className={`flex-1 flex h-full min-h-0 overflow-hidden transition-all duration-300 ${mobileHeaderVisible ? 'pt-14 md:pt-0' : 'pt-0'}`}>
 
                         {/* PDF Area Wrapper */}
                         <div className="flex-1 min-w-0 relative h-full flex flex-col">
