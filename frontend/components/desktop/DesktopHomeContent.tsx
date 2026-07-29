@@ -1467,7 +1467,6 @@ export default function DesktopHomeContent() {
                                     onClick={() => {
                                         if (window.innerWidth >= 768) {
                                             selectDocument(item);
-                                            handleOpenReader(item);
                                         } else {
                                             handleOpenReader(item);
                                         }
@@ -1495,6 +1494,7 @@ export default function DesktopHomeContent() {
                                             <span 
                                                 onClick={(e) => {
                                                     e.stopPropagation();
+                                                    selectDocument(item);
                                                     handleOpenReader(item);
                                                 }}
                                                 className="text-[11px] font-bold text-foreground leading-tight line-clamp-2 flex-1 hover:text-primary hover:underline transition-colors cursor-pointer"
@@ -1606,7 +1606,6 @@ export default function DesktopHomeContent() {
                                             onClick={() => {
                                                 if (window.innerWidth >= 768) {
                                                     selectDocument(item);
-                                                    handleOpenReader(item);
                                                 } else {
                                                     handleOpenReader(item);
                                                 }
@@ -1630,6 +1629,7 @@ export default function DesktopHomeContent() {
                                                         <h4 
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
+                                                                selectDocument(item);
                                                                 handleOpenReader(item);
                                                             }}
                                                             className="text-sm font-semibold truncate hover:text-primary hover:underline transition-colors pr-2 cursor-pointer"

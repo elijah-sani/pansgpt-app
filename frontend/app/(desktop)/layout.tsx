@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { DesktopMainHeader } from "@/components/desktop/DesktopMainHeader";
 import { DesktopTitleBar } from "@/components/desktop/DesktopTitleBar"; // [DESKTOP CUSTOM TITLEBAR]
 import DesktopSidebar from "@/components/desktop/DesktopSidebar";
-import { DocumentTabsProvider } from "@/lib/DocumentTabsContext";
+import { DocumentTabsProvider, useDocumentTabs } from "@/lib/DocumentTabsContext"; // [DESKTOP UI]
 import SearchChatsModal from "@/components/SearchChatsModal";
 import SettingsModal from "@/components/SettingsModal";
 import ReportProblemModal from "@/components/ReportProblemModal";
@@ -26,9 +26,20 @@ import { StudentRestrictionBlocker } from "@/components/StudentRestrictionBlocke
 import UniversitySuspendedBlocker from "@/components/UniversitySuspendedBlocker";
 
 export default function DesktopLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <DocumentTabsProvider>
+      <DesktopLayoutContent>{children}</DesktopLayoutContent>
+    </DocumentTabsProvider>
+  );
+}
+
+function DesktopLayoutContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { activeSessionId, setActiveSessionId, sessions, clearHistory } = useChatSession();
+  const { openTabs, activeTabId } = useDocumentTabs(); // [DESKTOP UI]
+
+  const isDocTabActive = Boolean(activeTabId && openTabs.some((t) => t.id === activeTabId));
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
@@ -132,58 +143,62 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
   }
 
   return (
-    <DocumentTabsProvider>
+    <>
       <div className="desktop-shell flex flex-col h-[100dvh] w-full overflow-hidden bg-background select-none">
         {/* Custom Frameless Title Bar (Notion Style) */}
         <DesktopTitleBar onOpenSidebar={() => setIsSidebarOpen((prev) => !prev)} />
 
-        {/* Desktop Global Top Header */}
-        <DesktopMainHeader
-          desktopOnly
-          activeSessionId={activeSessionId}
-          isProfileOpen={isProfileSidebarOpen}
-          onNewChat={handleNewChat}
-          onOpenProfile={() => setIsProfileSidebarOpen(true)} // [DESKTOP UI]
-          onOpenSidebar={() => setIsSidebarOpen((prev) => !prev)}
-          onSearchOpen={() => setIsSearchModalOpen(true)}
-          sessions={sessions}
-          user={shellUser}
-        />
+        {/* Desktop Global Top Header — Hidden when a document tab is active */}
+        {!isDocTabActive && (
+          <DesktopMainHeader
+            desktopOnly
+            activeSessionId={activeSessionId}
+            isProfileOpen={isProfileSidebarOpen}
+            onNewChat={handleNewChat}
+            onOpenProfile={() => setIsProfileSidebarOpen(true)} // [DESKTOP UI]
+            onOpenSidebar={() => setIsSidebarOpen((prev) => !prev)}
+            onSearchOpen={() => setIsSearchModalOpen(true)}
+            sessions={sessions}
+            user={shellUser}
+          />
+        )}
 
-        {/* Main Body with Desktop Sidebar */}
+        {/* Main Body with Desktop Sidebar — Sidebar hidden when a document tab is active */}
         <div className="flex flex-1 min-h-0 w-full overflow-hidden">
-          <LocalErrorBoundary
-            boundaryName="desktop-app-sidebar"
-            fallback={({ error, retry }) => (
-              <div className="hidden h-full w-[22rem] shrink-0 border-r border-border bg-card/90 md:flex md:items-center md:justify-center md:p-4">
-                <ErrorRecoveryView
-                  title="Sidebar unavailable"
-                  description="The desktop sidebar hit an unexpected problem."
-                  errorMessage={error.message}
-                  retryLabel="Retry Sidebar"
-                  onRetry={retry}
-                  secondaryLabel="Go Home"
-                  onSecondaryAction={() => router.push("/study")}
-                />
-              </div>
-            )}
-          >
-            <DesktopSidebar
-              isOpen={isSidebarOpen}
-              onClose={() => setIsSidebarOpen((prev) => !prev)}
-              onSearchOpen={() => setIsSearchModalOpen(true)}
-              onOpenReportProblem={() => setIsReportProblemOpen(true)}
-              onOpenSettings={() => setIsSettingsOpen(true)}
-              onDeleteRequest={(id) => {
-                setDeleteTargetId(id);
-                setIsDeleteModalOpen(true);
-              }}
-              onRenameRequest={(id, title) => {
-                setRenamingChatId(id);
-                setRenameDraft(title);
-              }}
-            />
-          </LocalErrorBoundary>
+          {!isDocTabActive && (
+            <LocalErrorBoundary
+              boundaryName="desktop-app-sidebar"
+              fallback={({ error, retry }) => (
+                <div className="hidden h-full w-[22rem] shrink-0 border-r border-border bg-card/90 md:flex md:items-center md:justify-center md:p-4">
+                  <ErrorRecoveryView
+                    title="Sidebar unavailable"
+                    description="The desktop sidebar hit an unexpected problem."
+                    errorMessage={error.message}
+                    retryLabel="Retry Sidebar"
+                    onRetry={retry}
+                    secondaryLabel="Go Home"
+                    onSecondaryAction={() => router.push("/study")}
+                  />
+                </div>
+              )}
+            >
+              <DesktopSidebar
+                isOpen={isSidebarOpen}
+                onClose={() => setIsSidebarOpen((prev) => !prev)}
+                onSearchOpen={() => setIsSearchModalOpen(true)}
+                onOpenReportProblem={() => setIsReportProblemOpen(true)}
+                onOpenSettings={() => setIsSettingsOpen(true)}
+                onDeleteRequest={(id) => {
+                  setDeleteTargetId(id);
+                  setIsDeleteModalOpen(true);
+                }}
+                onRenameRequest={(id, title) => {
+                  setRenamingChatId(id);
+                  setRenameDraft(title);
+                }}
+              />
+            </LocalErrorBoundary>
+          )}
 
           <main className="flex-1 min-w-0 overflow-x-hidden overflow-y-auto overscroll-none">
             {children}
@@ -291,6 +306,6 @@ export default function DesktopLayout({ children }: { children: React.ReactNode 
           onClose={() => setIsReportProblemOpen(false)}
         />
       )}
-    </DocumentTabsProvider>
+    </>
   );
 }

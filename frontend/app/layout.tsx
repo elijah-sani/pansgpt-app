@@ -11,6 +11,7 @@ import { ChatSessionProvider } from "@/lib/ChatSessionContext";
 import { SessionRefresher } from "@/components/SessionRefresher";
 import SplashScreenRemover from "@/components/SplashScreenRemover";
 import { Toaster } from "sonner";
+import { DesktopStandaloneTitleBar } from "@/components/desktop/DesktopStandaloneTitleBar"; // [DESKTOP UI]
 
 const BRAND_COLOR = "#101010";
 
@@ -100,6 +101,7 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <ErrorBoundary>
+            <DesktopStandaloneTitleBar />
             <MaintenanceGuard>
               <ProfileGuard>
                 <SessionRefresher />
