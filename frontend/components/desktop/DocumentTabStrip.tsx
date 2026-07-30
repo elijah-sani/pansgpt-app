@@ -1,25 +1,34 @@
-// [DESKTOP UI] Compact integrated document tab strip (Notion style)
 "use client";
 
 import React from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { X, FileText, Plus } from "lucide-react";
 import { useDocumentTabs } from "@/lib/DocumentTabsContext";
 
 export function DocumentTabStrip() {
+  const router = useRouter();
+  const pathname = usePathname();
   const { openTabs, activeTabId, setActiveTabId, closeTab } = useDocumentTabs();
 
   if (!openTabs || openTabs.length === 0) {
     return null;
   }
 
+  const handleSelectTab = (id: string) => {
+    setActiveTabId(id);
+    if (pathname !== "/study") {
+      router.push("/study");
+    }
+  };
+
   return (
     <div className="flex items-end gap-1 overflow-x-auto no-scrollbar select-none h-[32px] shrink-0 max-w-full">
       {openTabs.map((tab) => {
-        const isActive = tab.id === activeTabId;
+        const isActive = tab.id === activeTabId && pathname === "/study";
         return (
           <div
             key={tab.id}
-            onClick={() => setActiveTabId(tab.id)}
+            onClick={() => handleSelectTab(tab.id)}
             className={`group relative flex items-center gap-1.5 px-3 h-[32px] rounded-t-md rounded-b-none text-xs transition-all duration-150 max-w-[180px] shrink-0 cursor-pointer ${
               isActive
                 ? "bg-card text-foreground font-semibold border-t border-l border-r border-border/50 border-b-0 shadow-2xs"
