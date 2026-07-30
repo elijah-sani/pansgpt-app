@@ -177,7 +177,7 @@ export default function QuizPage() {
   const totalPoints = analytics?.totalPoints ?? allResults.reduce((sum, entry) => sum + (entry.result?.score || 0), 0);
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="h-full overflow-hidden flex flex-col bg-background text-foreground">
       <div className="sticky top-0 z-10 flex items-center border-b border-border bg-card/95 px-4 py-3 backdrop-blur-sm md:hidden">
         <button onClick={openSidebar} className="mr-2 rounded-lg p-2 text-foreground transition-colors hover:bg-accent">
           <PanelLeft size={20} />
@@ -185,7 +185,7 @@ export default function QuizPage() {
         <span className="text-sm font-semibold">Quiz</span>
       </div>
 
-      <main className="mx-auto flex w-full max-w-[23.5rem] flex-col gap-6 px-5 pb-12 pt-6 sm:max-w-[26rem] sm:px-6 md:max-w-7xl md:gap-8 md:px-8 md:py-10 lg:px-8">
+      <main className="mx-auto flex w-full max-w-[23.5rem] flex-1 flex-col gap-6 px-5 pb-8 pt-6 sm:max-w-[26rem] sm:px-6 md:max-w-7xl md:gap-8 md:px-8 md:py-10 lg:px-8 overflow-y-auto">
         <header className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
           <div className="max-w-2xl">
             <h1 className="hidden text-3xl font-semibold tracking-tight text-foreground md:block md:text-4xl md:font-bold">Quiz</h1>

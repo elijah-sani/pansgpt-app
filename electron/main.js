@@ -97,11 +97,10 @@ function waitForServer(port, timeoutMs = 15000) { // [ELECTRON PHASE 1]
         delay = Math.min(delay * 1.5, 2000); // [ELECTRON PHASE 1] cap at 2s
         setTimeout(attempt, delay); // [ELECTRON PHASE 1]
       }); // [ELECTRON PHASE 1]
-      // [ELECTRON PHASE 1 RELIABILITY] Per-request HTTP timeout increased from 1000ms to 5000ms.
-      // Next.js cold-boot first-route compilation takes 1.5s-2.5s; 1000ms was prematurely aborting healthy requests.
-      req.setTimeout(5000, () => { // [ELECTRON PHASE 1 RELIABILITY]
-        req.destroy(); // [ELECTRON PHASE 1]
-      }); // [ELECTRON PHASE 1]
+      // [ELECTRON PHASE 1 RELIABILITY] Per-request HTTP timeout increased to 15000ms for cold-boot route setup.
+      req.setTimeout(15000, () => {
+        req.destroy();
+      });
     } // [ELECTRON PHASE 1]
 
     attempt(); // [ELECTRON PHASE 1]
@@ -304,7 +303,7 @@ app.whenReady().then(async () => { // [ELECTRON PHASE 1]
     // Poll until the server is ready before showing the window
     try { // [ELECTRON PHASE 1]
       console.log(`[ELECTRON PHASE 1 RELIABILITY] [${new Date().toISOString()}] Starting server poll loop on port ${port}...`); // [ELECTRON PHASE 1 RELIABILITY]
-      await waitForServer(port, 45000); // [ELECTRON API CONFIG] 45s safety ceiling for cold-boot route setup under load
+      await waitForServer(port, 90000); // [ELECTRON API CONFIG] 90s safety ceiling for cold-boot route setup under load
       const elapsed = Date.now() - spawnStartTime; // [ELECTRON PHASE 1 RELIABILITY]
       console.log(`[ELECTRON PHASE 1 RELIABILITY] [+${elapsed}ms] Server poll loop SUCCESS! Server is listening on http://127.0.0.1:${port}`); // [ELECTRON PHASE 1 RELIABILITY]
     } catch (err) { // [ELECTRON PHASE 1]

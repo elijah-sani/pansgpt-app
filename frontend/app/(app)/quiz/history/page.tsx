@@ -10,7 +10,7 @@ export default function QuizHistoryPage() {
   const { setPendingPath } = useChatSession();
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="h-full overflow-y-auto bg-background text-foreground">
       <div className="sticky top-0 z-10 flex items-center border-b border-border bg-card/95 px-4 py-3 backdrop-blur-sm md:hidden">
         <button onClick={() => { setPendingPath("/quiz"); router.push("/quiz"); }} className="mr-2 rounded-lg p-2 text-foreground transition-colors hover:bg-accent" aria-label="Back to Quiz">
           <ArrowLeft size={20} />

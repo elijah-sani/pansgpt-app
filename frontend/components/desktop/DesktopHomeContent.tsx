@@ -185,11 +185,12 @@ export default function DesktopHomeContent() {
             const stored = localStorage.getItem('study_mode_cached_docs');
             if (stored) {
                 try {
-                    return JSON.parse(stored);
+                    const parsed = JSON.parse(stored);
+                    if (Array.isArray(parsed)) return parsed;
                 } catch (e) {}
             }
         }
-        return documents as PDFDocument[];
+        return (Array.isArray(documents) ? documents : []) as PDFDocument[];
     });
     const [loading, setLoading] = useState(() => {
         if (typeof window !== 'undefined') {
@@ -199,6 +200,7 @@ export default function DesktopHomeContent() {
         return !hasLoadedDocuments;
     });
     const [error, setError] = useState<string | null>(null);
+    const [isRefreshing, setIsRefreshing] = useState(false);
     const [, setMaintenanceMode] = useState(false);
     
     // Progress: drive_file_id -> { current_page, total_pages, updated_at }
@@ -329,6 +331,9 @@ export default function DesktopHomeContent() {
             return;
         }
 
+        setIsRefreshing(true);
+        const startTime = Date.now();
+
         // Only set full loading screen if we don't have any cached docs to display
         if (docs.length === 0) {
             setLoading(true);
@@ -357,7 +362,13 @@ export default function DesktopHomeContent() {
                 setError(err instanceof Error ? err.message : 'Failed to connect to backend.');
             }
         } finally {
-            setLoading(false);
+            // Ensure minimum rotation duration of 600ms for smooth user feedback
+            const elapsed = Date.now() - startTime;
+            const remaining = Math.max(0, 600 - elapsed);
+            setTimeout(() => {
+                setIsRefreshing(false);
+                setLoading(false);
+            }, remaining);
         }
     };
 
@@ -430,13 +441,14 @@ export default function DesktopHomeContent() {
 
     // List of unique course codes for sidebar folder view
     const courseFolders = useMemo(() => {
-        const folders = Array.from(new Set(docs.map(d => d.course_code).filter(Boolean)));
+        const safeDocs = Array.isArray(docs) ? docs : [];
+        const folders = Array.from(new Set(safeDocs.map(d => d?.course_code).filter(Boolean)));
         return folders.sort();
     }, [docs]);
 
     const activeCourseTitle = useMemo(() => {
-        if (!activeCourse) return null;
-        const matchingDoc = docs.find((d) => d.course_code === activeCourse);
+        if (!activeCourse || !Array.isArray(docs)) return null;
+        const matchingDoc = docs.find((d) => d?.course_code === activeCourse);
         return matchingDoc?.title || null;
     }, [docs, activeCourse]);
 
@@ -555,12 +567,12 @@ export default function DesktopHomeContent() {
     // Nav helpers
     const selectTab = (tab: string) => {
         setSelectedDoc(null);
-        router.push(`/reader?tab=${tab}`);
+        router.push(`/study?tab=${tab}`);
     };
 
     const selectCourse = (code: string) => {
         setSelectedDoc(null);
-        router.push(`/reader?course=${code}`);
+        router.push(`/study?course=${code}`);
     };
 
     const selectDocument = (doc: PDFDocument) => {
@@ -636,7 +648,7 @@ export default function DesktopHomeContent() {
     };
 
     return (
-        <div className="flex h-screen w-full overflow-hidden bg-background text-foreground transition-colors duration-500">
+        <div className="flex h-full w-full overflow-hidden bg-background text-foreground transition-colors duration-500">
             {/* 1. LEFT LOCAL SIDEBAR - DESKTOP ONLY */}
             <aside className="hidden md:flex flex-col w-64 shrink-0 border-r border-border/60 bg-card/35 backdrop-blur-md">
                 {/* Title */}
@@ -730,10 +742,11 @@ export default function DesktopHomeContent() {
                                 </h1>
                                 <button
                                     onClick={() => fetchDocs(true)}
-                                    className="p-1.5 hover:bg-accent rounded-lg text-muted-foreground hover:text-foreground transition-colors ml-1"
+                                    disabled={isRefreshing}
+                                    className="p-1.5 hover:bg-accent rounded-lg text-muted-foreground hover:text-foreground transition-colors ml-1 disabled:opacity-50"
                                     title="Reload Documents"
                                 >
-                                    <RefreshCw className="h-4 w-4" />
+                                    <RefreshCw className={`h-4 w-4 transition-transform duration-300 ${isRefreshing ? 'animate-spin text-primary' : ''}`} />
                                 </button>
                             </div>
 
@@ -1082,7 +1095,7 @@ export default function DesktopHomeContent() {
                                                             <div className="space-y-3.5">
                                                                 <div className="flex items-center justify-between pl-1">
                                                                     <button
-                                                                        onClick={() => router.push('/reader?tab=courses')}
+                                                                        onClick={() => router.push('/study?tab=courses')}
                                                                         className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground hover:text-foreground transition-colors"
                                                                     >
                                                                         <ArrowLeft className="h-3.5 w-3.5" />
@@ -1201,7 +1214,7 @@ export default function DesktopHomeContent() {
                                             <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80 pl-1">
                                                 Courses ({displaySearchCourses.length})
                                             </h3>
-                                            <div className="grid grid-cols-2 gap-3.5 md:grid-cols-5">
+                                            <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-3.5">
                                                 {displaySearchCourses.map(folder => (
                                                     <div
                                                         key={`search-folder-card-${folder}`}
@@ -1343,12 +1356,12 @@ export default function DesktopHomeContent() {
             </section>
 
             {/* 3. RIGHT DETAILS SIDEBAR - DESKTOP ONLY */}
-            <aside className="hidden xl:flex flex-col w-80 shrink-0 border-l border-border/60 bg-card/35 backdrop-blur-md overflow-y-auto">
+            <aside className="hidden xl:flex flex-col w-80 shrink-0 border-l border-border/60 bg-card/35 backdrop-blur-md h-full overflow-hidden">
                 {selectedDoc ? (
-                    <div className="p-6 flex flex-col h-full">
-                        {/* Header Details */}
-                        <div className="flex items-center justify-between mb-8">
-                            <h3 className="text-sm font-bold uppercase tracking-wider text-muted-foreground/80">File Information</h3>
+                    <div className="flex flex-col h-full overflow-hidden">
+                        {/* Header Details - Fixed top */}
+                        <div className="p-5 pb-3 flex items-center justify-between shrink-0 border-b border-border/40">
+                            <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80">File Information</h3>
                             <button
                                 onClick={() => setSelectedDoc(null)}
                                 className="p-1 hover:bg-accent rounded-lg text-muted-foreground hover:text-foreground transition-colors"
@@ -1357,78 +1370,81 @@ export default function DesktopHomeContent() {
                             </button>
                         </div>
 
-                        {/* Large Preview */}
-                        <div className="flex flex-col items-center justify-center p-8 bg-muted/30 border border-border/40 rounded-2xl mb-6 text-center">
-                            <div className="w-full aspect-[4/3] rounded-xl overflow-hidden shadow-sm">
-                                <DocumentThumbnail doc={selectedDoc} />
+                        {/* Middle Details - Scrollable */}
+                        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                            {/* Large Preview */}
+                            <div className="flex flex-col items-center justify-center p-6 bg-muted/30 border border-border/40 rounded-2xl text-center">
+                                <div className="w-full aspect-[4/3] rounded-xl overflow-hidden shadow-sm">
+                                    <DocumentThumbnail doc={selectedDoc} />
+                                </div>
+                            </div>
+
+                            {/* Title and stats */}
+                            <div className="space-y-4">
+                                <div>
+                                    <h2 className="text-base font-bold tracking-tight text-foreground leading-tight font-outfit">{selectedDoc.topic}</h2>
+                                    <p className="text-xs text-muted-foreground mt-1 truncate">{selectedDoc.title}</p>
+                                </div>
+
+                                <hr className="border-border/40" />
+
+                                <div className="space-y-2.5 text-xs">
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Course Code</span>
+                                        <span className="font-semibold">{selectedDoc.course_code}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Lecturer</span>
+                                        <span className="font-semibold">{selectedDoc.lecturer_name}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">File Size</span>
+                                        <span className="font-semibold">{formatSize(selectedDoc.file_size)}</span>
+                                    </div>
+                                    {selectedDoc.academic_session && (
+                                        <div className="flex justify-between">
+                                            <span className="text-muted-foreground">Session</span>
+                                            <span className="font-semibold">{selectedDoc.academic_session}</span>
+                                        </div>
+                                    )}
+                                    {selectedDoc.semester && (
+                                        <div className="flex justify-between">
+                                            <span className="text-muted-foreground">Semester</span>
+                                            <span className="font-semibold">{formatSemester(selectedDoc.semester)}</span>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <hr className="border-border/40" />
+
+                                {progressMap[selectedDoc.drive_file_id] && (
+                                    <div className="space-y-2">
+                                        <span className="text-[11px] text-muted-foreground font-bold uppercase tracking-wider">READING PROGRESS</span>
+                                        {(() => {
+                                            const prog = progressMap[selectedDoc.drive_file_id];
+                                            const pct = Math.round((prog.current_page / prog.total_pages) * 100);
+                                            return (
+                                                <div className="space-y-1.5">
+                                                    <div className="flex justify-between text-xs font-semibold">
+                                                        <span>{pct}% complete</span>
+                                                        <span>{prog.current_page} / {prog.total_pages} pages</span>
+                                                    </div>
+                                                    <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+                                                        <div 
+                                                            className="h-full bg-primary rounded-full transition-all duration-300"
+                                                            style={{ width: `${pct}%` }}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            );
+                                        })()}
+                                    </div>
+                                )}
                             </div>
                         </div>
 
-                        {/* Title and stats */}
-                        <div className="space-y-4 flex-1">
-                            <div>
-                                <h2 className="text-lg font-bold tracking-tight text-foreground leading-tight font-outfit">{selectedDoc.topic}</h2>
-                                <p className="text-xs text-muted-foreground mt-1 truncate">{selectedDoc.title}</p>
-                            </div>
-
-                            <hr className="border-border/40" />
-
-                            <div className="space-y-2.5 text-sm">
-                                <div className="flex justify-between">
-                                    <span className="text-muted-foreground">Course Code</span>
-                                    <span className="font-semibold">{selectedDoc.course_code}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span className="text-muted-foreground">Lecturer</span>
-                                    <span className="font-semibold">{selectedDoc.lecturer_name}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span className="text-muted-foreground">File Size</span>
-                                    <span className="font-semibold">{formatSize(selectedDoc.file_size)}</span>
-                                </div>
-                                {selectedDoc.academic_session && (
-                                    <div className="flex justify-between">
-                                        <span className="text-muted-foreground">Session</span>
-                                        <span className="font-semibold">{selectedDoc.academic_session}</span>
-                                    </div>
-                                )}
-                                {selectedDoc.semester && (
-                                    <div className="flex justify-between">
-                                        <span className="text-muted-foreground">Semester</span>
-                                        <span className="font-semibold">{formatSemester(selectedDoc.semester)}</span>
-                                    </div>
-                                )}
-                            </div>
-
-                            <hr className="border-border/40" />
-
-                            {progressMap[selectedDoc.drive_file_id] && (
-                                <div className="space-y-2">
-                                    <span className="text-xs text-muted-foreground font-semibold">READING PROGRESS</span>
-                                    {(() => {
-                                        const prog = progressMap[selectedDoc.drive_file_id];
-                                        const pct = Math.round((prog.current_page / prog.total_pages) * 100);
-                                        return (
-                                            <div className="space-y-1.5">
-                                                <div className="flex justify-between text-xs font-semibold">
-                                                    <span>{pct}% complete</span>
-                                                    <span>{prog.current_page} / {prog.total_pages} pages</span>
-                                                </div>
-                                                <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
-                                                    <div 
-                                                        className="h-full bg-primary rounded-full transition-all duration-300"
-                                                        style={{ width: `${pct}%` }}
-                                                    />
-                                                </div>
-                                            </div>
-                                        );
-                                    })()}
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Action CTA */}
-                        <div className="mt-8">
+                        {/* Action CTA - Fixed at bottom */}
+                        <div className="p-4 shrink-0 border-t border-border/40 bg-card/90">
                             <button
                                 onClick={() => handleOpenReader(selectedDoc)}
                                 className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground font-bold py-3 px-4 rounded-xl shadow-md hover:bg-primary/95 transition-all active:scale-[0.98]"
@@ -1459,7 +1475,7 @@ export default function DesktopHomeContent() {
             <>
                 {viewStyle === 'grid' ? (
                     /* RESPONSIVE WRAPPING GRID ON MOBILE & DESKTOP - PREVENTS CARD SQUEEZING */
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                    <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-4">
                         {items.map((item) => {
                             return (
                                 <div

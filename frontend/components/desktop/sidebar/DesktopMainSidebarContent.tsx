@@ -1,6 +1,6 @@
 // [DESKTOP UI]
 import { useState } from 'react';
-import { Home, HelpCircle, MessageSquare, MoreVertical, Pencil, Trash2 } from 'lucide-react';
+import { Home, HelpCircle, MessageSquare, CalendarDays, MoreVertical, Pencil, Trash2 } from 'lucide-react';
 import { SidebarLink } from './DesktopSidebarPrimitives';
 
 import { type SidebarNoteItem } from '@/components/sidebar/SidebarNotesSection';
@@ -20,6 +20,7 @@ type MainSidebarContentProps = {
   isLoadingHistory: boolean;
   onDeleteRequest?: (id: string) => void;
   onRenameRequest?: (id: string, title: string) => void;
+  onOpenTimetable?: () => void;
   openMenuId: string | null;
   routerPush: (path: string) => void;
   sessions: ChatSession[];
@@ -30,6 +31,7 @@ type MainSidebarContentProps = {
 
 export function DesktopMainSidebarContent({
   handleNewChat,
+  onOpenTimetable,
   routerPush,
 }: MainSidebarContentProps) {
   return (
@@ -37,6 +39,7 @@ export function DesktopMainSidebarContent({
       <SidebarLink icon={Home} label="Home" onClick={() => routerPush('/study')} isIconOnly={true} />
       <SidebarLink icon={MessageSquare} label="AI Chat" onClick={() => { handleNewChat(); routerPush('/main'); }} active={true} isIconOnly={true} />
       <SidebarLink icon={HelpCircle} label="Quiz" onClick={() => routerPush('/quiz')} isIconOnly={true} />
+      <SidebarLink icon={CalendarDays} label="Timetable" onClick={() => onOpenTimetable?.()} isIconOnly={true} />
     </nav>
   );
 }

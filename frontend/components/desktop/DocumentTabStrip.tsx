@@ -13,7 +13,7 @@ export function DocumentTabStrip() {
   }
 
   return (
-    <div className="flex items-end gap-1 overflow-x-auto no-scrollbar select-none h-full max-w-full">
+    <div className="flex items-end gap-1 overflow-x-auto no-scrollbar select-none h-[32px] shrink-0 max-w-full">
       {openTabs.map((tab) => {
         const isActive = tab.id === activeTabId;
         return (
@@ -26,6 +26,7 @@ export function DocumentTabStrip() {
                 : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-card/40 font-normal border-t border-l border-r border-transparent hover:border-border/30 border-b-0"
             }`}
             title={tab.title}
+            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
           >
             <FileText className={`w-3.5 h-3.5 shrink-0 ${isActive ? "text-primary font-bold" : "text-muted-foreground/70"}`} />
             <span className="truncate flex-1 text-[12px]">{tab.title}</span>
@@ -56,6 +57,7 @@ export function DocumentTabStrip() {
         }}
         className="w-6 h-6 shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-card/60 transition-colors ml-1 mb-1"
         title="New tab"
+        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       >
         <Plus className="w-3.5 h-3.5" />
       </button>

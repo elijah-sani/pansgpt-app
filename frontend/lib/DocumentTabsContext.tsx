@@ -50,6 +50,8 @@ export function DocumentTabsProvider({ children }: { children: ReactNode }) {
             setOpenTabs(data.openTabs);
             if (data.activeTabId && data.openTabs.some((t) => t.id === data.activeTabId)) {
               setActiveTabId(data.activeTabId);
+            } else if (data.activeTabId === null) {
+              setActiveTabId(null);
             } else if (data.openTabs.length > 0) {
               setActiveTabId(data.openTabs[0].id);
             }
@@ -156,6 +158,15 @@ export function DocumentTabsProvider({ children }: { children: ReactNode }) {
 
 export function useDocumentTabs() {
   const ctx = useContext(DocumentTabsContext);
-  if (!ctx) throw new Error("useDocumentTabs must be used within DocumentTabsProvider");
+  if (!ctx) {
+    return {
+      openTabs: [],
+      activeTabId: null,
+      openTab: () => {},
+      closeTab: () => {},
+      setActiveTabId: () => {},
+      isLoadingPersistedTabs: false,
+    };
+  }
   return ctx;
 }

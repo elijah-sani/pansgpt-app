@@ -659,10 +659,10 @@ export function MainConversation({
           (chatScrollRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
           (scrollContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
         }}
-        className="flex-1 min-h-0 overflow-y-auto pt-16 md:pt-4 pb-4"
+        className={`flex-1 min-h-0 pt-16 md:pt-12 pb-4 show-scrollbar ${hasMessages ? 'overflow-y-auto' : 'overflow-hidden flex flex-col'}`}
         style={{ ...CHAT_TEXT_SIZE_STYLES[chatTextSize], overflowAnchor: 'none' }} // changed: overflowAnchor:'none' lets our useLayoutEffect own scroll anchoring
       >
-        <div className={`mx-auto px-4 sm:px-8 md:px-12 min-h-full flex flex-col ${!hasMessages ? 'w-full max-w-[1600px]' : 'max-w-[741px]'}`}>
+        <div className={`mx-auto px-4 sm:px-8 md:px-12 flex flex-col ${!hasMessages ? 'w-full max-w-[1600px] flex-1 h-full min-h-0' : 'min-h-full max-w-[741px]'}`}>
           {isLoadingChat ? (
             activeSessionId ? <ChatSkeleton /> : <WelcomeSkeleton />
           ) : !hasMessages ? (
@@ -670,28 +670,28 @@ export function MainConversation({
               {/* ========================================================================= */}
               {/* DESKTOP SPLIT-SCREEN LANDING DASHBOARD (2-Column Grid)                    */}
               {/* ========================================================================= */}
-              <div className="hidden md:flex flex-1 w-full pt-[70px] pb-6">
-                <div className="grid grid-cols-12 gap-12 lg:gap-16 xl:gap-20 w-full items-start">
+              <div className="hidden md:flex flex-1 h-full min-h-0 w-full pt-6 pb-2">
+                <div className="grid grid-cols-12 gap-8 lg:gap-12 w-full h-full min-h-0 items-stretch">
                   {/* Left Column: Greeting, Input, Recent Chats */}
-                  <div className="col-span-6 flex flex-col gap-6 h-full min-h-0">
+                  <div className="col-span-6 flex flex-col gap-4 h-full min-h-0">
                     {/* Greeting Header */}
-                    <div className="text-left">
-                      <Logo className="h-8 w-8 mb-3 text-[#2f9e1c] dark:!text-[#2f9e1c] shrink-0" />
-                      <h2 className="text-2xl md:text-3xl font-bold text-foreground mb-1.5">
+                    <div className="text-left shrink-0">
+                      <Logo className="h-7 w-7 mb-2 text-[#2f9e1c] dark:!text-[#2f9e1c] shrink-0" />
+                      <h2 className="text-xl md:text-2xl font-bold text-foreground mb-1">
                         {welcomeCopy.greeting}
                       </h2>
-                      <p className="text-sm text-muted-foreground">
+                      <p className="text-xs text-muted-foreground">
                         {typedWelcomeSubtext || currentWelcomeSubtext || 'What are we studying today?'}
                       </p>
                     </div>
 
                     {/* Chat Input Area */}
-                    <div className="w-full">
+                    <div className="w-full shrink-0">
                       {renderChatInput(true, 'welcome', 'Ask Anything...')}
                     </div>
 
                     {/* Recent Chats Section under Input */}
-                    <div className="flex flex-col gap-3 pt-2 flex-1 min-h-0">
+                    <div className="flex flex-col gap-2 flex-1 min-h-0">
                       <div className="flex items-center justify-between px-1 shrink-0">
                         <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Recent chats</span>
                         <div className="flex items-center gap-2">
@@ -719,7 +719,7 @@ export function MainConversation({
                         </div>
                       </div>
 
-                      <div className="flex-1 overflow-y-auto min-h-0 px-1 pb-4">
+                      <div className="flex-1 overflow-y-auto min-h-0 px-1 pb-2 show-scrollbar">
                         <SidebarConversationList
                           activeSessionId={activeSessionId}
                           emptyText="No recent chats"

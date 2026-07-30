@@ -7,6 +7,7 @@ import { Minus, Square, Copy, X } from "lucide-react";
 import Logo from "@/components/Logo";
 import { DocumentTabStrip } from "@/components/desktop/DocumentTabStrip";
 import { useDocumentTabs } from "@/lib/DocumentTabsContext"; // [DESKTOP UI]
+import { useChatSession } from "@/lib/ChatSessionContext";
 
 type DesktopTitleBarProps = {
   onOpenSidebar?: () => void;
@@ -16,11 +17,13 @@ type DesktopTitleBarProps = {
 export function DesktopTitleBar({ onOpenSidebar, minimal = false }: DesktopTitleBarProps) {
   const router = useRouter();
   const { setActiveTabId } = useDocumentTabs(); // [DESKTOP UI]
+  const { setActiveSessionId } = useChatSession();
   const [isMaximized, setIsMaximized] = useState<boolean>(false);
   const [isElectron, setIsElectron] = useState<boolean>(false);
 
   const handleGoHome = () => {
-    setActiveTabId(null);
+    setActiveTabId?.(null);
+    setActiveSessionId(null);
     if (typeof window !== "undefined" && window.location.pathname !== "/study") {
       router.push("/study");
     }
@@ -120,7 +123,7 @@ export function DesktopTitleBar({ onOpenSidebar, minimal = false }: DesktopTitle
       style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
     >
       {/* Left: Green App Logo Browser-Style Tab Container & Document Tabs */}
-      <div className="flex items-end gap-1.5 min-w-0 flex-1 max-w-[75%] h-full" style={{ WebkitAppRegion: "drag" } as React.CSSProperties}>
+      <div className="flex items-end gap-1.5 min-w-0 flex-1 h-full" style={{ WebkitAppRegion: "drag" } as React.CSSProperties}>
         {/* Browser-Style Tab Container matching Image 2 */}
         <div
           onClick={handleGoHome}
@@ -138,13 +141,10 @@ export function DesktopTitleBar({ onOpenSidebar, minimal = false }: DesktopTitle
         </div>
 
         {/* Integrated Document Tab Strip */}
-        <div className="flex-1 min-w-0 flex items-end h-full" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
+        <div className="flex-1 min-w-0 flex items-end h-full">
           <DocumentTabStrip />
         </div>
       </div>
-
-      {/* Center/Middle Empty Drag Spacer */}
-      <div className="flex-1 h-full min-w-[20px]" style={{ WebkitAppRegion: "drag" } as React.CSSProperties} />
 
       {/* Right: Custom Window Controls (Electron only, or fallback for desktop) */}
       {isElectron && (

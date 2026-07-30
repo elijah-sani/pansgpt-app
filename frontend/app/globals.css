@@ -59,4 +59,41 @@
   background: transparent !important;
 }
 
+/* Explicitly visible custom scrollbars when .show-scrollbar is used */
+.desktop-shell .show-scrollbar,
+.desktop-shell *.show-scrollbar,
+.show-scrollbar {
+  -ms-overflow-style: auto !important;
+  scrollbar-width: thin !important;
+  scrollbar-color: rgba(155, 155, 155, 0.4) transparent !important;
+}
+
+.desktop-shell .show-scrollbar::-webkit-scrollbar,
+.desktop-shell *.show-scrollbar::-webkit-scrollbar,
+.show-scrollbar::-webkit-scrollbar {
+  display: block !important;
+  width: 6px !important;
+  height: 6px !important;
+}
+
+.desktop-shell .show-scrollbar::-webkit-scrollbar-track,
+.desktop-shell *.show-scrollbar::-webkit-scrollbar-track,
+.show-scrollbar::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+.desktop-shell .show-scrollbar::-webkit-scrollbar-thumb,
+.desktop-shell *.show-scrollbar::-webkit-scrollbar-thumb,
+.show-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(155, 155, 155, 0.35) !important;
+  border-radius: 9999px !important;
+}
+
+.desktop-shell .show-scrollbar::-webkit-scrollbar-thumb:hover,
+.desktop-shell *.show-scrollbar::-webkit-scrollbar-thumb:hover,
+.show-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(155, 155, 155, 0.6) !important;
+}
+
+
 

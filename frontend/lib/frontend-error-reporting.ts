@@ -36,6 +36,7 @@ export function detectAppSection(pathname: string): AppSection {
   if (
     pathname.startsWith('/main') ||
     pathname.startsWith('/reader') ||
+    pathname.startsWith('/study') ||
     pathname.startsWith('/quiz') ||
     pathname.startsWith('/notes')
   ) {
@@ -54,7 +55,7 @@ export function getSafeHomeRoute(pathname: string): string {
     case 'super-admin':
       return '/super-admin';
     case 'student':
-      return '/main';
+      return pathname.startsWith('/study') ? '/study' : '/main';
     default:
       return '/';
   }

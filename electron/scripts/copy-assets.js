@@ -55,26 +55,15 @@ async function main() { // [ELECTRON PHASE 1]
   const destNextDist1 = path.join(frontendDir, ".next-electron", "node_modules", "next", "dist"); // [ELECTRON PHASE 1 RELIABILITY]
   const destNextDist2 = path.join(standaloneDir, "node_modules", "next", "dist"); // [ELECTRON PHASE 1 RELIABILITY]
 
-  const copyWithRetry = (src, dest, retries = 5, delay = 200) => {
-    fs.mkdirSync(dest, { recursive: true });
-    for (let attempt = 1; attempt <= retries; attempt++) {
-      try {
-        fs.cpSync(src, dest, { recursive: true, force: true });
-        return;
-      } catch (err) {
-        if (attempt === retries) {
-          throw new Error(`[ELECTRON PHASE 1 RELIABILITY] Failed to copy ${src} to ${dest} after ${retries} attempts: ${err?.message || err}`);
-        }
-        const end = Date.now() + delay;
-        while (Date.now() < end) {}
-      }
-    }
+  const copyWithRetry = async (src, dest) => {
+    await fs.ensureDir(dest);
+    await fs.copy(src, dest, { overwrite: true });
   };
 
   if (fs.existsSync(srcNextDist)) { // [ELECTRON PHASE 1 RELIABILITY]
     console.log("[ELECTRON PHASE 1 RELIABILITY] Syncing node_modules/next/dist into standalone..."); // [ELECTRON PHASE 1 RELIABILITY]
-    fs.mkdirSync(path.dirname(destNextDist2), { recursive: true });
-    copyWithRetry(srcNextDist, destNextDist2);
+    await fs.ensureDir(path.dirname(destNextDist2));
+    await copyWithRetry(srcNextDist, destNextDist2);
 
     // LOUD VERIFICATION: Verify critical runtime submodules actually exist on disk
     const requiredRuntimeFiles = [

@@ -1,16 +1,18 @@
 // [DESKTOP UI]
-import { Home, HelpCircle, MessageSquare } from 'lucide-react';
+import { Home, HelpCircle, MessageSquare, CalendarDays } from 'lucide-react';
 import { SidebarLink } from './DesktopSidebarPrimitives';
 
 type StudySidebarContentProps = {
   isIconOnly: boolean;
   notes?: any[];
+  onOpenTimetable?: () => void;
   pathname: string;
   routerPush: (path: string) => void;
   totalNotes?: number;
 };
 
 export function DesktopStudySidebarContent({
+  onOpenTimetable,
   pathname,
   routerPush,
 }: StudySidebarContentProps) {
@@ -19,6 +21,7 @@ export function DesktopStudySidebarContent({
       <SidebarLink icon={Home} label="Home" onClick={() => routerPush('/study')} active={pathname.startsWith('/reader') || pathname.startsWith('/study')} isIconOnly={true} />
       <SidebarLink icon={MessageSquare} label="AI Chat" onClick={() => routerPush('/main')} active={pathname === '/main'} isIconOnly={true} />
       <SidebarLink icon={HelpCircle} label="Quiz" onClick={() => routerPush('/quiz')} active={pathname.startsWith('/quiz')} isIconOnly={true} />
+      <SidebarLink icon={CalendarDays} label="Timetable" onClick={() => onOpenTimetable?.()} active={false} isIconOnly={true} />
     </nav>
   );
 }

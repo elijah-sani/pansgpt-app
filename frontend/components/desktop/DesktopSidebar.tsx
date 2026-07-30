@@ -13,6 +13,7 @@ import { DesktopStudySidebarContent } from "./sidebar/DesktopStudySidebarContent
 import { DesktopQuizSidebarContent } from "./sidebar/DesktopQuizSidebarContent";
 import { SidebarConversationList } from "./sidebar/DesktopSidebarConversationList";
 import { SidebarLink } from "./sidebar/DesktopSidebarPrimitives";
+import { useDocumentTabs } from "@/lib/DocumentTabsContext";
 import { type SidebarNoteItem } from "@/components/sidebar/SidebarNotesSection";
 import { api } from "@/lib/api";
 import { buildWhatsAppSupportUrl } from "@/lib/support-config";
@@ -25,6 +26,7 @@ interface AppSidebarProps {
   onRenameRequest?: (id: string, title: string) => void;
   onOpenReportProblem: () => void;
   onOpenSettings: () => void;
+  onOpenTimetable?: () => void;
   isAdmin?: boolean;
 }
 
@@ -147,9 +149,12 @@ export default function DesktopSidebar({
   onRenameRequest,
   onOpenReportProblem,
   onOpenSettings,
+  onOpenTimetable,
+  isAdmin = false,
 }: AppSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const { setActiveTabId } = useDocumentTabs();
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [isToggleHovered, setIsToggleHovered] = useState(false);
   const [isDateGroupingEnabled, setIsDateGroupingEnabled] = useState(false);
@@ -421,6 +426,10 @@ export default function DesktopSidebar({
   };
 
   const handleNavigate = (path: string) => {
+    setActiveTabId?.(null);
+    if (path === '/study') {
+      setActiveSessionId(null);
+    }
     if (path !== pathname) {
       setPendingPath(path);
     }
@@ -777,6 +786,7 @@ export default function DesktopSidebar({
               isLoadingHistory={isLoadingHistory}
               onDeleteRequest={onDeleteRequest}
               onRenameRequest={onRenameRequest}
+              onOpenTimetable={onOpenTimetable}
               openMenuId={openMenuId}
               notes={sidebarNotes}
               routerPush={handleNavigate}
@@ -790,6 +800,7 @@ export default function DesktopSidebar({
             <DesktopStudySidebarContent
               isIconOnly={isIconOnly}
               notes={sidebarNotes}
+              onOpenTimetable={onOpenTimetable}
               pathname={pathname}
               routerPush={handleNavigate}
               totalNotes={sidebarNotesCount}
@@ -800,6 +811,7 @@ export default function DesktopSidebar({
             <DesktopQuizSidebarContent
               isIconOnly={isIconOnly}
               notes={sidebarNotes}
+              onOpenTimetable={onOpenTimetable}
               pathname={pathname}
               routerPush={handleNavigate}
               totalNotes={sidebarNotesCount}
@@ -809,7 +821,7 @@ export default function DesktopSidebar({
           {isOnNotes && (
             <nav className={isIconOnly ? 'flex flex-col items-center py-1 gap-0.5' : 'px-2 space-y-0.5'}>
               <SidebarLink icon={MessageSquare} label="Chat" onClick={() => handleNavigate('/main')} isIconOnly={isIconOnly} />
-              <SidebarLink icon={BookOpen} label="Study" onClick={() => handleNavigate('/reader')} isIconOnly={isIconOnly} />
+              <SidebarLink icon={BookOpen} label="Study" onClick={() => handleNavigate('/study')} isIconOnly={isIconOnly} />
               <SidebarLink icon={Brain} label="Quiz" onClick={() => handleNavigate('/quiz')} isIconOnly={isIconOnly} />
               {/* COMMENTED OUT: Notes Feature
               <SidebarLink icon={NotepadText} label="Notes" onClick={() => handleNavigate('/notes')} isIconOnly={isIconOnly} active />

@@ -188,6 +188,7 @@ function DesktopLayoutContent({ children }: { children: React.ReactNode }) {
                 onSearchOpen={() => setIsSearchModalOpen(true)}
                 onOpenReportProblem={() => setIsReportProblemOpen(true)}
                 onOpenSettings={() => setIsSettingsOpen(true)}
+                onOpenTimetable={() => setIsWeeklyTimetableOpen(true)}
                 onDeleteRequest={(id) => {
                   setDeleteTargetId(id);
                   setIsDeleteModalOpen(true);
@@ -200,7 +201,7 @@ function DesktopLayoutContent({ children }: { children: React.ReactNode }) {
             </LocalErrorBoundary>
           )}
 
-          <main className="flex-1 min-w-0 overflow-x-hidden overflow-y-auto overscroll-none">
+          <main className="flex-1 min-w-0 h-full overflow-hidden flex flex-col">
             {children}
           </main>
         </div>
@@ -233,14 +234,14 @@ function DesktopLayoutContent({ children }: { children: React.ReactNode }) {
         onOpenReportProblem={() => setIsReportProblemOpen(true)}
       />
 
-      {/* [DESKTOP UI] Profile Sidebar Drawer */}
+      {/* [DESKTOP UI] Profile Popover Dropdown */}
       {isProfileSidebarOpen && (
         <div
-          className="fixed inset-0 z-[150] flex justify-end bg-black/50 backdrop-blur-xs animate-in fade-in duration-150"
+          className="fixed inset-0 z-[150] bg-transparent"
           onClick={() => setIsProfileSidebarOpen(false)}
         >
           <div
-            className="w-full max-w-sm h-full bg-background border-l border-border shadow-2xl animate-in slide-in-from-right duration-200"
+            className="absolute right-4 top-20 z-[151] w-76 flex flex-col bg-card border border-border rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
             onClick={(e) => e.stopPropagation()}
           >
             <ProfileSidebar
@@ -253,6 +254,7 @@ function DesktopLayoutContent({ children }: { children: React.ReactNode }) {
                 subscriptionTier: shellUser?.subscriptionTier || "free",
               }}
               isAdmin={isAdmin}
+              hideBackButton={true}
               onClose={() => setIsProfileSidebarOpen(false)}
               onOpenPersonalInfo={() => {
                 setIsProfileSidebarOpen(false);

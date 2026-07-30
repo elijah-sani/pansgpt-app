@@ -1,5 +1,5 @@
 // [DESKTOP UI]
-import { Home, HelpCircle, Filter, MessageSquare } from 'lucide-react';
+import { Home, HelpCircle, Filter, MessageSquare, CalendarDays } from 'lucide-react';
 import { scoreColor, SidebarLink } from './DesktopSidebarPrimitives';
 
 type QuizHistoryItem = {
@@ -16,6 +16,7 @@ type QuizSidebarContentProps = {
   hasActiveFilters?: boolean;
   isIconOnly: boolean;
   notes?: any[];
+  onOpenTimetable?: () => void;
   pathname: string;
   quizLoading?: boolean;
   quizResults?: QuizHistoryItem[];
@@ -27,6 +28,7 @@ type QuizSidebarContentProps = {
 export function DesktopQuizSidebarContent({
   hasActiveFilters = false,
   isIconOnly,
+  onOpenTimetable,
   pathname,
   quizLoading = false,
   quizResults = [],
@@ -39,6 +41,7 @@ export function DesktopQuizSidebarContent({
         <SidebarLink icon={Home} label="Home" onClick={() => routerPush('/study')} active={pathname.startsWith('/reader') || pathname.startsWith('/study')} isIconOnly={true} />
         <SidebarLink icon={MessageSquare} label="AI Chat" onClick={() => routerPush('/main')} active={pathname === '/main'} isIconOnly={true} />
         <SidebarLink icon={HelpCircle} label="Quiz" onClick={() => routerPush('/quiz')} active={pathname === '/quiz' || pathname.startsWith('/quiz/')} isIconOnly={true} />
+        <SidebarLink icon={CalendarDays} label="Timetable" onClick={() => onOpenTimetable?.()} isIconOnly={true} />
       </nav>
 
       {!isIconOnly ? (

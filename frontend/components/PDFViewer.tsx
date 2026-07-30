@@ -562,11 +562,17 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         setGoToPageInput('');
     };
     useEffect(() => {
-        const seen = localStorage.getItem('pansgpt-reader-tutorial-seen');
-        if (!seen) setShowTutorial(true);
+        try {
+            const seen = localStorage.getItem('pansgpt-reader-tutorial-seen');
+            if (!seen) {
+                setShowTutorial(true);
+            }
+        } catch (e) {}
     }, []);
     const handleCloseTutorial = () => {
-        localStorage.setItem('pansgpt-reader-tutorial-seen', '1');
+        try {
+            localStorage.setItem('pansgpt-reader-tutorial-seen', '1');
+        } catch (e) {}
         setShowTutorial(false);
     };
 
@@ -2432,23 +2438,8 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
 
                     {/* Mobile Header */}
                     <div className={`md:hidden fixed top-0 left-0 right-0 w-full h-14 bg-background/95 backdrop-blur-md border-b border-border z-50 flex items-center justify-between px-3 shadow-sm transition-transform duration-300 ${mobileHeaderVisible ? 'translate-y-0' : '-translate-y-full'}`}>
-                        {/* Left: Back button + Divider */}
+                        {/* Left: Document Metadata */}
                         <div className="flex items-center gap-2 min-w-0">
-                            <button
-                                onClick={() => {
-                                    const course = searchParams.get('course');
-                                    if (course) {
-                                        router.push(`/reader?course=${course}`);
-                                    } else {
-                                        router.push('/reader');
-                                    }
-                                }}
-                                className="p-1.5 hover:bg-muted/50 rounded-lg text-muted-foreground hover:text-foreground transition-colors shrink-0"
-                                title="Go Back"
-                            >
-                                <ChevronLeft className="w-5 h-5" />
-                            </button>
-                            <div className="h-5 w-px bg-border shrink-0" />
 
                             {/* Middle: Document Metadata */}
                             <div className="flex flex-col justify-center min-w-0 pr-2">
@@ -2488,21 +2479,6 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                     {/* Desktop Header */}
                     <div className="hidden md:flex sticky top-0 w-full shrink-0 h-16 bg-card border-b border-border z-30 items-center justify-between px-6 shadow-sm">
                         <div className="flex items-center gap-4">
-                            <button
-                                onClick={() => {
-                                    const course = searchParams.get('course');
-                                    if (course) {
-                                        router.push(`/reader?course=${course}`);
-                                    } else {
-                                        router.push('/study');
-                                    }
-                                }}
-                                className="p-2 hover:bg-muted/50 rounded-lg text-muted-foreground hover:text-foreground transition-colors"
-                                title="Go Back"
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 19-7-7 7-7" /><path d="M19 12H5" /></svg>
-                            </button>
-                            <div className="h-6 w-px bg-border" />
                             <div className="flex flex-col justify-center min-w-0">
                                 <div className="flex min-w-0 items-center gap-2">
                                     <h1 className="truncate text-sm font-semibold leading-tight text-foreground max-w-sm">{meta.topic || meta.filename}</h1>
