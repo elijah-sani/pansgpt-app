@@ -91,15 +91,16 @@ _GOOGLE_THINKING_TEXT     = {"thinking": {"type": "enabled", "budget_tokens": 81
 _GOOGLE_THINKING_VISION   = {"thinking": {"type": "enabled", "budget_tokens": 4096}}
 
 # OpenRouter reasoning control params
-_OR_REASONING_NONE = {"reasoning": {"effort": "none"}}
-_OR_REASONING_HIGH = {"reasoning": {"effort": "high"}}
+_OR_REASONING_NONE = {"reasoning": {"effort": "none", "exclude": True}}
+_OR_REASONING_HIGH = {"reasoning": {"effort": "high", "exclude": False}}
 
 # model_name -> (fast_extra_body, think_extra_body)
 # None = no extra_body for that mode (model doesn't support param in that slot)
 _MODEL_THINKING_PARAMS: dict[str, tuple[dict | None, dict | None]] = {
-    # Google Gemma — text stacks (budget=8192 for think)
-    "gemma-4-26b-a4b-it": (_GOOGLE_THINKING_DISABLED, _GOOGLE_THINKING_TEXT),
-    "gemma-4-31b-it":     (_GOOGLE_THINKING_DISABLED, _GOOGLE_THINKING_TEXT),
+    # Google Gemma — uses prompt-level tokens (<|think|>), extra_body not supported by Google API
+    "gemma-4-26b-a4b-it": (None, None),
+    "gemma-4-31b-it":     (None, None),
+    "gemma-4-32b-it":     (None, None),
     # OpenRouter nemotron-ultra — only appears in think stacks, always high effort
     "nvidia/nemotron-3-ultra-550b-a55b:free": (None, _OR_REASONING_HIGH),
     # OpenRouter nemotron-3-nano-omni — supports reasoning param in both modes
@@ -107,11 +108,14 @@ _MODEL_THINKING_PARAMS: dict[str, tuple[dict | None, dict | None]] = {
 }
 
 _MODEL_VISION_THINKING_PARAMS: dict[str, tuple[dict | None, dict | None]] = {
-    # Google Gemma — vision stacks (tighter budget=4096 for think)
-    "gemma-4-26b-a4b-it": (_GOOGLE_THINKING_DISABLED, _GOOGLE_THINKING_VISION),
-    "gemma-4-31b-it":     (_GOOGLE_THINKING_DISABLED, _GOOGLE_THINKING_VISION),
+    # Google Gemma — uses prompt-level tokens (<|think|>), extra_body not supported by Google API
+    "gemma-4-26b-a4b-it": (None, None),
+    "gemma-4-31b-it":     (None, None),
+    "gemma-4-32b-it":     (None, None),
     # OpenRouter nemotron-3-nano-omni — supports reasoning param
     "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": (_OR_REASONING_NONE, _OR_REASONING_HIGH),
+    # OpenRouter nemotron-nano — disable spontaneous CoT in fast vision
+    "nvidia/nemotron-nano-12b-v2-vl:free": (_OR_REASONING_NONE, None),
 }
 
 # ---------------------------------------------------------------------------
@@ -235,6 +239,36 @@ def _thinking_extra_body(
         return None
     fast_body, think_body = entry
     return think_body if thinking_mode else fast_body
+
+
+def _format_messages_for_thinking(model_name: str, messages: list, thinking_mode: bool) -> list:
+    """Inject prompt-level thinking token (<|think|>) for Gemma models in thinking mode."""
+    if not thinking_mode or not model_name.startswith("gemma-"):
+        return messages
+    new_messages = []
+    think_prefix_added = False
+    for msg in messages:
+        if not isinstance(msg, dict):
+            new_messages.append(msg)
+            continue
+        msg_copy = dict(msg)
+        if not think_prefix_added and msg_copy.get("role") in ("system", "user"):
+            content = msg_copy.get("content")
+            if isinstance(content, str):
+                if not content.startswith("<|think|>"):
+                    msg_copy["content"] = "<|think|>\n" + content
+                think_prefix_added = True
+            elif isinstance(content, list):
+                updated_content = list(content)
+                if updated_content and isinstance(updated_content[0], dict) and updated_content[0].get("type") == "text":
+                    first_text = updated_content[0].get("text", "")
+                    if not first_text.startswith("<|think|>"):
+                        updated_content[0] = {**updated_content[0], "text": "<|think|>\n" + first_text}
+                    think_prefix_added = True
+                msg_copy["content"] = updated_content
+        new_messages.append(msg_copy)
+    return new_messages
+
 
 def _client_for_text_model(model_name: str) -> Any:
     # GROQ
@@ -516,7 +550,7 @@ async def generate_completion_with_failover(
                 logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or ("FAST_VISION_PRIMARY" if vision_mode == "fast" else "THINK_VISION_PRIMARY"), model_name)
                 kwargs = {
                     "model": model_name,
-                    "messages": messages,
+                    "messages": _format_messages_for_thinking(model_name, messages, thinking_mode),
                     "temperature": temperature,
                     "max_tokens": vision_max_tokens,
                     "stream": stream,
@@ -567,7 +601,7 @@ async def generate_completion_with_failover(
             logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "TEXT_PRIMARY", model_name)
             kwargs = {
                 "model": model_name,
-                "messages": messages,
+                "messages": _format_messages_for_thinking(model_name, messages, thinking_mode),
                 "temperature": temperature,
                 "max_tokens": _max_tokens_for_text_model(model_name, max_tokens),
                 "stream": stream,
