@@ -33,7 +33,14 @@ function DesktopStudyPageContent() {
       {openTabs.map((tab) => {
         const isActive = tab.id === activeTabId;
         return (
-          <div key={tab.id} className={isActive ? "w-full h-full block" : "hidden"}>
+          <div 
+            key={tab.id} 
+            className={
+              isActive 
+                ? "w-full h-full relative z-10" 
+                : "absolute inset-0 invisible pointer-events-none -z-10"
+            }
+          >
             <PDFViewer fileId={tab.drive_file_id} fileSize={tab.file_size?.toString()} />
           </div>
         );
