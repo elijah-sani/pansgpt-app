@@ -1080,7 +1080,11 @@ async def _build_streaming_response(
                     text_to_save = STOPPED_ASSISTANT_NOTE
 
             save_failed = False
-            if session_id and chat_history.has_client():
+            if emitted_graceful:
+                # Do not persist the error string as an assistant message.
+                # The user's message is already saved; on retry the response will pair with it.
+                logger.info("Skipping assistant message DB save: graceful error was emitted (session_id=%s)", session_id)
+            elif session_id and chat_history.has_client():
                 for save_attempt in range(1, 4):
                     try:
                         saved_assistant_message_id = await chat_history.save_assistant_message(
@@ -1098,18 +1102,18 @@ async def _build_streaming_response(
                         save_failed = True
                         if save_attempt < 3:
                             await asyncio.sleep(1 * save_attempt)
-                if save_failed:
-                    logger.error(
-                        f"All 3 save attempts failed for session {session_id}. "
-                        f"Sending save_failed flag to frontend for fallback."
-                    )
-                else:
-                    # Fire background summarization of previous session after AI reply
-                    if user_id and session_id and not (disconnected or cancelled):
-                        from routers.chat_sessions import _summarize_previous_session
-                        asyncio.create_task(
-                            _summarize_previous_session(user_id, session_id)
+                    if save_failed:
+                        logger.error(
+                            f"All 3 save attempts failed for session {session_id}. "
+                            f"Sending save_failed flag to frontend for fallback."
                         )
+                    else:
+                        # Fire background summarization of previous session after AI reply
+                        if user_id and session_id and not (disconnected or cancelled):
+                            from routers.chat_sessions import _summarize_previous_session
+                            asyncio.create_task(
+                                _summarize_previous_session(user_id, session_id)
+                            )
 
             new_title = None
             if title_task:
@@ -1963,6 +1967,8 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                     requested_model="THINK_VISION_PRIMARY" if request.thinking_mode else "FAST_VISION_PRIMARY",
                     require_system_role_support=True,
                     vision_mode="think" if request.thinking_mode else "fast",
+                    thinking_mode=request.thinking_mode,
+                    per_provider_timeout_seconds=45.0 if request.thinking_mode else 20.0,
                 )
                 yield {"status": "preparing_response"}
                 async for event in _stream_completion_events(completion_stream):
@@ -2086,6 +2092,8 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                 ),
                 require_system_role_support=True,
                 vision_mode="think" if request.thinking_mode else "fast",
+                thinking_mode=request.thinking_mode,
+                per_provider_timeout_seconds=(45.0 if request.thinking_mode else 20.0) if is_vision_mode else None,
             )
             yield {"status": "preparing_response"}
             async for event in _stream_completion_events(completion_stream):
@@ -2860,6 +2868,8 @@ async def edit_message(
                 ),
                 require_system_role_support=True,
                 vision_mode="think" if payload.thinking_mode else "fast",
+                thinking_mode=payload.thinking_mode,
+                per_provider_timeout_seconds=(45.0 if payload.thinking_mode else 20.0) if is_vision_mode else None,
             )
             yield {"status": "preparing_response"}
             async for event in _stream_completion_events(completion_stream):
@@ -3347,6 +3357,8 @@ async def regenerate_response(
                 ),
                 require_system_role_support=True,
                 vision_mode="think" if payload.thinking_mode else "fast",
+                thinking_mode=payload.thinking_mode,
+                per_provider_timeout_seconds=(45.0 if payload.thinking_mode else 20.0) if is_vision_mode else None,
             )
             yield {"status": "preparing_response"}
             async for event in _stream_completion_events(completion_stream):

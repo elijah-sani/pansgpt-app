@@ -57,7 +57,7 @@ if groq_client is None:
 
 GRACEFUL_ASSISTANT_ERROR_PAYLOAD = {
     "role": "assistant",
-    "content": "I encountered an error doing what you asked. Could you check your internet connection and try again?"
+    "content": "Something went wrong, please try again"
 }
 STOPPED_ASSISTANT_NOTE = "You stopped this response"
 

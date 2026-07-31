@@ -43,15 +43,15 @@ SMALL_TASK_PRIMARY = "llama-3.1-8b-instant"                  # Groq (Instant str
 SMALL_TASK_SECONDARY = "nvidia/nemotron-3-nano-30b-a3b:free" # OpenRouter (MoE-Mamba processing)
 
 # Fast Vision Stack
-FAST_VISION_PRIMARY = "gemma-4-26b-a4b-it"                    # Google AI Studio (thinking: False)
-FAST_VISION_SECONDARY = "nvidia/nemotron-nano-2-vl:free"      # OpenRouter (Specialized for charts/OCR)
-FAST_VISION_TERTIARY = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free" # OpenRouter (reasoning: False)
+FAST_VISION_PRIMARY = "gemma-4-26b-a4b-it"                         # Google AI Studio (thinking: disabled)
+FAST_VISION_SECONDARY = "nvidia/nemotron-nano-12b-v2-vl:free"       # OpenRouter (Specialized for charts/OCR)
+FAST_VISION_TERTIARY = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free" # OpenRouter (reasoning: effort=none)
 
 # Think Vision Stack
-THINK_VISION_PRIMARY = "gemma-4-31b-it"                        # Google AI Studio (Clinical OCR, thinking: True)
-THINK_VISION_SECONDARY = "qwen/qwen3.6-27b"                     # Groq (Multimodal reasoning engine)
-THINK_VISION_TERTIARY = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free" # OpenRouter (reasoning: True)
-THINK_VISION_QUATERNARY = "gemma-4-26b-a4b-it"                   # Google AI Studio (thinking: True)
+THINK_VISION_PRIMARY = "gemma-4-31b-it"                                      # Google AI Studio (Clinical OCR, thinking: enabled budget=4096)
+THINK_VISION_SECONDARY = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free" # OpenRouter (reasoning: effort=high)
+THINK_VISION_TERTIARY = "gemma-4-26b-a4b-it"                                  # Google AI Studio (thinking: enabled budget=4096)
+THINK_VISION_QUATERNARY = "qwen/qwen3.6-27b"                                   # Groq (last resort fallback)
 
 # Audio Stack
 AUDIO_PRIMARY = "whisper-large-v3-turbo"                      # Groq Audio Transcriptions
@@ -81,6 +81,38 @@ VISION_MODEL_MAX_TOKENS = {
 
 SYSTEM_ROLE_SAFE_TEXT_MODEL_ORDER = THINK_TEXT_MODEL_ORDER
 SYSTEM_ROLE_SAFE_VISION_MODEL_ORDER = THINK_VISION_MODEL_ORDER
+
+# ---------------------------------------------------------------------------
+# Thinking / Reasoning API Control
+# ---------------------------------------------------------------------------
+# Google AI Studio extra_body params (OpenAI-compat endpoint)
+_GOOGLE_THINKING_DISABLED = {"thinking": {"type": "disabled"}}
+_GOOGLE_THINKING_TEXT     = {"thinking": {"type": "enabled", "budget_tokens": 8192}}
+_GOOGLE_THINKING_VISION   = {"thinking": {"type": "enabled", "budget_tokens": 4096}}
+
+# OpenRouter reasoning control params
+_OR_REASONING_NONE = {"reasoning": {"effort": "none"}}
+_OR_REASONING_HIGH = {"reasoning": {"effort": "high"}}
+
+# model_name -> (fast_extra_body, think_extra_body)
+# None = no extra_body for that mode (model doesn't support param in that slot)
+_MODEL_THINKING_PARAMS: dict[str, tuple[dict | None, dict | None]] = {
+    # Google Gemma — text stacks (budget=8192 for think)
+    "gemma-4-26b-a4b-it": (_GOOGLE_THINKING_DISABLED, _GOOGLE_THINKING_TEXT),
+    "gemma-4-31b-it":     (_GOOGLE_THINKING_DISABLED, _GOOGLE_THINKING_TEXT),
+    # OpenRouter nemotron-ultra — only appears in think stacks, always high effort
+    "nvidia/nemotron-3-ultra-550b-a55b:free": (None, _OR_REASONING_HIGH),
+    # OpenRouter nemotron-3-nano-omni — supports reasoning param in both modes
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": (_OR_REASONING_NONE, _OR_REASONING_HIGH),
+}
+
+_MODEL_VISION_THINKING_PARAMS: dict[str, tuple[dict | None, dict | None]] = {
+    # Google Gemma — vision stacks (tighter budget=4096 for think)
+    "gemma-4-26b-a4b-it": (_GOOGLE_THINKING_DISABLED, _GOOGLE_THINKING_VISION),
+    "gemma-4-31b-it":     (_GOOGLE_THINKING_DISABLED, _GOOGLE_THINKING_VISION),
+    # OpenRouter nemotron-3-nano-omni — supports reasoning param
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": (_OR_REASONING_NONE, _OR_REASONING_HIGH),
+}
 
 # ---------------------------------------------------------------------------
 # Backward Compatibility Aliases for Legacy Code
@@ -190,6 +222,20 @@ def _response_format_mode(response_format: Optional[dict]) -> str:
     return str(response_format.get("type") or "unknown")
 
 
+def _thinking_extra_body(
+    model_name: str,
+    *,
+    thinking_mode: bool,
+    is_vision: bool = False,
+) -> dict | None:
+    """Return extra_body for thinking/reasoning API control, or None if model doesn't support it."""
+    table = _MODEL_VISION_THINKING_PARAMS if is_vision else _MODEL_THINKING_PARAMS
+    entry = table.get(model_name)
+    if entry is None:
+        return None
+    fast_body, think_body = entry
+    return think_body if thinking_mode else fast_body
+
 def _client_for_text_model(model_name: str) -> Any:
     # GROQ
     if model_name in {
@@ -215,7 +261,7 @@ def _client_for_text_model(model_name: str) -> Any:
         "nvidia/nemotron-3-super-120b-a12b:free",
         "nvidia/nemotron-3-ultra-550b-a55b:free",
         "nvidia/nemotron-3-nano-30b-a3b:free",
-        "nvidia/nemotron-nano-2-vl:free",
+        "nvidia/nemotron-nano-12b-v2-vl:free",
         "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
     }:
         return openrouter_client
@@ -400,6 +446,7 @@ async def generate_completion_with_failover(
     preferred_models: Optional[list[str]] = None,
     require_system_role_support: bool = False,
     vision_mode: str = "think",
+    thinking_mode: bool = False,
 ) -> Optional[Any]:
     if force_google:
         if google_client is None:
@@ -474,6 +521,9 @@ async def generate_completion_with_failover(
                     "max_tokens": vision_max_tokens,
                     "stream": stream,
                 }
+                extra = _thinking_extra_body(model_name, thinking_mode=thinking_mode, is_vision=True)
+                if extra:
+                    kwargs["extra_body"] = extra
                 return await _create_completion_with_audit(
                     client,
                     kwargs,
@@ -524,6 +574,9 @@ async def generate_completion_with_failover(
             }
             if response_format:
                 kwargs["response_format"] = response_format
+            extra = _thinking_extra_body(model_name, thinking_mode=thinking_mode, is_vision=False)
+            if extra:
+                kwargs["extra_body"] = extra
             try:
                 return await _create_completion_with_audit(
                     client,
@@ -573,6 +626,8 @@ async def generate_dual_cloud_stream(
     require_system_role_support: bool = False,
     audit_meta: Optional[dict] = None,
     vision_mode: str = "think",
+    thinking_mode: bool = False,
+    per_provider_timeout_seconds: Optional[float] = None,
 ) -> AsyncIterator[Any]:
     started = time.perf_counter()
     completion_stream = await generate_completion_with_failover(
@@ -586,6 +641,8 @@ async def generate_dual_cloud_stream(
         require_system_role_support=require_system_role_support,
         audit_meta=audit_meta,
         vision_mode=vision_mode,
+        thinking_mode=thinking_mode,
+        per_provider_timeout_seconds=per_provider_timeout_seconds,
     )
     if completion_stream is None:
         return
