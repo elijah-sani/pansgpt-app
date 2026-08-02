@@ -20,11 +20,7 @@ FAST_CHAT_SECONDARY = "nvidia/nemotron-3-super-120b-a12b:free" # OpenRouter (Ult
 FAST_CHAT_TERTIARY = "llama-3.3-70b-versatile"               # Groq (Stable fallback)
 FAST_CHAT_QUATERNARY = "gemma-4-26b-a4b-it"                 # Google AI Studio (thinking: False)
 
-# Think Chat Stack
-THINK_CHAT_PRIMARY = "nvidia/nemotron-3-ultra-550b-a55b:free" # OpenRouter (Elite 550B reasoning)
-THINK_CHAT_SECONDARY = "gemma-4-31b-it"                        # Google AI Studio (Native dense reasoning)
-THINK_CHAT_TERTIARY = "qwen/qwen3.6-27b"                       # Groq (Extreme scientific reasoning)
-THINK_CHAT_QUATERNARY = "gemma-4-26b-a4b-it"                   # Google AI Studio (thinking: True)
+# Think Chat Stack — REMOVED (app uses fast mode only)
 
 # Quiz Stack
 QUIZ_PRIMARY = "openai/gpt-oss-120b"                  # Groq (Knowledge accuracy & fast formatting)
@@ -43,15 +39,11 @@ SMALL_TASK_PRIMARY = "llama-3.1-8b-instant"                  # Groq (Instant str
 SMALL_TASK_SECONDARY = "nvidia/nemotron-3-nano-30b-a3b:free" # OpenRouter (MoE-Mamba processing)
 
 # Fast Vision Stack
-FAST_VISION_PRIMARY = "gemma-4-26b-a4b-it"                         # Google AI Studio (thinking: disabled)
-FAST_VISION_SECONDARY = "nvidia/nemotron-nano-12b-v2-vl:free"       # OpenRouter (Specialized for charts/OCR)
-FAST_VISION_TERTIARY = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free" # OpenRouter (reasoning: effort=none)
+FAST_VISION_PRIMARY = "nvidia/nemotron-nano-12b-v2-vl:free"              # OpenRouter (Specialized for charts/OCR, reasoning: effort=none)
+FAST_VISION_SECONDARY = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free" # OpenRouter (reasoning: effort=none)
+FAST_VISION_TERTIARY = "gemma-4-31b-it"                                  # Google AI Studio (think fallback, dense vision)
 
-# Think Vision Stack
-THINK_VISION_PRIMARY = "gemma-4-31b-it"                                      # Google AI Studio (Clinical OCR, thinking: enabled budget=4096)
-THINK_VISION_SECONDARY = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free" # OpenRouter (reasoning: effort=high)
-THINK_VISION_TERTIARY = "gemma-4-26b-a4b-it"                                  # Google AI Studio (thinking: enabled budget=4096)
-THINK_VISION_QUATERNARY = "qwen/qwen3.6-27b"                                   # Groq (last resort fallback)
+# Think Vision Stack — REMOVED (app uses fast vision only)
 
 # Audio Stack
 AUDIO_PRIMARY = "whisper-large-v3-turbo"                      # Groq Audio Transcriptions
@@ -61,61 +53,30 @@ AUDIO_SECONDARY = "whisper-large-v3"                          # Groq Audio Trans
 # Purpose-Driven Model Order Sequences
 # ---------------------------------------------------------------------------
 FAST_TEXT_MODEL_ORDER = [FAST_CHAT_PRIMARY, FAST_CHAT_SECONDARY, FAST_CHAT_TERTIARY, FAST_CHAT_QUATERNARY]
-THINK_TEXT_MODEL_ORDER = [THINK_CHAT_PRIMARY, THINK_CHAT_SECONDARY, THINK_CHAT_TERTIARY, THINK_CHAT_QUATERNARY]
 QUIZ_TEXT_MODEL_ORDER = [QUIZ_PRIMARY, QUIZ_SECONDARY, QUIZ_TERTIARY, QUIZ_QUATERNARY]
 LEARN_MODEL_ORDER = [LEARN_PRIMARY, LEARN_SECONDARY, LEARN_TERTIARY, LEARN_QUATERNARY]
 SMALL_MODEL_ORDER = [SMALL_TASK_PRIMARY, SMALL_TASK_SECONDARY]
 FAST_VISION_MODEL_ORDER = [FAST_VISION_PRIMARY, FAST_VISION_SECONDARY, FAST_VISION_TERTIARY]
-THINK_VISION_MODEL_ORDER = [THINK_VISION_PRIMARY, THINK_VISION_SECONDARY, THINK_VISION_TERTIARY, THINK_VISION_QUATERNARY]
-VISION_MODEL_ORDER = THINK_VISION_MODEL_ORDER
 
 VISION_MODEL_MAX_TOKENS = {
     FAST_VISION_PRIMARY: 768,
     FAST_VISION_SECONDARY: 640,
     FAST_VISION_TERTIARY: 512,
-    THINK_VISION_PRIMARY: 768,
-    THINK_VISION_SECONDARY: 640,
-    THINK_VISION_TERTIARY: 512,
-    THINK_VISION_QUATERNARY: 384,
 }
 
-SYSTEM_ROLE_SAFE_TEXT_MODEL_ORDER = THINK_TEXT_MODEL_ORDER
-SYSTEM_ROLE_SAFE_VISION_MODEL_ORDER = THINK_VISION_MODEL_ORDER
+SYSTEM_ROLE_SAFE_TEXT_MODEL_ORDER = FAST_TEXT_MODEL_ORDER
+SYSTEM_ROLE_SAFE_VISION_MODEL_ORDER = FAST_VISION_MODEL_ORDER
 
 # ---------------------------------------------------------------------------
-# Thinking / Reasoning API Control
+# Reasoning API Control (fast mode only — thinking mode removed)
 # ---------------------------------------------------------------------------
-# Google AI Studio extra_body params (OpenAI-compat endpoint)
-_GOOGLE_THINKING_DISABLED = {"thinking": {"type": "disabled"}}
-_GOOGLE_THINKING_TEXT     = {"thinking": {"type": "enabled", "budget_tokens": 8192}}
-_GOOGLE_THINKING_VISION   = {"thinking": {"type": "enabled", "budget_tokens": 4096}}
-
-# OpenRouter reasoning control params
+# OpenRouter: suppress Chain-of-Thought in fast vision models
 _OR_REASONING_NONE = {"reasoning": {"effort": "none", "exclude": True}}
-_OR_REASONING_HIGH = {"reasoning": {"effort": "high", "exclude": False}}
 
-# model_name -> (fast_extra_body, think_extra_body)
-# None = no extra_body for that mode (model doesn't support param in that slot)
-_MODEL_THINKING_PARAMS: dict[str, tuple[dict | None, dict | None]] = {
-    # Google Gemma — uses prompt-level tokens (<|think|>), extra_body not supported by Google API
-    "gemma-4-26b-a4b-it": (None, None),
-    "gemma-4-31b-it":     (None, None),
-    "gemma-4-32b-it":     (None, None),
-    # OpenRouter nemotron-ultra — only appears in think stacks, always high effort
-    "nvidia/nemotron-3-ultra-550b-a55b:free": (None, _OR_REASONING_HIGH),
-    # OpenRouter nemotron-3-nano-omni — supports reasoning param in both modes
-    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": (_OR_REASONING_NONE, _OR_REASONING_HIGH),
-}
-
-_MODEL_VISION_THINKING_PARAMS: dict[str, tuple[dict | None, dict | None]] = {
-    # Google Gemma — uses prompt-level tokens (<|think|>), extra_body not supported by Google API
-    "gemma-4-26b-a4b-it": (None, None),
-    "gemma-4-31b-it":     (None, None),
-    "gemma-4-32b-it":     (None, None),
-    # OpenRouter nemotron-3-nano-omni — supports reasoning param
-    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": (_OR_REASONING_NONE, _OR_REASONING_HIGH),
-    # OpenRouter nemotron-nano — disable spontaneous CoT in fast vision
-    "nvidia/nemotron-nano-12b-v2-vl:free": (_OR_REASONING_NONE, None),
+# model_name -> extra_body for fast mode (None = no extra_body needed)
+_MODEL_VISION_FAST_PARAMS: dict[str, dict | None] = {
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": _OR_REASONING_NONE,
+    "nvidia/nemotron-nano-12b-v2-vl:free": _OR_REASONING_NONE,
 }
 
 # ---------------------------------------------------------------------------
@@ -226,48 +187,9 @@ def _response_format_mode(response_format: Optional[dict]) -> str:
     return str(response_format.get("type") or "unknown")
 
 
-def _thinking_extra_body(
-    model_name: str,
-    *,
-    thinking_mode: bool,
-    is_vision: bool = False,
-) -> dict | None:
-    """Return extra_body for thinking/reasoning API control, or None if model doesn't support it."""
-    table = _MODEL_VISION_THINKING_PARAMS if is_vision else _MODEL_THINKING_PARAMS
-    entry = table.get(model_name)
-    if entry is None:
-        return None
-    fast_body, think_body = entry
-    return think_body if thinking_mode else fast_body
-
-
-def _format_messages_for_thinking(model_name: str, messages: list, thinking_mode: bool) -> list:
-    """Inject prompt-level thinking token (<|think|>) for Gemma models in thinking mode."""
-    if not thinking_mode or not model_name.startswith("gemma-"):
-        return messages
-    new_messages = []
-    think_prefix_added = False
-    for msg in messages:
-        if not isinstance(msg, dict):
-            new_messages.append(msg)
-            continue
-        msg_copy = dict(msg)
-        if not think_prefix_added and msg_copy.get("role") in ("system", "user"):
-            content = msg_copy.get("content")
-            if isinstance(content, str):
-                if not content.startswith("<|think|>"):
-                    msg_copy["content"] = "<|think|>\n" + content
-                think_prefix_added = True
-            elif isinstance(content, list):
-                updated_content = list(content)
-                if updated_content and isinstance(updated_content[0], dict) and updated_content[0].get("type") == "text":
-                    first_text = updated_content[0].get("text", "")
-                    if not first_text.startswith("<|think|>"):
-                        updated_content[0] = {**updated_content[0], "text": "<|think|>\n" + first_text}
-                    think_prefix_added = True
-                msg_copy["content"] = updated_content
-        new_messages.append(msg_copy)
-    return new_messages
+def _fast_extra_body(model_name: str) -> dict | None:
+    """Return extra_body for fast-mode API control, or None if not needed for this model."""
+    return _MODEL_VISION_FAST_PARAMS.get(model_name)
 
 
 def _client_for_text_model(model_name: str) -> Any:
@@ -308,10 +230,10 @@ def _client_for_text_model(model_name: str) -> Any:
 
 def _all_text_order() -> list[tuple[str, str]]:
     return [
-        ("THINK_CHAT_PRIMARY", THINK_CHAT_PRIMARY),
-        ("THINK_CHAT_SECONDARY", THINK_CHAT_SECONDARY),
         ("FAST_CHAT_PRIMARY", FAST_CHAT_PRIMARY),
         ("FAST_CHAT_SECONDARY", FAST_CHAT_SECONDARY),
+        ("FAST_CHAT_TERTIARY", FAST_CHAT_TERTIARY),
+        ("FAST_CHAT_QUATERNARY", FAST_CHAT_QUATERNARY),
         ("SMALL_TASK_PRIMARY", SMALL_TASK_PRIMARY),
         ("SMALL_TASK_SECONDARY", SMALL_TASK_SECONDARY),
     ]
@@ -323,7 +245,7 @@ def _max_tokens_for_text_model(model_name: str, requested_max_tokens: int) -> in
     return requested_max_tokens
 
 
-def _log_quiz_provider_timing(event: str, duration_ms: float, model: str, response_format: Optional[dict], audit_meta: Optional[dict] = None, **extra: Any) -> None:
+def _log_llm_provider_timing(event: str, duration_ms: float, model: str, response_format: Optional[dict], audit_meta: Optional[dict] = None, **extra: Any) -> None:
     meta = {
         "model": model,
         "response_format_mode": _response_format_mode(response_format),
@@ -333,7 +255,7 @@ def _log_quiz_provider_timing(event: str, duration_ms: float, model: str, respon
     safe_meta = {key: value for key, value in meta.items() if value is not None and value != ""}
     meta_str = " ".join(f"{key}={safe_meta[key]}" for key in sorted(safe_meta))
     logger.info(
-        "[quiz_generation_timing] event=%s duration_ms=%.2f%s",
+        "[llm_provider_timing] event=%s duration_ms=%.2f%s",
         event,
         duration_ms,
         f" {meta_str}" if meta_str else "",
@@ -351,7 +273,7 @@ async def _create_completion_with_audit(
     response_format = kwargs.get("response_format")
     messages = kwargs.get("messages") or []
     started = time.perf_counter()
-    _log_quiz_provider_timing("llm_provider_call_started", 0.0, model, response_format, audit_meta)
+    _log_llm_provider_timing("llm_provider_call_started", 0.0, model, response_format, audit_meta)
 
     # Prompt character estimation
     _meta = audit_meta or {}
@@ -373,7 +295,7 @@ async def _create_completion_with_audit(
             raise ValueError(f"{model} returned empty or thinking-only response content")
 
         _latency_ms = (time.perf_counter() - started) * 1000
-        _log_quiz_provider_timing(
+        _log_llm_provider_timing(
             "llm_provider_call_completed",
             _latency_ms,
             model,
@@ -418,7 +340,7 @@ async def _create_completion_with_audit(
         return res
     except asyncio.TimeoutError as exc:
         _latency_ms = (time.perf_counter() - started) * 1000
-        _log_quiz_provider_timing(
+        _log_llm_provider_timing(
             "llm_provider_call_timeout",
             _latency_ms,
             model,
@@ -442,7 +364,7 @@ async def _create_completion_with_audit(
         raise
     except Exception as exc:
         _latency_ms = (time.perf_counter() - started) * 1000
-        _log_quiz_provider_timing(
+        _log_llm_provider_timing(
             "llm_provider_call_failed",
             _latency_ms,
             model,
@@ -479,13 +401,11 @@ async def generate_completion_with_failover(
     per_provider_timeout_seconds: Optional[float] = None,
     preferred_models: Optional[list[str]] = None,
     require_system_role_support: bool = False,
-    vision_mode: str = "think",
-    thinking_mode: bool = False,
 ) -> Optional[Any]:
     if force_google:
         if google_client is None:
             raise RuntimeError("Google fallback client not initialized.")
-        forced_model = THINK_VISION_PRIMARY if has_images else THINK_CHAT_SECONDARY
+        forced_model = FAST_VISION_PRIMARY if has_images else FAST_CHAT_PRIMARY
         logger.info(f"[INFO] Forcing generation with Google model: {forced_model}")
         logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "FORCE_GOOGLE", forced_model)
         
@@ -527,11 +447,10 @@ async def generate_completion_with_failover(
                     )
             raise exc
 
-    # --- Vision path ---
+    # --- Vision path (always fast) ---
     if has_images:
         last_exc = None
-        base_vision_order = FAST_VISION_MODEL_ORDER if vision_mode == "fast" else THINK_VISION_MODEL_ORDER
-        default_vision_order = SYSTEM_ROLE_SAFE_VISION_MODEL_ORDER if require_system_role_support else base_vision_order
+        default_vision_order = FAST_VISION_MODEL_ORDER
         if preferred_models:
             preferred_set = set(preferred_models)
             vision_order = list(preferred_models) + [model_name for model_name in default_vision_order if model_name not in preferred_set]
@@ -547,15 +466,15 @@ async def generate_completion_with_failover(
                 if client is openrouter_client:
                     vision_max_tokens = min(vision_max_tokens, OPENROUTER_FALLBACK_MAX_TOKENS)
 
-                logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or ("FAST_VISION_PRIMARY" if vision_mode == "fast" else "THINK_VISION_PRIMARY"), model_name)
+                logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "FAST_VISION_PRIMARY", model_name)
                 kwargs = {
                     "model": model_name,
-                    "messages": _format_messages_for_thinking(model_name, messages, thinking_mode),
+                    "messages": messages,
                     "temperature": temperature,
                     "max_tokens": vision_max_tokens,
                     "stream": stream,
                 }
-                extra = _thinking_extra_body(model_name, thinking_mode=thinking_mode, is_vision=True)
+                extra = _fast_extra_body(model_name)
                 if extra:
                     kwargs["extra_body"] = extra
                 return await _create_completion_with_audit(
@@ -598,19 +517,16 @@ async def generate_completion_with_failover(
         if client is None:
             continue
         try:
-            logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "TEXT_PRIMARY", model_name)
+            logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "FAST_CHAT_PRIMARY", model_name)
             kwargs = {
                 "model": model_name,
-                "messages": _format_messages_for_thinking(model_name, messages, thinking_mode),
+                "messages": messages,
                 "temperature": temperature,
                 "max_tokens": _max_tokens_for_text_model(model_name, max_tokens),
                 "stream": stream,
             }
             if response_format:
                 kwargs["response_format"] = response_format
-            extra = _thinking_extra_body(model_name, thinking_mode=thinking_mode, is_vision=False)
-            if extra:
-                kwargs["extra_body"] = extra
             try:
                 return await _create_completion_with_audit(
                     client,
@@ -659,8 +575,6 @@ async def generate_dual_cloud_stream(
     preferred_models: Optional[list[str]] = None,
     require_system_role_support: bool = False,
     audit_meta: Optional[dict] = None,
-    vision_mode: str = "think",
-    thinking_mode: bool = False,
     per_provider_timeout_seconds: Optional[float] = None,
 ) -> AsyncIterator[Any]:
     started = time.perf_counter()
@@ -674,8 +588,6 @@ async def generate_dual_cloud_stream(
         preferred_models=preferred_models,
         require_system_role_support=require_system_role_support,
         audit_meta=audit_meta,
-        vision_mode=vision_mode,
-        thinking_mode=thinking_mode,
         per_provider_timeout_seconds=per_provider_timeout_seconds,
     )
     if completion_stream is None:
@@ -683,7 +595,7 @@ async def generate_dual_cloud_stream(
 
     _meta = audit_meta or {}
     accumulated_chars = 0
-    actual_model = requested_model or ((FAST_VISION_PRIMARY if vision_mode == "fast" else THINK_VISION_PRIMARY) if has_images else FAST_CHAT_PRIMARY)
+    actual_model = requested_model or (FAST_VISION_PRIMARY if has_images else FAST_CHAT_PRIMARY)
 
     try:
         async for chunk in completion_stream:
@@ -776,6 +688,9 @@ async def generate_small_completion_with_failover(
                 "max_tokens": max_tokens,
                 "stream": stream,
             }
+            extra = _fast_extra_body(model_name)
+            if extra:
+                kwargs["extra_body"] = extra
             return await _create_completion_with_audit(
                 client,
                 kwargs,

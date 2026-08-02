@@ -4,7 +4,7 @@ import React, { useCallback, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowUp, Globe, ImageIcon, Loader2, Mic, Paperclip, Square, X } from 'lucide-react';
 import { InlineWaveform } from '@/components/InlineWaveform';
-import ThinkingModeToggle from '@/components/ThinkingModeToggle';
+
 
 type ChatInputProps = {
   pendingAttachments: string[];
@@ -31,8 +31,7 @@ type ChatInputProps = {
   onDropImage: (base64: string) => void;
   /** Number of messages queued while a response is in-flight. Shows a badge on the stop button. */
   queuedMessageCount?: number;
-  thinkingMode?: boolean;
-  onThinkingModeChange?: (value: boolean) => void;
+
   compactSpacing?: boolean;
   variant?: 'default' | 'welcome';
   placeholder?: string;
@@ -62,8 +61,7 @@ export default function ChatInput({
   onSendMessage,
   onDropImage,
   queuedMessageCount = 0,
-  thinkingMode = false,
-  onThinkingModeChange,
+
   compactSpacing = false,
   variant = 'default',
   placeholder = 'Ask anything...',

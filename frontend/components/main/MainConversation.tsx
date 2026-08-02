@@ -243,10 +243,6 @@ type MainConversationProps = {
   webSearchUsage: WebSearchUsage;
   /** Number of messages queued while isLoading — shown as a badge on the stop button. */
   queuedMessageCount?: number;
-  thinkingMode: boolean;
-  onThinkingModeChange: (value: boolean) => void;
-  thinkingText: string;
-  isThinking: boolean;
   studentFirstName: string;
 };
 
@@ -296,10 +292,6 @@ export function MainConversation({
   webSearchAvailable,
   webSearchUsage,
   queuedMessageCount = 0,
-  thinkingMode,
-  onThinkingModeChange,
-  thinkingText,
-  isThinking,
   studentFirstName,
 }: MainConversationProps) {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
@@ -612,8 +604,6 @@ export function MainConversation({
       onSendMessage={handleSendMessage}
       onDropImage={onDropImage}
       queuedMessageCount={queuedMessageCount}
-      thinkingMode={thinkingMode}
-      onThinkingModeChange={onThinkingModeChange}
       compactSpacing={compactSpacing}
       variant={variant}
       placeholder={placeholder}
@@ -848,8 +838,6 @@ export function MainConversation({
                           onAddToNote={openBookmarkModal}
                           noteActionIcon="bookmark"
                           onRegenerate={index === messages.length - 1 && activeSessionId ? handleRegenerate : undefined}
-                          thinkingText={isStreamingAI ? thinkingText : message.thinking_text}
-                          isThinkingStreaming={isThinking && isStreamingAI}
                         />
                       </>
                     )}

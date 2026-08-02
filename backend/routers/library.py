@@ -685,7 +685,6 @@ async def analyze_image_with_llama(
                 max_tokens=500,
                 has_images=True,
                 stream=False,
-                vision_mode="fast"
             )
             if not response:
                 raise RuntimeError("Vision analysis failed on all clients")
@@ -990,7 +989,7 @@ async def generate_document_sections(
             has_images=False,
             stream=False,
             force_google=False,
-            requested_model=llm_engine.THINK_CHAT_PRIMARY,
+            requested_model=llm_engine.FAST_CHAT_PRIMARY,
             response_format={"type": "json_object"},
             audit_meta={"document_id": document_id, "request_type": "document_processing", "action": "generate_document_sections"}
         )

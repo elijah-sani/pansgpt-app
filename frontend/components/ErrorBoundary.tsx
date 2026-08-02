@@ -104,24 +104,19 @@ class ErrorBoundary extends Component<Props, State> {
             }
 
             return (
-                <ErrorRecoveryView
-                    title="Something went wrong"
-                    description={
-                        this.state.loopDetected
-                            ? 'This screen keeps crashing. Open a safe section home or refresh the app before trying again.'
-                            : 'We encountered an unexpected error. Try recovering the app or open a safe home route.'
-                    }
-                    sectionLabel={this.state.sectionLabel}
-                    errorMessage={this.state.error?.message || null}
-                    fullScreen
-                    retryLabel={this.state.loopDetected ? 'Retry App' : 'Try Again'}
-                    onRetry={this.handleRetry}
-                    retryDisabled={false}
-                    secondaryLabel="Go to Safe Home"
-                    onSecondaryAction={() => window.location.assign(this.state.safeHomeHref || '/')}
-                    tertiaryLabel="Refresh Page"
-                    onTertiaryAction={() => window.location.reload()}
-                />
+                    <ErrorRecoveryView
+                        title="Something went wrong"
+                        description={
+                            this.state.loopDetected
+                                ? 'This screen keeps crashing. Open a safe section home or refresh the app before trying again.'
+                                : 'We encountered an unexpected error. Try recovering the app or open a safe home route.'
+                        }
+                        errorMessage={this.state.error?.message || null}
+                        fullScreen
+                        retryLabel={this.state.loopDetected ? 'Retry App' : 'Try Again'}
+                        onRetry={this.handleRetry}
+                        retryDisabled={false}
+                    />
             );
         }
 

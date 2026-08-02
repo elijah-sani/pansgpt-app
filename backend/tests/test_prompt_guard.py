@@ -39,14 +39,13 @@ from services.policy_guard import (  # noqa: E402
 from services.llm_engine import (  # noqa: E402
     SYSTEM_ROLE_SAFE_TEXT_MODEL_ORDER,
     SYSTEM_ROLE_SAFE_VISION_MODEL_ORDER,
-    THINK_CHAT_PRIMARY,
-    THINK_CHAT_SECONDARY,
-    THINK_CHAT_TERTIARY,
-    THINK_CHAT_QUATERNARY,
-    THINK_VISION_PRIMARY,
-    THINK_VISION_SECONDARY,
-    THINK_VISION_TERTIARY,
-    THINK_VISION_QUATERNARY,
+    FAST_CHAT_PRIMARY,
+    FAST_CHAT_SECONDARY,
+    FAST_CHAT_TERTIARY,
+    FAST_CHAT_QUATERNARY,
+    FAST_VISION_PRIMARY,
+    FAST_VISION_SECONDARY,
+    FAST_VISION_TERTIARY,
 )
 
 
@@ -282,18 +281,17 @@ def test_quiz_grading_helper_blocks_leaked_output(monkeypatch: pytest.MonkeyPatc
         asyncio.run(_generate_quiz_grading_response("system", "user"))
 
 
-def test_system_role_safe_model_orders_match_current_think_routing():
+def test_system_role_safe_model_orders_match_current_fast_routing():
     assert SYSTEM_ROLE_SAFE_TEXT_MODEL_ORDER == [
-        THINK_CHAT_PRIMARY,
-        THINK_CHAT_SECONDARY,
-        THINK_CHAT_TERTIARY,
-        THINK_CHAT_QUATERNARY,
+        FAST_CHAT_PRIMARY,
+        FAST_CHAT_SECONDARY,
+        FAST_CHAT_TERTIARY,
+        FAST_CHAT_QUATERNARY,
     ]
     assert SYSTEM_ROLE_SAFE_VISION_MODEL_ORDER == [
-        THINK_VISION_PRIMARY,
-        THINK_VISION_SECONDARY,
-        THINK_VISION_TERTIARY,
-        THINK_VISION_QUATERNARY,
+        FAST_VISION_PRIMARY,
+        FAST_VISION_SECONDARY,
+        FAST_VISION_TERTIARY,
     ]
 
 

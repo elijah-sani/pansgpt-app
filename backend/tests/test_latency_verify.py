@@ -20,9 +20,8 @@ async def test_llm_engine_routing():
     print("Running LLM engine routing tests...")
     
     # Verify model names are defined
-    assert hasattr(llm_engine, "THINK_CHAT_PRIMARY")
     assert hasattr(llm_engine, "FAST_CHAT_PRIMARY")
-    assert hasattr(llm_engine, "THINK_CHAT_TERTIARY")
+    assert hasattr(llm_engine, "FAST_CHAT_SECONDARY")
     
     # Mock clients to prevent real API calls
     mock_google = AsyncMock()
@@ -55,22 +54,22 @@ async def test_llm_engine_routing():
             stream=False,
         )
         
-        # Reset and test 2: Requested model THINK_CHAT_PRIMARY (Thinking Mode)
+        # Reset and test 2: Requested model FAST_CHAT_SECONDARY (fast mode fallback)
         mock_openrouter.chat.completions.create.reset_mock()
         
-        # We simulate openrouter_client success
+        # We simulate openrouter_client for the secondary model
         mock_openrouter.chat.completions.create.return_value = AsyncMock()
         
         await llm_engine.generate_completion_with_failover(
             messages=messages,
             temperature=0.7,
             max_tokens=100,
-            requested_model="THINK_CHAT_PRIMARY",
+            requested_model="FAST_CHAT_SECONDARY",
         )
         
-        # Check that it called the OpenRouter client with the primary model first
+        # Check that it called with the secondary model
         mock_openrouter.chat.completions.create.assert_called_with(
-            model=llm_engine.THINK_CHAT_PRIMARY,
+            model=llm_engine.FAST_CHAT_SECONDARY,
             messages=messages,
             temperature=0.7,
             max_tokens=100,
@@ -140,18 +139,18 @@ async def test_llm_engine_routing():
 async def test_llm_engine_streaming_response_does_not_touch_choices():
     messages = [{"role": "user", "content": "hello"}]
     fake_stream = _FakeAsyncStream()
-    mock_google = AsyncMock()
-    mock_google.chat.completions.create.return_value = fake_stream
+    mock_openrouter = AsyncMock()
+    mock_openrouter.chat.completions.create.return_value = fake_stream
 
-    with patch("services.llm_engine.google_client", mock_google), \
-         patch("services.llm_engine.openrouter_client", AsyncMock()), \
+    with patch("services.llm_engine.google_client", AsyncMock()), \
+         patch("services.llm_engine.openrouter_client", mock_openrouter), \
          patch("services.llm_engine.groq_client", AsyncMock()), \
          patch("services.llm_engine.groq_text_client", AsyncMock()):
         result = await llm_engine.generate_completion_with_failover(
             messages=messages,
             temperature=0.7,
             max_tokens=100,
-            requested_model="THINK_CHAT_SECONDARY",
+            requested_model="FAST_CHAT_SECONDARY",
             stream=True,
         )
 

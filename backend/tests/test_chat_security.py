@@ -157,7 +157,6 @@ def test_chat_edit_endpoint_blocks_prompt_extraction_request(client: TestClient)
             "session_id": "session-1",
             "message_id": "message-1",
             "new_text": attack["text"],
-            "thinking_mode": False,
         },
     )
 
@@ -258,7 +257,7 @@ def test_chat_regenerate_endpoint_blocks_malicious_last_user_message(
     response = client.post(
         "/chat/session-1/regenerate",
         headers={"x-api-key": "test"},
-        json={"thinking_mode": False},
+        json={},
     )
 
     assert response.status_code == 200
@@ -326,7 +325,7 @@ def test_chat_regenerate_skips_invalid_stored_history_roles(
     response = client.post(
         "/chat/session-1/regenerate",
         headers={"x-api-key": "test"},
-        json={"thinking_mode": False},
+        json={},
     )
 
     assert response.status_code == 200

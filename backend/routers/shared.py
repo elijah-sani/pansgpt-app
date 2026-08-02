@@ -100,7 +100,7 @@ def _is_generic_title(title: str) -> bool:
         "study help",
         "conversation",
         "untitled",
-        "small talk",
+        "initial greeting",
     }
     if lower in generic_phrases:
         return True
@@ -200,6 +200,7 @@ async def _execute_with_retry(execute_fn, operation_name: str, max_attempts: int
                 await asyncio.sleep(1)
                 continue
             raise
+    assert last_error is not None  # loop always sets this before reaching here
     raise last_error
 
 async def _assert_session_owner(session_id: str, current_user: User):
@@ -637,7 +638,6 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None # For history persistence
     is_retry: bool = False  # If True, skip saving user message (already in DB from failed attempt)
     web_search: bool = False  # If True, augment response with live Tavily web search results
-    thinking_mode: bool = False  # If True, strip+stream thinking tokens via ThinkingStreamParser
 
     @field_validator('text', mode='before')  # changed: strip HTML tags, null bytes, enforce 4000-char limit
     @classmethod
@@ -951,6 +951,7 @@ async def get_relevant_context(
     academic_session: Optional[str] = None,
     semester: Optional[str] = None,
     rag_match_count: Optional[int] = None,  # [AGENTIC LAYER] — planner-supplied chunk count overrides heuristic
+    match_threshold: Optional[float] = None,
     *,
     _out_rpc_rows: Optional[list] = None,
 ) -> tuple[str, list[dict]]:
@@ -961,6 +962,7 @@ async def get_relevant_context(
         user_question: The user's question/text
         document_id: Drive file ID or Supabase UUID of the PDF (Local RAG)
         user_level: Student level for Global RAG filtering
+        match_threshold: Optional similarity threshold override (0.0 to 1.0)
         
     Returns:
         Tuple of:
@@ -999,9 +1001,12 @@ async def get_relevant_context(
         query_vector = embed_result['embedding']
         logger.info(f"Embedded query: {len(query_vector)} dimensions")
 
-        # Fetch dynamic settings for threshold
-        settings = await get_cached_settings()
-        match_threshold = float(settings.get("rag_threshold", 0.50)) if settings and settings.get("rag_threshold") is not None else float(os.getenv("RAG_MATCH_THRESHOLD", "0.50"))
+        # Fetch dynamic settings for threshold (overridden if explicitly passed)
+        if match_threshold is None:
+            settings = await get_cached_settings()
+            match_threshold = float(settings.get("rag_threshold", 0.50)) if settings and settings.get("rag_threshold") is not None else float(os.getenv("RAG_MATCH_THRESHOLD", "0.50"))
+        else:
+            match_threshold = float(match_threshold)
 
         # [AGENTIC LAYER - superseded] Detect broad/listing queries — kept as fallback when no planner count provided
         _BROAD_QUERY_KEYWORDS = {
@@ -1522,7 +1527,6 @@ STREAMING_PLANNER_DEFAULTS = {
     "run_web_search": False,
     "fetch_timetable": True,
     "fetch_faculty": True,
-    "enable_deep_final_reasoning": False,
     "search_queries": [],
 }
 
@@ -1531,7 +1535,6 @@ FAST_MODE_DEFAULTS = {
     "run_web_search": False,
     "fetch_timetable": False,
     "fetch_faculty": True,
-    "enable_deep_final_reasoning": False,
     "search_queries": [],
 }
 PUBLIC_PLANNER_FALLBACK = (
@@ -1574,7 +1577,6 @@ def _validate_pipeline_plan(parsed: dict[str, Any]) -> dict:
         "run_web_search": bool(parsed.get("run_web_search", STREAMING_PLANNER_DEFAULTS["run_web_search"])),
         "fetch_timetable": bool(parsed.get("fetch_timetable", STREAMING_PLANNER_DEFAULTS["fetch_timetable"])),
         "fetch_faculty": bool(parsed.get("fetch_faculty", STREAMING_PLANNER_DEFAULTS["fetch_faculty"])),
-        "enable_deep_final_reasoning": bool(parsed.get("enable_deep_final_reasoning", STREAMING_PLANNER_DEFAULTS["enable_deep_final_reasoning"])),
     }
     if result["rag_chunk_count"] not in (3, 4, 6, 10):
         result["rag_chunk_count"] = STREAMING_PLANNER_DEFAULTS["rag_chunk_count"]
@@ -1787,7 +1789,7 @@ Return exactly:
 2-5 short natural paragraphs.
 </public_thought>
 <routing>
-{{"rag_chunk_count": <3|6|10>, "run_web_search": <bool>, "fetch_timetable": <bool>, "fetch_faculty": <bool>, "enable_deep_final_reasoning": <bool>, "search_queries": [{{"query": "<keywords>", "status": "<custom status action message>"}}]}}
+{{"rag_chunk_count": <3|6|10>, "run_web_search": <bool>, "fetch_timetable": <bool>, "fetch_faculty": <bool>, "search_queries": [{{"query": "<keywords>", "status": "<custom status action message>"}}]}}
 </routing>
 
 For simple questions, use 2-3 short paragraphs.

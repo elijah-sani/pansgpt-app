@@ -45,14 +45,9 @@ export default function RouteErrorState({
     <ErrorRecoveryView
       title={title}
       description={description}
-      sectionLabel={getSectionLabel(section)}
       errorMessage={error.message}
       retryLabel="Retry Page"
       onRetry={reset}
-      secondaryLabel="Go to Section Home"
-      onSecondaryAction={() => window.location.assign(safeHomeHref)}
-      tertiaryLabel="Refresh"
-      onTertiaryAction={() => window.location.reload()}
     />
   );
 }

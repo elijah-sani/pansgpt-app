@@ -105,7 +105,6 @@ def run_query_timing(question: str, thinking_mode: bool):
         "text": question,
         "mode": "chat",
         "session_id": "test-session-id",
-        "thinking_mode": thinking_mode
     }
     
     start_time = time.perf_counter()
@@ -172,7 +171,7 @@ def run_query_timing(question: str, thinking_mode: bool):
     actual_model = stages.get("actual_model_attempted", selected_model)
     requested_model = stages.get(
         "requested_model",
-        llm_engine.THINK_CHAT_PRIMARY if thinking_mode else llm_engine.FAST_CHAT_PRIMARY,
+        llm_engine.FAST_CHAT_PRIMARY,
     )
     
     # Parse parameter values from logged metadata
@@ -180,18 +179,13 @@ def run_query_timing(question: str, thinking_mode: bool):
     run_web_search = stages.get("run_web_search") == "True"
     fetch_timetable = stages.get("fetch_timetable") == "True"
     fetch_faculty = stages.get("fetch_faculty") == "True"
-    enable_deep_final_reasoning = stages.get("enable_deep_final_reasoning") == "True"
     
     pipeline_params = {
         "rag_chunk_count": int(rag_chunk_count) if rag_chunk_count.isdigit() else rag_chunk_count,
         "run_web_search": run_web_search,
         "fetch_timetable": fetch_timetable,
         "fetch_faculty": fetch_faculty,
-        "enable_deep_final_reasoning": enable_deep_final_reasoning,
     }
-    
-    # /no_think is enabled if thinking_mode is False OR enable_deep_final_reasoning is False
-    no_think_enabled = not thinking_mode or not enable_deep_final_reasoning
     
     return {
         "planner_duration": planner_duration,
@@ -199,8 +193,6 @@ def run_query_timing(question: str, thinking_mode: bool):
         "context_gathering": context_gathering,
         "requested_model": requested_model,
         "actual_model": actual_model,
-        "no_think_enabled": no_think_enabled,
-        "enable_deep_final_reasoning": enable_deep_final_reasoning,
         "first_visible_delta": first_visible_delta_ms,
         "total_duration": total_duration,
         "pipeline_params": pipeline_params,
@@ -291,37 +283,33 @@ def main():
     
     for i, q in enumerate(questions):
         print(f"Test {i+1} - {q[:45]}...")
-        fast_bef, think_bef = before_results[i]
-        fast_aft, think_aft = after_results[i]
+        fast_bef, fast_aft = before_results[i][0], after_results[i][0]
         
-        headers = ["Metric", "Fast Before", "Fast After", "Thinking Before", "Thinking After"]
+        headers = ["Metric", "Before", "After"]
         metrics = [
-            ("Planner duration", f"{fast_bef['planner_duration']:.1f} ms", f"{fast_aft['planner_duration']:.1f} ms", f"{think_bef['planner_duration']:.1f} ms", f"{think_aft['planner_duration']:.1f} ms"),
-            ("Preflight duration", f"{fast_bef['preflight_duration']:.1f} ms", f"{fast_aft['preflight_duration']:.1f} ms", f"{think_bef['preflight_duration']:.1f} ms", f"{think_aft['preflight_duration']:.1f} ms"),
-            ("Context + RAG gathering", f"{fast_bef['context_gathering']:.1f} ms", f"{fast_aft['context_gathering']:.1f} ms", f"{think_bef['context_gathering']:.1f} ms", f"{think_aft['context_gathering']:.1f} ms"),
-            ("Requested model", fast_bef['requested_model'], fast_aft['requested_model'], think_bef['requested_model'], think_aft['requested_model']),
-            ("First actual model attempted", fast_bef['actual_model'], fast_aft['actual_model'], think_bef['actual_model'], think_aft['actual_model']),
-            ("`/no_think` enabled", str(fast_bef['no_think_enabled']), str(fast_aft['no_think_enabled']), str(think_bef['no_think_enabled']), str(think_aft['no_think_enabled'])),
-            ("`enable_deep_final_reasoning`", str(fast_bef['enable_deep_final_reasoning']), str(fast_aft['enable_deep_final_reasoning']), str(think_bef['enable_deep_final_reasoning']), str(think_aft['enable_deep_final_reasoning'])),
-            ("Main model start -> first delta", f"{fast_bef['first_visible_delta']:.1f} ms", f"{fast_aft['first_visible_delta']:.1f} ms", f"{think_bef['first_visible_delta']:.1f} ms", f"{think_aft['first_visible_delta']:.1f} ms"),
-            ("Total duration", f"{fast_bef['total_duration']:.1f} ms", f"{fast_aft['total_duration']:.1f} ms", f"{think_bef['total_duration']:.1f} ms", f"{think_aft['total_duration']:.1f} ms"),
+            ("Planner duration", f"{fast_bef['planner_duration']:.1f} ms", f"{fast_aft['planner_duration']:.1f} ms"),
+            ("Preflight duration", f"{fast_bef['preflight_duration']:.1f} ms", f"{fast_aft['preflight_duration']:.1f} ms"),
+            ("Context + RAG gathering", f"{fast_bef['context_gathering']:.1f} ms", f"{fast_aft['context_gathering']:.1f} ms"),
+            ("Requested model", fast_bef['requested_model'], fast_aft['requested_model']),
+            ("First actual model attempted", fast_bef['actual_model'], fast_aft['actual_model']),
+            ("Main model start -> first delta", f"{fast_bef['first_visible_delta']:.1f} ms", f"{fast_aft['first_visible_delta']:.1f} ms"),
+            ("Total duration", f"{fast_bef['total_duration']:.1f} ms", f"{fast_aft['total_duration']:.1f} ms"),
         ]
         
-        row_format = "{:<32} | {:>15} | {:>15} | {:>15} | {:>15}"
+        row_format = "{:<32} | {:>20} | {:>20}"
         print(row_format.format(*headers))
-        print("-" * 100)
+        print("-" * 78)
         for m in metrics:
             print(row_format.format(*m))
         print("\n" + "="*80 + "\n")
         
-        # Also print the specific planner routing parameters for the thinking test
-        print(f"Thinking Mode Planner Decisions for Test {i+1}:")
-        params = think_aft['pipeline_params']
-        print(f"  rag_chunk_count:             {params.get('rag_chunk_count')}")
-        print(f"  run_web_search:              {params.get('run_web_search')}")
-        print(f"  fetch_timetable:             {params.get('fetch_timetable')}")
-        print(f"  fetch_faculty:               {params.get('fetch_faculty')}")
-        print(f"  enable_deep_final_reasoning: {params.get('enable_deep_final_reasoning')}")
+        # Print the planner routing parameters for the fast run
+        print(f"Fast Mode Planner Decisions for Test {i+1}:")
+        params = fast_aft['pipeline_params']
+        print(f"  rag_chunk_count:  {params.get('rag_chunk_count')}")
+        print(f"  run_web_search:   {params.get('run_web_search')}")
+        print(f"  fetch_timetable:  {params.get('fetch_timetable')}")
+        print(f"  fetch_faculty:    {params.get('fetch_faculty')}")
         print("\n" + "="*80 + "\n")
 
 if __name__ == "__main__":

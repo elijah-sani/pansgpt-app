@@ -112,8 +112,6 @@ function SidebarChatHistorySection({
                   errorMessage={error.message}
                   retryLabel="Retry Chats"
                   onRetry={retry}
-                  secondaryLabel="Hide Panel"
-                  onSecondaryAction={() => setIsChatHistoryOpen(false)}
                 />
               )}
             >
@@ -184,6 +182,12 @@ export default function AppSidebar({
   const isIconOnly = !isOpen;
 
   useEffect(() => {
+    // NOTE: Notes polling is currently disabled because the Notes UI feature
+    // is commented out and not visible to users. When the Notes tab is
+    // re-enabled in the sidebar, restore this fetch/polling logic and
+    // remove this return statement.
+    return;
+
     if (isIconOnly || !(isOnMain || isOnReader || isOnQuiz || isOnNotes)) return;
 
     let isCancelled = false;
