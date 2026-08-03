@@ -54,8 +54,6 @@ export default function ReaderPage() {
                         errorMessage={error.message}
                         retryLabel="Refresh Page"
                         onRetry={() => window.location.reload()}
-                        secondaryLabel="Back"
-                        onSecondaryAction={() => window.location.assign('/reader')}
                     />
                 )}
             >

@@ -283,12 +283,9 @@ export default function LecturerProtectedLayout({ children }: { children: React.
             <ErrorRecoveryView
               title="Lecturer sidebar unavailable"
               description="The lecturer shell navigation hit an unexpected problem. Retry the sidebar without reloading the whole lecturer workspace."
-              sectionLabel="Lecturer"
               errorMessage={error.message}
               retryLabel="Retry Sidebar"
               onRetry={retry}
-              secondaryLabel="Go Home"
-              onSecondaryAction={() => window.location.assign('/lecturer')}
             />
           </aside>
         )}

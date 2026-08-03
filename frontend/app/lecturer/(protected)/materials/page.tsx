@@ -358,12 +358,9 @@ export default function LecturerMaterialsPage() {
               <ErrorRecoveryView
                 title="Material form unavailable"
                 description="The lecturer materials submission form hit an unexpected problem. Retry the form without losing the rest of the page."
-                sectionLabel="Lecturer"
                 errorMessage={error.message}
                 retryLabel="Retry Form"
                 onRetry={retry}
-                secondaryLabel="Go Home"
-                onSecondaryAction={() => window.location.assign('/lecturer')}
               />
             )}
           >
@@ -471,12 +468,9 @@ export default function LecturerMaterialsPage() {
               <ErrorRecoveryView
                 title="Materials list unavailable"
                 description="The submission tracking panel hit an unexpected problem. Retry just this panel and keep the rest of the page available."
-                sectionLabel="Lecturer"
                 errorMessage={error.message}
                 retryLabel="Retry List"
                 onRetry={retry}
-                secondaryLabel="Refresh Data"
-                onSecondaryAction={() => void fetchMaterials(true)}
               />
             )}
           >

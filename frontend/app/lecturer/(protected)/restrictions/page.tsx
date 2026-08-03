@@ -215,12 +215,9 @@ export default function LecturerRestrictionsPage() {
               <ErrorRecoveryView
                 title="Restriction form unavailable"
                 description="The restriction creation form hit an unexpected problem. Retry the form without losing the rest of the lecturer page."
-                sectionLabel="Lecturer"
                 errorMessage={error.message}
                 retryLabel="Retry Form"
                 onRetry={retry}
-                secondaryLabel="Go Home"
-                onSecondaryAction={() => window.location.assign('/lecturer')}
               />
             )}
           >
@@ -342,12 +339,9 @@ export default function LecturerRestrictionsPage() {
               <ErrorRecoveryView
                 title="Restriction history unavailable"
                 description="The restrictions history panel hit an unexpected problem. Retry just this panel and keep the rest of the lecturer page available."
-                sectionLabel="Lecturer"
                 errorMessage={error.message}
                 retryLabel="Retry History"
                 onRetry={retry}
-                secondaryLabel="Refresh Data"
-                onSecondaryAction={() => void fetchRestrictions()}
               />
             )}
           >

@@ -408,8 +408,6 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                                             errorMessage={error.message}
                                             retryLabel="Retry Sidebar"
                                             onRetry={retry}
-                                            secondaryLabel="Go Home"
-                                            onSecondaryAction={() => window.location.assign('/main')}
                                         />
                                     </div>
                                 )}
@@ -453,13 +451,6 @@ function AppLayoutContent({ children }: { children: React.ReactNode }) {
                                         errorMessage={error.message}
                                         retryLabel="Retry Search"
                                         onRetry={retry}
-                                        secondaryLabel="Close"
-                                        onSecondaryAction={() => setIsSearchModalOpen(false)}
-                                        tertiaryLabel="Open Main"
-                                        onTertiaryAction={() => {
-                                            setIsSearchModalOpen(false);
-                                            window.location.assign('/main');
-                                        }}
                                     />
                                 </div>
                             </div>
