@@ -39,9 +39,9 @@ SMALL_TASK_PRIMARY = "llama-3.1-8b-instant"                  # Groq (Instant str
 SMALL_TASK_SECONDARY = "nvidia/nemotron-3-nano-30b-a3b:free" # OpenRouter (MoE-Mamba processing)
 
 # Fast Vision Stack
-FAST_VISION_PRIMARY = "nvidia/nemotron-nano-12b-v2-vl:free"              # OpenRouter (Specialized for charts/OCR, reasoning: effort=none)
-FAST_VISION_SECONDARY = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free" # OpenRouter (reasoning: effort=none)
-FAST_VISION_TERTIARY = "gemma-4-31b-it"                                  # Google AI Studio (think fallback, dense vision)
+FAST_VISION_PRIMARY = "gemma-4-26b-a4b-it"                                  # Google AI Studio (stable, thinking: False)
+FAST_VISION_SECONDARY = "nvidia/nemotron-nano-12b-v2-vl:free"               # OpenRouter (fallback, reasoning: effort=none)
+FAST_VISION_TERTIARY = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free" # OpenRouter (last resort, reasoning: effort=none)
 
 # Think Vision Stack — REMOVED (app uses fast vision only)
 
@@ -59,9 +59,9 @@ SMALL_MODEL_ORDER = [SMALL_TASK_PRIMARY, SMALL_TASK_SECONDARY]
 FAST_VISION_MODEL_ORDER = [FAST_VISION_PRIMARY, FAST_VISION_SECONDARY, FAST_VISION_TERTIARY]
 
 VISION_MODEL_MAX_TOKENS = {
-    FAST_VISION_PRIMARY: 768,
-    FAST_VISION_SECONDARY: 640,
-    FAST_VISION_TERTIARY: 512,
+    FAST_VISION_PRIMARY: 768,    # gemma-4-26b-a4b-it (Google AI Studio)
+    FAST_VISION_SECONDARY: 768,  # nemotron-nano-12b-v2-vl (OpenRouter)
+    FAST_VISION_TERTIARY: 640,   # nemotron-omni-30b (OpenRouter)
 }
 
 SYSTEM_ROLE_SAFE_TEXT_MODEL_ORDER = FAST_TEXT_MODEL_ORDER
@@ -74,9 +74,17 @@ SYSTEM_ROLE_SAFE_VISION_MODEL_ORDER = FAST_VISION_MODEL_ORDER
 _OR_REASONING_NONE = {"reasoning": {"effort": "none", "exclude": True}}
 
 # model_name -> extra_body for fast mode (None = no extra_body needed)
+# Google AI Studio models use the google_client and don't need OpenRouter extra_body
 _MODEL_VISION_FAST_PARAMS: dict[str, dict | None] = {
-    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": _OR_REASONING_NONE,
     "nvidia/nemotron-nano-12b-v2-vl:free": _OR_REASONING_NONE,
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": _OR_REASONING_NONE,
+}
+
+# Google Gemma models that require /nothink\n prepended to suppress internal reasoning tokens
+GOOGLE_NOTHINK_MODELS = {
+    "gemma-4-26b-a4b-it",
+    "gemma-4-31b-it",
+    "gemma-4-32b-it",
 }
 
 # ---------------------------------------------------------------------------
@@ -188,8 +196,34 @@ def _response_format_mode(response_format: Optional[dict]) -> str:
 
 
 def _fast_extra_body(model_name: str) -> dict | None:
-    """Return extra_body for fast-mode API control, or None if not needed for this model."""
+    """Return extra_body for fast-mode API control, or None if not needed for this model.
+    Note: Google Gemma thinking suppression is handled via _inject_nothink(), not extra_body."""
     return _MODEL_VISION_FAST_PARAMS.get(model_name)
+
+
+def _inject_nothink(messages: list[dict], model_name: str) -> list[dict]:
+    """For Google Gemma models, prepend /nothink\n to the first user message text
+    to suppress internal chain-of-thought reasoning tokens in the response."""
+    if model_name not in GOOGLE_NOTHINK_MODELS:
+        return messages
+    result = []
+    injected = False
+    for msg in messages:
+        if not injected and msg.get("role") == "user":
+            content = msg["content"]
+            if isinstance(content, str):
+                msg = {**msg, "content": "/nothink\n" + content}
+                injected = True
+            elif isinstance(content, list):
+                new_parts = []
+                for part in content:
+                    if not injected and isinstance(part, dict) and part.get("type") == "text":
+                        part = {**part, "text": "/nothink\n" + part["text"]}
+                        injected = True
+                    new_parts.append(part)
+                msg = {**msg, "content": new_parts}
+        result.append(msg)
+    return result
 
 
 def _client_for_text_model(model_name: str) -> Any:
@@ -467,9 +501,11 @@ async def generate_completion_with_failover(
                     vision_max_tokens = min(vision_max_tokens, OPENROUTER_FALLBACK_MAX_TOKENS)
 
                 logger.info("CHAT LATENCY requested_model=%s actual_model_attempted=%s", requested_model or "FAST_VISION_PRIMARY", model_name)
+                # Inject /nothink for Gemma (Google AI Studio) or reasoning suppression for OpenRouter
+                effective_messages = _inject_nothink(messages, model_name)
                 kwargs = {
                     "model": model_name,
-                    "messages": messages,
+                    "messages": effective_messages,
                     "temperature": temperature,
                     "max_tokens": vision_max_tokens,
                     "stream": stream,

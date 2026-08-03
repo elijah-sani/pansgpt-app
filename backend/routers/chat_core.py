@@ -1555,7 +1555,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
         logger.info(
             "CHAT LATENCY mode=%s model=%s stage=%s elapsed_ms=%.1f",
             "fast",
-            "unknown",
+            "pending",
             "context_gathering_start",
             (context_start - start_time) * 1000,
         )
