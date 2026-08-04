@@ -31,6 +31,8 @@ interface Message {
     image_data?: string; // Backend field
     images?: string[]; // New Multi-image support
     isThinking?: boolean;
+    processStage?: string;
+    isProcessingStage?: boolean;
 } // Kept for backward compat in message history, but we might want array here too later
 
 import { ChatSession } from '../hooks/useChatHistory';
@@ -646,6 +648,8 @@ export default function ChatInterface({
                                         message={msg}
                                         isThinking={Boolean(msg.isThinking)}
                                         isStreaming={isLoading && i === messages.filter(m => m.role !== 'system').length - 1 && !msg.isThinking}
+                                        isProcessingStage={Boolean(msg.isProcessingStage)}
+                                        processStage={msg.processStage}
                                         showCitationsButton={false}
                                         onAddToNote={contextId ? handleAddResponseToNote : undefined}
                                         onRegenerate={

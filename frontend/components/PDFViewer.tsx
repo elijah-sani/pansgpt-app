@@ -79,6 +79,9 @@ interface Message {
     image_data?: string;
     isThinking?: boolean;
     isStopped?: boolean;
+    processStage?: string;
+    isProcessingStage?: boolean;
+    status?: string;
 }
 
 type NoteParagraphBlock = {
@@ -628,12 +631,22 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         let finalAssistantMessageId: string | null = null;
         let firstTokenReceived = false;
 
+        const updateStreamingStatus = (status: string) => {
+            setChatHistory(prev =>
+                prev.map(msg =>
+                    String(msg.id) === assistantTempId
+                        ? { ...msg, status, processStage: status, isProcessingStage: true }
+                        : msg
+                )
+            );
+        };
+
         const updateUIWithChunk = (newText: string) => {
             streamFullTextRef.current += newText;
             setChatHistory(prev =>
                 prev.map(msg =>
                     String(msg.id) === assistantTempId
-                        ? { ...msg, content: streamFullTextRef.current, isThinking: false }
+                        ? { ...msg, content: streamFullTextRef.current, isProcessingStage: false, processStage: undefined }
                         : msg
                 )
             );
@@ -665,6 +678,11 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                                 onUserMessageId(String(parsed.user_message_id));
                             }
 
+                            const processStageVal = parsed?.process_stage || parsed?.status;
+                            if (typeof processStageVal === 'string' && processStageVal.length > 0) {
+                                updateStreamingStatus(processStageVal);
+                            }
+
                             if (typeof parsed?.delta === 'string' && parsed.delta.length > 0) {
                                 firstTokenReceived = true;
                                 updateUIWithChunk(parsed.delta);
@@ -688,7 +706,7 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
         const finalAssistantText = streamFullTextRef.current;
         setChatHistory(prev =>
             prev.map(msg =>
-                String(msg.id) === assistantTempId ? { ...msg, content: finalAssistantText, isThinking: false } : msg
+                String(msg.id) === assistantTempId ? { ...msg, content: finalAssistantText, isProcessingStage: false, processStage: undefined } : msg
             )
         );
 
@@ -1436,7 +1454,9 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 role: 'assistant',
                 content: '',
                 session_id: currentSessionId || undefined,
-                isThinking: true
+                isProcessingStage: true,
+                processStage: 'processing',
+                status: 'processing',
             };
 
             // Use baseHistory (already cleaned) — NOT chatHistory (stale)
@@ -1624,7 +1644,9 @@ export default function PDFViewer({ fileId, fileSize }: PDFViewerProps) {
                 role: 'assistant',
                 content: '',
                 session_id: currentSessionId,
-                isThinking: true
+                isProcessingStage: true,
+                processStage: 'processing',
+                status: 'processing',
             });
             setChatHistory(base);
         }
