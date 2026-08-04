@@ -716,7 +716,7 @@ async def generate_small_completion_with_failover(
             continue
 
         try:
-            logger.info(f"[INFO] SMALL failover chain: attempting {model_name}")
+            logger.info(f"SMALL failover chain: attempting {model_name}")
             kwargs = {
                 "model": model_name,
                 "messages": messages,

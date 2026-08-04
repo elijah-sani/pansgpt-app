@@ -952,6 +952,7 @@ async def get_relevant_context(
     semester: Optional[str] = None,
     rag_match_count: Optional[int] = None,  # [AGENTIC LAYER] — planner-supplied chunk count overrides heuristic
     match_threshold: Optional[float] = None,
+    university_id: Optional[str] = None,
     *,
     _out_rpc_rows: Optional[list] = None,
 ) -> tuple[str, list[dict]]:
@@ -963,6 +964,7 @@ async def get_relevant_context(
         document_id: Drive file ID or Supabase UUID of the PDF (Local RAG)
         user_level: Student level for Global RAG filtering
         match_threshold: Optional similarity threshold override (0.0 to 1.0)
+        university_id: Optional pre-fetched university ID (skips redundant DB lookup)
         
     Returns:
         Tuple of:
@@ -977,12 +979,12 @@ async def get_relevant_context(
         logger.warning("Supabase not available for RAG")
         return "", []
 
-    student_university_id = None
+    student_university_id = (university_id or "").strip() or None
     resolved_level = (user_level or "").strip()
     requested_academic_session = _normalize_optional_text(academic_session)
     requested_semester = normalize_semester(semester)
     context_filter_source = "request" if (requested_academic_session or requested_semester) else None
-    if current_user is not None:
+    if not student_university_id and current_user is not None:
         student_context = await resolve_student_university_context(current_user)
         student_university_id = student_context.get("university_id")
         if not resolved_level:

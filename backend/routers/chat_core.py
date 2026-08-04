@@ -1255,7 +1255,7 @@ async def transcribe_audio(request: Request, audio: UploadFile = File(...)):
                 logger.warning(f"Failed to delete temp audio file: {cleanup_error}")
 
 
-async def _generate_and_save_title(session_id: str, user_text: str, current_user: User):
+async def _generate_and_save_title(session_id: str, user_text: str, current_user: User, image_text: Optional[str] = None):
     try:
         if not session_id or not chat_history.has_client():
             return
@@ -1306,6 +1306,8 @@ async def _generate_and_save_title(session_id: str, user_text: str, current_user
             )
             return None
 
+        image_context_suffix = f"\nImage Topic/Content:\n{image_text.strip()[:300]}" if image_text and image_text.strip() else ""
+
         title_prompt = (
             "/nothink\n"
             "Generate a chat session title based on the conversation below.\n\n"
@@ -1317,6 +1319,7 @@ async def _generate_and_save_title(session_id: str, user_text: str, current_user
             "- If the conversation is purely casual greeting/small talk with no real topic, return exactly: Initial Greeting\n\n"
             f"Conversation:\n{conversation_excerpt}\n\n"
             f"Latest message:\n{(user_text or '').strip()[:200]}"
+            f"{image_context_suffix}"
         )
 
         title_completion = None
@@ -1511,7 +1514,8 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
             )
 
         if request.session_id and (not current_title or "New Chat" in current_title or _is_generic_title(current_title)):
-            title_task = asyncio.create_task(_generate_and_save_title(request.session_id, request.text, current_user))
+            if not request.images:
+                title_task = asyncio.create_task(_generate_and_save_title(request.session_id, request.text, current_user))
 
     logger.info(f"Chat Request: mode={request.mode}, text='{request.text[:30]}...', msgs={len(request.messages or [])}")
 
@@ -1597,6 +1601,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                     academic_session=request.academic_session,
                     semester=request.semester,
                     rag_match_count=rag_chunk_count,
+                    university_id=university_id,
                 )
             else:
                 gather_tasks["rag"] = get_relevant_context(
@@ -1607,6 +1612,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                     academic_session=request.academic_session,
                     semester=request.semester,
                     rag_match_count=rag_chunk_count,
+                    university_id=university_id,
                 )
 
         # Now run all concurrently!
@@ -1660,6 +1666,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                         semester=request.semester,
                         rag_match_count=rag_chunk_count,
                         match_threshold=threshold_override,
+                        university_id=university_id,
                     )
                 return get_relevant_context(
                     query,
@@ -1670,6 +1677,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                     semester=request.semester,
                     rag_match_count=rag_chunk_count,
                     match_threshold=threshold_override,
+                    university_id=university_id,
                 )
 
             yield {"status": "reading_image"}
@@ -1773,6 +1781,13 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                     context_quality = "none"
             else:
                 context_quality = "good" if context_text else "none"
+
+            # Launch image-aware title generation once extraction completes
+            if request.images and request.session_id and (not current_title or "New Chat" in current_title or _is_generic_title(current_title)):
+                nonlocal title_task
+                title_task = asyncio.create_task(
+                    _generate_and_save_title(request.session_id, request.text, current_user, image_text=extracted_image_text)
+                )
         else:
             context_quality = "none"
 
