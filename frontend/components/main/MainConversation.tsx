@@ -835,6 +835,8 @@ export function MainConversation({
                           message={message}
                           isThinking={Boolean(message.isThinking)}
                           isStreaming={isStreamingAI}
+                          isProcessingStage={Boolean(message.isProcessingStage)}
+                          processStage={message.processStage}
                           onAddToNote={openBookmarkModal}
                           noteActionIcon="bookmark"
                           onRegenerate={index === messages.length - 1 && activeSessionId ? handleRegenerate : undefined}

@@ -7,7 +7,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import rehypeRaw from 'rehype-raw';
 import 'katex/dist/katex.min.css';
-import { ThumbsUp, ThumbsDown, Copy, Check, RotateCcw, StopCircle, Quote, BookmarkPlus, Bookmark, Loader2 } from 'lucide-react';
+import { ThumbsUp, ThumbsDown, Copy, Check, RotateCcw, StopCircle, Quote, BookmarkPlus, Bookmark, Loader2, Eye, Globe, BookOpen, FileSearch, Zap, Sparkles } from 'lucide-react';
 import FeedbackModal from './FeedbackModal';
 import { api } from '@/lib/api';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
@@ -25,8 +25,20 @@ export interface Message {
     isThinking?: boolean;
     isStopped?: boolean;
     status?: string;
+    processStage?: string;
+    isProcessingStage?: boolean;
     thinking_text?: string;
 }
+
+const FAST_MODE_STAGE_CONFIG: Record<string, { label: string; Icon: React.ComponentType<{ className?: string }> }> = {
+    reading_image: { label: 'Analyzing image details...', Icon: Eye },
+    searching_web: { label: 'Searching web sources...', Icon: Globe },
+    searching_curriculum: { label: 'Searching curriculum database...', Icon: BookOpen },
+    retrieving_context: { label: 'Retrieving study context...', Icon: FileSearch },
+    processing_query: { label: 'Synthesizing context...', Icon: Zap },
+    processing: { label: 'Synthesizing context...', Icon: Zap },
+    preparing_response: { label: 'Formulating response...', Icon: Sparkles },
+};
 
 interface MessageBubbleProps {
     message: Message;
@@ -38,6 +50,8 @@ interface MessageBubbleProps {
     noteActionIcon?: 'bookmark' | 'bookmark-plus';
     thinkingText?: string;
     isThinkingStreaming?: boolean;
+    processStage?: string;
+    isProcessingStage?: boolean;
 }
 
 export default function MessageBubble({
@@ -50,6 +64,8 @@ export default function MessageBubble({
     noteActionIcon = 'bookmark-plus',
     thinkingText = '',
     isThinkingStreaming = false,
+    processStage,
+    isProcessingStage = false,
 }: MessageBubbleProps) {
     const [feedback, setFeedback] = useState<'up' | 'down' | null>(null);
     const [copied, setCopied] = useState(false);
@@ -215,13 +231,18 @@ export default function MessageBubble({
         }
     };
 
+    const activeStageKey = (isProcessingStage || message.isProcessingStage)
+        ? (processStage || message.processStage || message.status)
+        : undefined;
+    const activeStageConfig = activeStageKey ? FAST_MODE_STAGE_CONFIG[activeStageKey] : undefined;
+
     return (
         <div className={`w-full pr-4 group relative font-sans ${message.role === 'user' ? 'mb-[5px]' : ''}`}>
             <div className="flex flex-col items-start gap-1">
                 <div className="flex items-center gap-3 mb-1">
                     <div className="relative flex items-center justify-center w-10 h-10 shrink-0 -ml-1.5">
                         <div className="relative flex h-8 w-8 items-center justify-center">
-                            {(isThinking || isStreaming) && (
+                            {(isThinking || isStreaming || isProcessingStage || message.isProcessingStage) && (
                                 <span className="absolute inset-0 w-full h-full rounded-full border-2 border-t-[#057400] border-r-[#1e811a] border-b-transparent border-l-transparent animate-spin" />
                             )}
                             <img
@@ -231,6 +252,13 @@ export default function MessageBubble({
                             />
                         </div>
                     </div>
+                    {/* Fast Mode Process Stage Status Indicator (Clean SVG layout) */}
+                    {activeStageConfig && (
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground font-medium transition-opacity duration-200">
+                            <activeStageConfig.Icon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                            <span>{activeStageConfig.label}</span>
+                        </div>
+                    )}
                     {/* Reasoning toggle — inline beside avatar, only in thinking mode */}
                     {hasReasoning && (
                         <ThinkingToggle

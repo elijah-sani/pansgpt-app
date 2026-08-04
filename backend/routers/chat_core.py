@@ -971,8 +971,9 @@ async def _build_streaming_response(
                         continue
 
                     status = event.get("status")
-                    if isinstance(status, str) and status:
-                        yield f"data: {json.dumps({'status': status})}\n\n"
+                    process_stage = event.get("process_stage") or status
+                    if isinstance(process_stage, str) and process_stage:
+                        yield f"data: {json.dumps({'process_stage': process_stage, 'status': process_stage})}\n\n"
 
                     thinking_update = event.get("thinking_update")
                     if thinking_update:
@@ -1618,6 +1619,12 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                     university_id=student_university_id,
                 )
 
+        if effective_web_search and request.text.strip():
+            yield {"process_stage": "searching_web"}
+        elif run_rag_concurrently:
+            yield {"process_stage": "searching_curriculum"}
+            yield {"process_stage": "retrieving_context"}
+
         # Now run all concurrently!
         task_keys = list(gather_tasks.keys())
         task_futures = list(gather_tasks.values())
@@ -1985,6 +1992,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
             # Yield pipeline_params and selected_model for instrumentation capture
             yield {"pipeline_params": pipeline_params}
             yield {"selected_model": selected_model}
+            yield {"process_stage": "processing_query"}
 
             logger.info(
                 "CHAT LATENCY mode=%s model=%s stage=%s elapsed_ms=%.1f",

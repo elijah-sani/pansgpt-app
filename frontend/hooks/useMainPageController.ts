@@ -342,7 +342,7 @@ export function useMainPageController() {
       setMessages((previous) =>
         previous.map((message) =>
           String(message.id) === assistantTempId
-            ? { ...message, status, isThinking: true }
+            ? { ...message, status, processStage: status, isProcessingStage: true }
             : message
         )
       );
@@ -353,7 +353,13 @@ export function useMainPageController() {
       setMessages((previous) =>
         previous.map((message) =>
           String(message.id) === assistantTempId
-            ? { ...message, content: streamFullTextRef.current, isThinking: false, status: streamStatusRef.current }
+            ? {
+                ...message,
+                content: streamFullTextRef.current,
+                processStage: undefined,
+                isProcessingStage: false,
+                status: streamStatusRef.current,
+              }
             : message
         )
       );
@@ -392,8 +398,9 @@ export function useMainPageController() {
           onUserMessageId?.(realUserMessageId);
         }
 
-        if (typeof parsed?.status === 'string' && parsed.status.length > 0) {
-          updateStreamingStatus(parsed.status);
+        const processStageVal = parsed?.process_stage || parsed?.status;
+        if (typeof processStageVal === 'string' && processStageVal.length > 0) {
+          updateStreamingStatus(processStageVal);
         }
 
         if (typeof parsed?.delta === 'string' && parsed.delta.length > 0) {
@@ -718,7 +725,8 @@ export function useMainPageController() {
           role: 'assistant',
           content: '',
           session_id: currentSessionId || undefined,
-          isThinking: true,
+          isProcessingStage: true,
+          processStage: 'processing',
           status: 'processing',
         };
 
