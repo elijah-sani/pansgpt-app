@@ -47,6 +47,7 @@ from .shared import (
     get_cached_student_timetable,
     get_current_user,
     get_relevant_context,
+    resolve_student_university_context,
     io,
     json,
     llm_engine,
@@ -1470,12 +1471,14 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
     saved_user_message_id: Optional[str] = None
     title_task = None
 
-    restriction, (student_profile_text, student_level), cached_config = await asyncio.gather(
+    restriction, (student_profile_text, student_level), cached_config, student_context = await asyncio.gather(
         _get_chat_restriction_if_any(current_user),
         _build_student_profile_text(current_user),
         get_cached_settings(),
+        resolve_student_university_context(current_user),
         return_exceptions=False,
     )
+    student_university_id = (student_context.get("university_id") or "").strip() or None
 
     if restriction:
         return JSONResponse(status_code=423, content=build_restriction_block_payload(restriction))
@@ -1601,7 +1604,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                     academic_session=request.academic_session,
                     semester=request.semester,
                     rag_match_count=rag_chunk_count,
-                    university_id=university_id,
+                    university_id=student_university_id,
                 )
             else:
                 gather_tasks["rag"] = get_relevant_context(
@@ -1612,7 +1615,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                     academic_session=request.academic_session,
                     semester=request.semester,
                     rag_match_count=rag_chunk_count,
-                    university_id=university_id,
+                    university_id=student_university_id,
                 )
 
         # Now run all concurrently!
@@ -1666,7 +1669,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                         semester=request.semester,
                         rag_match_count=rag_chunk_count,
                         match_threshold=threshold_override,
-                        university_id=university_id,
+                        university_id=student_university_id,
                     )
                 return get_relevant_context(
                     query,
@@ -1677,7 +1680,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                     semester=request.semester,
                     rag_match_count=rag_chunk_count,
                     match_threshold=threshold_override,
-                    university_id=university_id,
+                    university_id=student_university_id,
                 )
 
             yield {"status": "reading_image"}
