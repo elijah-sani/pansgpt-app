@@ -887,9 +887,24 @@ async def _create_completion_with_failover(
         stream=stream,
     )
 
+async def _anext_with_idle_timeout(api_stream, timeout_seconds=15.0):
+    iterator = api_stream.__aiter__() if hasattr(api_stream, '__aiter__') else api_stream
+    while True:
+        try:
+            if hasattr(iterator, '__anext__'):
+                next_coro = iterator.__anext__()
+            else:
+                next_coro = anext(iterator)
+            yield await asyncio.wait_for(next_coro, timeout=timeout_seconds)
+        except StopAsyncIteration:
+            break
+        except asyncio.TimeoutError:
+            logger.error(f"Vision API Error: Upstream idle timeout exceeded ({timeout_seconds}s)")
+            raise
+
 async def _stream_completion_events(api_stream):
     try:
-        async for chunk in api_stream:
+        async for chunk in _anext_with_idle_timeout(api_stream, timeout_seconds=15.0):
             delta = ""
             try:
                 if chunk and chunk.choices and chunk.choices[0].delta:
@@ -1937,7 +1952,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                     max_tokens=VISION_MAX_OUTPUT_TOKENS,
                     requested_model=llm_engine.FAST_VISION_PRIMARY,
                     require_system_role_support=True,
-                    per_provider_timeout_seconds=20.0,
+                    per_provider_timeout_seconds=35.0,
                 )
                 yield {"status": "preparing_response"}
                 async for event in _stream_completion_events(completion_stream):
@@ -2054,7 +2069,7 @@ async def chat(request: Request, chat_request: ChatRequest, current_user: User =
                     llm_engine.FAST_TEXT_MODEL_ORDER
                 ),
                 require_system_role_support=True,
-                per_provider_timeout_seconds=20.0 if is_vision_mode else None,
+                per_provider_timeout_seconds=35.0 if is_vision_mode else None,
             )
             yield {"status": "preparing_response"}
             async for event in _stream_completion_events(completion_stream):
@@ -2569,13 +2584,15 @@ async def edit_message(
                         stream=False,
                     )
                     if extraction_response is not None:
-                        extracted_content = extraction_response.choices[0].message.content
-                        if isinstance(extracted_content, list):
-                            extracted_image_text = " ".join(
-                                part.get("text", "") for part in extracted_content if isinstance(part, dict)
-                            ).strip()
-                        else:
-                            extracted_image_text = str(extracted_content).strip()
+                        choices = getattr(extraction_response, "choices", None)
+                        if choices and getattr(choices[0], "message", None):
+                            extracted_content = choices[0].message.content
+                            if isinstance(extracted_content, list):
+                                extracted_image_text = " ".join(
+                                    part.get("text", "") for part in extracted_content if isinstance(part, dict)
+                                ).strip()
+                            else:
+                                extracted_image_text = str(extracted_content).strip()
                 except Exception as exc:
                     logger.warning(f"Edit vision RAG enrichment failed, falling back to text-only query: {exc}")
 
@@ -2672,7 +2689,7 @@ async def edit_message(
 
             logger.info(f"Edit llm_messages roles+types: {[(m['role'], type(m['content']).__name__) for m in llm_messages]}")
 
-            logger.info(f"Sending {len(llm_messages)} messages to Groq (roles: {[m['role'] for m in llm_messages]})")
+            logger.info(f"Sending {len(llm_messages)} messages to the Smart Router (roles: {[m['role'] for m in llm_messages]})")
             logger.info(f"Re-generating after edit for session {payload.session_id}")
 
             if contains_image(llm_messages):
@@ -2729,7 +2746,7 @@ async def edit_message(
                     llm_engine.FAST_TEXT_MODEL_ORDER
                 ),
                 require_system_role_support=True,
-                per_provider_timeout_seconds=20.0 if is_vision_mode else None,
+                per_provider_timeout_seconds=35.0 if is_vision_mode else None,
             )
             yield {"status": "preparing_response"}
             async for event in _stream_completion_events(completion_stream):
@@ -3120,7 +3137,7 @@ async def regenerate_response(
                     llm_engine.FAST_TEXT_MODEL_ORDER
                 ),
                 require_system_role_support=True,
-                per_provider_timeout_seconds=20.0 if is_vision_mode else None,
+                per_provider_timeout_seconds=35.0 if is_vision_mode else None,
             )
             yield {"status": "preparing_response"}
             async for event in _stream_completion_events(completion_stream):

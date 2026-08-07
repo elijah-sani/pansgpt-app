@@ -19,7 +19,7 @@ from security_attack_fixtures import ATTACK_PROMPTS  # noqa: E402
 
 
 def _test_user() -> User:
-    return User(id="user-1", email="user@example.com")
+    return User(id="00000000-0000-0000-0000-000000000000", email="user@example.com")
 
 
 @pytest.fixture()
